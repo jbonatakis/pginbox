@@ -31,6 +31,34 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: attachments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.attachments (
+    id bigint NOT NULL,
+    message_id bigint NOT NULL,
+    filename text,
+    content_type text,
+    size_bytes integer,
+    content text
+);
+
+
+--
+-- Name: attachments_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.attachments ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.attachments_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: lists; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -212,6 +240,14 @@ ALTER TABLE ONLY public.people_emails ALTER COLUMN id SET DEFAULT nextval('publi
 
 
 --
+-- Name: attachments attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.attachments
+    ADD CONSTRAINT attachments_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: lists lists_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -284,6 +320,13 @@ ALTER TABLE ONLY public.threads
 
 
 --
+-- Name: idx_attachments_message_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_attachments_message_id ON public.attachments USING btree (message_id);
+
+
+--
 -- Name: idx_messages_from_email; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -333,6 +376,14 @@ CREATE INDEX idx_threads_list_id ON public.threads USING btree (list_id);
 
 
 --
+-- Name: attachments attachments_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.attachments
+    ADD CONSTRAINT attachments_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.messages(id);
+
+
+--
 -- Name: messages messages_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -369,4 +420,5 @@ ALTER TABLE ONLY public.threads
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260301000001'),
-    ('20260301000002');
+    ('20260301000002'),
+    ('20260301000003');

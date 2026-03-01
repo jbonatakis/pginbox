@@ -47,21 +47,21 @@ install:
 	uv sync
 
 ingest:
-	uv run python3 ingest.py --list $(LIST) --year $(YEAR) --month $(MONTH) $(if $(BACKFILL),--backfill)
+	uv run python3 src/ingestion/ingest.py --list $(LIST) --year $(YEAR) --month $(MONTH) $(if $(BACKFILL),--backfill)
 
 backfill:
-	uv run python3 ingest.py --list $(LIST) --year $(YEAR) --month $(MONTH) --backfill
+	uv run python3 src/ingestion/ingest.py --list $(LIST) --year $(YEAR) --month $(MONTH) --backfill
 
 backfill-range:
-	uv run python3 ingest.py --list $(LIST) --from $(FROM) --to $(TO) --backfill
+	uv run python3 src/ingestion/ingest.py --list $(LIST) --from $(FROM) --to $(TO) --backfill
 
 people: seed-people match-people
 
 seed-people:
-	uv run python3 seed_people.py
+	uv run python3 src/ingestion/seed_people.py
 
 match-people:
-	uv run python3 match_people.py $(if $(DRY_RUN),--dry-run)
+	uv run python3 src/ingestion/match_people.py $(if $(DRY_RUN),--dry-run)
 
 charts:
-	uv run python3 charts.py
+	uv run python3 src/ingestion/charts.py

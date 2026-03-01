@@ -224,6 +224,12 @@ Credentials via `PG_LIST_USER` / `PG_LIST_PASS` env vars or Make variables. `LIS
 - **Feature archaeology**: chart discussion volume of keywords (logical replication, JIT, partitioning, SCRAM) over time
 - **Other lists**: ingest `pgsql-general`, `pgsql-bugs`, `pgsql-announce`; cross-list analysis (e.g. do bugs on `-bugs` surface as discussions on `-hackers`?)
 - **LLM/RAG integration**: pgvector embeddings on message bodies, answer questions against the historical record
+- **Attachment ingestion**: populate the `attachments` table during parsing. Strategy by type:
+  - **Skip**: PGP signatures (`application/pgp-signature`, `.asc`) — noise, no informational value
+  - **Store full text**: `.patch`, `.diff`, and anything with a `text/*` content-type — the core payload for pgsql-hackers
+  - **Decompress and store**: `.gz` / `.tgz` — attempt `gzip.decompress`; if the result decodes as valid UTF-8, store it as text (most are compressed patches); otherwise fall through to metadata-only
+  - **Metadata only**: everything else (images, PDFs, spreadsheets, binaries) — store filename, content-type, size; leave `content` NULL
+  - **Search**: once populated, add `tsvector` generated column on `attachments.content` (GIN indexed) alongside the equivalent on `messages`; pgvector embeddings where `content IS NOT NULL`
 
 ---
 
@@ -233,4 +239,4 @@ Credentials via `PG_LIST_USER` / `PG_LIST_PASS` env vars or Make variables. `LIS
 - **People table ordering**: `seed_people.py` should be run before `match_people.py`. Running them after a reset or schema change restores full coverage.
 - **Live ingestion and people**: `match_people.py` is not integrated into the ingestion pipeline. During live ingestion, run it periodically to pick up new email addresses from new messages. New contributors remain unmatched until added to `seed_people.py`. Queries should always `LEFT JOIN people_emails` and fall back to `messages.from_name` when no person match exists.
 - **Subject normalisation**: the current regex strips one level of `Re:`/`Fwd:`. Pathological subjects like `Re: Re: Re:` or `Re[3]:` would not be fully normalised.
-- **Attachment handling**: messages with no `text/plain` part are stored with an empty body.
+- **Attachment handling**: messages with no `text/plain` part are stored with an empty body. An `attachments` table exists but ingestion does not yet populate it. See the note in Feature Ideas for the planned approach.
