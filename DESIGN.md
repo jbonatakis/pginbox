@@ -224,6 +224,7 @@ Credentials via `PG_LIST_USER` / `PG_LIST_PASS` env vars or Make variables. `LIS
 - **Feature archaeology**: chart discussion volume of keywords (logical replication, JIT, partitioning, SCRAM) over time
 - **Other lists**: ingest `pgsql-general`, `pgsql-bugs`, `pgsql-announce`; cross-list analysis (e.g. do bugs on `-bugs` surface as discussions on `-hackers`?)
 - **LLM/RAG integration**: pgvector embeddings on message bodies, answer questions against the historical record
+- **Stateful backfill**: before fetching a month, check whether messages already exist for that list + year/month and skip if so. Makes range backfills resumable after interruption with no separate checkpoint file — the database is the state.
 - **Attachment ingestion**: populate the `attachments` table during parsing. Strategy by type:
   - **Skip**: PGP signatures (`application/pgp-signature`, `.asc`) — noise, no informational value
   - **Store full text**: `.patch`, `.diff`, and anything with a `text/*` content-type — the core payload for pgsql-hackers

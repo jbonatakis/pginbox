@@ -14,7 +14,7 @@ import matplotlib.ticker as ticker
 import numpy as np
 
 DSN = os.environ.get("DATABASE_URL", "postgresql://pginbox:pginbox@localhost:5499/pginbox")
-OUT = "charts.png"
+OUT = "charts/charts.png"
 
 conn = psycopg2.connect(DSN)
 
@@ -31,20 +31,23 @@ msgs_by_month = pd.read_sql("""
 thread_sizes = pd.read_sql("SELECT message_count FROM threads", conn)
 
 top_senders = pd.read_sql("""
-    SELECT from_email, count(*) AS messages
-    FROM messages WHERE from_email != ''
+    SELECT
+        from_email,
+        count(*) AS messages,
+        mode() WITHIN GROUP (ORDER BY from_name) AS from_name
+    FROM messages WHERE from_email != '' AND from_name != ''
     GROUP BY from_email ORDER BY messages DESC LIMIT 15
 """, conn)
 
 by_hour = pd.read_sql("""
     SELECT EXTRACT(hour FROM sent_at AT TIME ZONE 'UTC')::int AS hour, count(*) AS messages
-    FROM messages WHERE sent_at IS NOT NULL
+    FROM messages WHERE sent_at IS NOT NULL AND NOT sent_at_approx
     GROUP BY 1 ORDER BY 1
 """, conn)
 
 by_dow = pd.read_sql("""
     SELECT EXTRACT(isodow FROM sent_at)::int AS dow, count(*) AS messages
-    FROM messages WHERE sent_at IS NOT NULL
+    FROM messages WHERE sent_at IS NOT NULL AND NOT sent_at_approx
     GROUP BY 1 ORDER BY 1
 """, conn)
 
@@ -108,7 +111,7 @@ ax2.tick_params(axis='x', rotation=30, labelsize=8)
 
 # 3. Top 15 senders
 ax3 = fig.add_subplot(3, 3, 3)
-labels = [e.split("@")[0] for e in top_senders["from_email"]]
+labels = list(top_senders["from_name"])
 ax3.barh(range(len(labels)), top_senders["messages"], color="#336791")
 ax3.set_yticks(range(len(labels)))
 ax3.set_yticklabels(labels, fontsize=8)

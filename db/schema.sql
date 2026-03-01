@@ -103,7 +103,8 @@ CREATE TABLE public.messages (
     subject text,
     in_reply_to text,
     refs text[],
-    body text
+    body text,
+    sent_at_approx boolean DEFAULT false NOT NULL
 );
 
 
@@ -421,4 +422,5 @@ ALTER TABLE ONLY public.threads
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260301000001'),
     ('20260301000002'),
-    ('20260301000003');
+    ('20260301000003'),
+    ('20260301000004');

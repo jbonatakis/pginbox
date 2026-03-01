@@ -16,12 +16,15 @@ Usage:
 import argparse
 import email.header
 import email.utils
+import gzip
 import hashlib
 import mailbox
 import os
 import re
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg2
@@ -214,13 +217,18 @@ def download_mbox(
 def _decode_body(msg) -> str:
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                try:
-                    payload = part.get_payload(decode=True)
-                    charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
-                except Exception:
-                    return str(part.get_payload())
+            if part.get_content_type() != "text/plain":
+                continue
+            if part.get_content_disposition() == "attachment":
+                continue
+            try:
+                payload = part.get_payload(decode=True)
+                if payload is None:
+                    continue
+                charset = part.get_content_charset() or "utf-8"
+                return payload.decode(charset, errors="replace")
+            except Exception:
+                continue
         return ""
     else:
         try:
@@ -231,6 +239,78 @@ def _decode_body(msg) -> str:
         except Exception:
             pass
         return str(msg.get_payload() or "")
+
+
+_TEXT_APPLICATION_TYPES = {
+    "application/sql", "application/x-sql",
+    "application/x-sh", "application/x-shellscript",
+    "application/x-perl", "application/x-perl-script",
+    "application/x-python", "application/x-python-script",
+    "application/x-ruby-script",
+    "application/xhtml+xml",
+}
+
+
+def _parse_attachments(msg) -> list:
+    """Extract attachments from a MIME message. Returns list of dicts."""
+    if not msg.is_multipart():
+        return []
+
+    attachments = []
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+
+        ct = part.get_content_type()
+        disp = part.get_content_disposition() or ""
+        filename = part.get_filename()
+        ext = filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
+
+        # Skip signatures and noise
+        if ct in (
+            "application/pgp-signature",   # PGP signatures
+            "application/pkcs7-signature", # S/MIME signatures
+            "application/applefile",       # Mac resource forks
+            "application/mbox",            # mbox-in-mbox
+            "text/vnd.google.email-reaction+json",  # Gmail emoji reactions
+        ):
+            continue
+        if ct.startswith("video/"):
+            continue
+        if ext == "asc":
+            continue
+
+        # Skip inline body parts (non-attachment text/plain and text/html alternatives)
+        if ct in ("text/plain", "text/html") and disp != "attachment":
+            continue
+
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        size = len(payload)
+        content = None
+
+        if payload:
+            if ct.startswith("text/") or ct in _TEXT_APPLICATION_TYPES or ext in ("patch", "diff"):
+                charset = part.get_content_charset() or "utf-8"
+                try:
+                    content = payload.decode(charset, errors="replace")
+                except Exception:
+                    pass
+            elif ct in ("application/gzip", "application/x-gzip", "application/x-compressed") or ext in ("gz", "tgz"):
+                try:
+                    content = gzip.decompress(payload).decode("utf-8")
+                except Exception:
+                    pass  # metadata-only
+
+        attachments.append({
+            "filename": _strip_nul(filename) if filename else None,
+            "content_type": ct,
+            "size_bytes": size,
+            "content": _strip_nul(content) if content else None,
+        })
+
+    return attachments
 
 
 def _decode_header(value: str) -> str:
@@ -263,6 +343,12 @@ def parse_mbox(path: Path, list_id: int):
     """Yield message dicts parsed from an mbox file."""
     mbox = mailbox.mbox(str(path))
 
+    # Derive the mbox month from the filename (e.g. pgsql-hackers.202306)
+    # Used to clamp dates for git format-patch emails whose Date header
+    # reflects the git commit date rather than the actual send date.
+    mbox_ym = path.name.split(".")[-1]
+    mbox_date = datetime(int(mbox_ym[:4]), int(mbox_ym[4:]), 1, tzinfo=timezone.utc)
+
     for msg in mbox:
         # Skip header-less fragments caused by unescaped "From " lines in bodies
         if not msg.keys():
@@ -277,8 +363,11 @@ def parse_mbox(path: Path, list_id: int):
         # Date — prefer the mbox From-line timestamp (set by the list server on
         # delivery) over the Date header (set by the sender, can be wrong).
         # git format-patch emails use a dummy From-line date (year 2001), so
-        # we fall back to the Date header for those.
+        # we fall back to the Date header for those. If the Date header also
+        # predates the mbox month (git commit date used as send date), clamp
+        # to the first of the mbox month as the best available approximation.
         sent_at = None
+        used_date_header = False
         from_line = msg.get_from() or ""
         from_line_parts = from_line.split(" ", 1)
         if len(from_line_parts) == 2:
@@ -293,8 +382,15 @@ def parse_mbox(path: Path, list_id: int):
             if date_str:
                 try:
                     sent_at = email.utils.parsedate_to_datetime(date_str)
+                    used_date_header = True
                 except Exception:
                     pass
+        sent_at_approx = False
+        if used_date_header and sent_at is not None:
+            aware = sent_at if sent_at.tzinfo else sent_at.replace(tzinfo=timezone.utc)
+            if aware < mbox_date:
+                sent_at = mbox_date
+                sent_at_approx = True
 
         # From
         from_name, from_email = "", ""
@@ -326,7 +422,9 @@ def parse_mbox(path: Path, list_id: int):
             "in_reply_to": _strip_nul(in_reply_to) if in_reply_to else None,
             "refs": [_strip_nul(r) for r in refs] if refs else None,
             "body": body,
+            "sent_at_approx": sent_at_approx,
             "_normalized_subject": _normalize_subject(subject),
+            "_attachments": _parse_attachments(msg),
         }
 
 
@@ -344,12 +442,17 @@ UPSERT_THREAD_SQL = """
 
 INSERT_MESSAGE_SQL = """
     INSERT INTO messages
-        (message_id, thread_id, list_id, sent_at, from_name, from_email,
+        (message_id, thread_id, list_id, sent_at, sent_at_approx, from_name, from_email,
          subject, in_reply_to, refs, body)
     VALUES
-        (%(message_id)s, %(thread_id)s, %(list_id)s, %(sent_at)s,
+        (%(message_id)s, %(thread_id)s, %(list_id)s, %(sent_at)s, %(sent_at_approx)s,
          %(from_name)s, %(from_email)s, %(subject)s, %(in_reply_to)s, %(refs)s, %(body)s)
     ON CONFLICT (message_id) DO NOTHING
+"""
+
+INSERT_ATTACHMENT_SQL = """
+    INSERT INTO attachments (message_id, filename, content_type, size_bytes, content)
+    VALUES (%(message_id)s, %(filename)s, %(content_type)s, %(size_bytes)s, %(content)s)
 """
 
 # Used after bulk message insert during backfill to derive threads in one pass.
@@ -372,11 +475,30 @@ DERIVE_THREADS_SQL = """
 
 
 
+def _insert_attachments(cur, batch: list):
+    """Insert attachments for a batch of message records, keyed by DB message id."""
+    msg_ids = [r["message_id"] for r in batch]
+    cur.execute("SELECT id, message_id FROM messages WHERE message_id = ANY(%s)", (msg_ids,))
+    id_map = {row[1]: row[0] for row in cur.fetchall()}
+
+    att_rows = []
+    for record in batch:
+        db_id = id_map.get(record["message_id"])
+        if db_id is None:
+            continue
+        for att in record.get("_attachments", []):
+            att_rows.append({**att, "message_id": db_id})
+
+    if att_rows:
+        execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)
+
+
 def store_batch_live(conn, batch: list):
     """Upsert threads and insert messages in one transaction (live ingestion)."""
     with conn.cursor() as cur:
         execute_batch(cur, UPSERT_THREAD_SQL, batch, page_size=500)
         execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
+        _insert_attachments(cur, batch)
     conn.commit()
 
 
@@ -384,6 +506,7 @@ def store_batch_backfill(conn, batch: list):
     """Insert messages only; threads derived separately at the end."""
     with conn.cursor() as cur:
         execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
+        _insert_attachments(cur, batch)
     conn.commit()
 
 
@@ -395,6 +518,30 @@ def derive_threads(conn):
         count = cur.rowcount
     conn.commit()
     print(f" {count} threads upserted")
+
+
+def _ingest_worker(dsn: str, list_id: int, year: int, month: int, list_name: str) -> int:
+    """Parallel backfill worker — creates its own DB connection."""
+    conn = psycopg2.connect(dsn)
+    try:
+        path = mbox_cache_path(year, month, list_name)
+        print(f"\n=== {list_name}  {year:04d}-{month:02d} [backfill/parallel] ===")
+        print(f"  [parse+store] {path.name}")
+        batch: list = []
+        total = 0
+        for record in parse_mbox(path, list_id):
+            batch.append(record)
+            if len(batch) >= 500:
+                store_batch_backfill(conn, batch)
+                total += len(batch)
+                batch = []
+        if batch:
+            store_batch_backfill(conn, batch)
+            total += len(batch)
+        print(f"  [done] {total} messages ingested ({list_name} {year:04d}-{month:02d})")
+        return total
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +631,8 @@ def main():
                         help="Bulk insert messages, derive threads at end (faster for historical data)")
     parser.add_argument("--delay", type=float, default=2.0,
                         help="Seconds to wait between downloads in range mode (default: 2)")
+    parser.add_argument("--parallel", type=int, default=1, metavar="N",
+                        help="Number of parallel workers for cache-only backfill (default: 1)")
 
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--year", type=int, help="Single month: year")
@@ -529,17 +678,40 @@ def main():
 
     conn = psycopg2.connect(args.dsn)
 
-    grand_total = 0
-    for i, (year, month) in enumerate(months):
-        # In range backfill mode, defer derive_threads until the final month
-        derive = not args.backfill or (i == len(months) - 1)
-        grand_total += ingest(
-            conn, session, year, month,
-            args.list_name, args.force_download,
-            args.backfill, derive,
-        )
-        if i < len(months) - 1:
-            time.sleep(args.delay)
+    use_parallel = (
+        args.parallel > 1
+        and args.backfill
+        and not needs_download
+        and len(months) > 1
+    )
+
+    if use_parallel:
+        # Pre-register the list in the main thread so workers don't race on it
+        list_id = ensure_list(conn, session, args.list_name, *months[0])
+        print(f"\n[parallel] {len(months)} months, {args.parallel} workers")
+
+        grand_total = 0
+        with ProcessPoolExecutor(max_workers=args.parallel) as executor:
+            futures = {
+                executor.submit(_ingest_worker, args.dsn, list_id, y, m, args.list_name): (y, m)
+                for y, m in months
+            }
+            for future in as_completed(futures):
+                grand_total += future.result()
+
+        derive_threads(conn)
+    else:
+        grand_total = 0
+        for i, (year, month) in enumerate(months):
+            # In range backfill mode, defer derive_threads until the final month
+            derive = not args.backfill or (i == len(months) - 1)
+            grand_total += ingest(
+                conn, session, year, month,
+                args.list_name, args.force_download,
+                args.backfill, derive,
+            )
+            if i < len(months) - 1:
+                time.sleep(args.delay)
 
     if len(months) > 1:
         print(f"\n=== Total: {grand_total:,} messages across {len(months)} months ===")
