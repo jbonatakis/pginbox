@@ -1,0 +1,6 @@
+__pycache__/
+mbox_cache/
+charts.png
+.claude/
+.venv/
+.env
