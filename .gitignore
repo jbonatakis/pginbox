@@ -5,3 +5,4 @@ charts.png
 .venv/
 .env
 charts/
+node_modules/

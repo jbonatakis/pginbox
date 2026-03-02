@@ -6,7 +6,7 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range charts people seed-people match-people migrate migrate-down migrate-status migrate-new install
+.PHONY: up down reset psql logs ingest backfill backfill-range charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api codegen
 
 up:
 	docker compose up -d
@@ -65,3 +65,12 @@ match-people:
 
 charts:
 	uv run python3 src/ingestion/charts.py
+
+dev:
+	bun --watch src/server/index.ts
+
+api:
+	bun src/server/index.ts
+
+codegen:
+	bun x kysely-codegen --dialect postgres --url $(DATABASE_URL) --out-file src/server/types/db.d.ts
