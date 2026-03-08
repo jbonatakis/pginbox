@@ -1,10 +1,27 @@
 import { Elysia, t } from "elysia";
 import { listPeople, getPerson } from "../services/people.service";
 
+function parsePersonId(id: string): number | null {
+  const n = Number(id);
+  if (Number.isNaN(n) || !Number.isInteger(n) || n < 1) return null;
+  return n;
+}
+
+function parseLimit(value: string | undefined, defaultVal: number): number | null {
+  if (value === undefined) return defaultVal;
+  const n = Number(value);
+  if (Number.isNaN(n) || !Number.isInteger(n) || n < 1 || n > 100) return null;
+  return n;
+}
+
 export const peopleRoutes = new Elysia({ prefix: "/people" })
   .get(
     "/",
-    ({ query }) => listPeople(query),
+    ({ query, status }) => {
+      const limit = parseLimit(query.limit, 25);
+      if (limit === null) return status(400, { message: "limit must be an integer between 1 and 100" });
+      return listPeople({ cursor: query.cursor, limit });
+    },
     {
       query: t.Object({
         cursor: t.Optional(t.String()),
@@ -14,9 +31,11 @@ export const peopleRoutes = new Elysia({ prefix: "/people" })
   )
   .get(
     "/:id",
-    async ({ params, error }) => {
-      const person = await getPerson(Number(params.id));
-      return person ?? error(404, { message: "Person not found" });
+    async ({ params, status }) => {
+      const id = parsePersonId(params.id);
+      if (id === null) return status(400, { message: "Invalid person id" });
+      const person = await getPerson(id);
+      return person ?? status(404, { message: "Person not found" });
     },
     { params: t.Object({ id: t.String() }) }
   );

@@ -1,15 +1,25 @@
 import { db } from "../db";
+import { BadRequestError } from "../errors";
 
 function encodeCursor(messageCount: number, personId: number): string {
   return Buffer.from(JSON.stringify({ messageCount, personId })).toString("base64url");
 }
 
-function decodeCursor(cursor: string): { messageCount: number; personId: number } {
-  return JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+function decodeCursorSafe(cursor: string): { messageCount: number; personId: number } | null {
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (decoded == null || typeof decoded !== "object") return null;
+    const { messageCount, personId } = decoded;
+    if (typeof messageCount !== "number" || typeof personId !== "number") return null;
+    if (!Number.isInteger(messageCount) || !Number.isInteger(personId)) return null;
+    return { messageCount, personId };
+  } catch {
+    return null;
+  }
 }
 
-export async function listPeople(query: { cursor?: string; limit?: string }) {
-  const limit = Math.min(Number(query.limit ?? 25), 100);
+export async function listPeople(query: { cursor?: string; limit: number }) {
+  const limit = Math.min(Math.max(1, query.limit), 100);
 
   let q = db
     .with("ranked", (qb) =>
@@ -27,7 +37,9 @@ export async function listPeople(query: { cursor?: string; limit?: string }) {
     .limit(limit + 1);
 
   if (query.cursor) {
-    const { messageCount, personId } = decodeCursor(query.cursor);
+    const parsed = decodeCursorSafe(query.cursor);
+    if (parsed === null) throw new BadRequestError("Invalid cursor");
+    const { messageCount, personId } = parsed;
     q = q.where(({ eb, or, and }) =>
       or([
         eb("message_count", "<", messageCount),
@@ -35,6 +47,7 @@ export async function listPeople(query: { cursor?: string; limit?: string }) {
       ])
     );
   }
+
 
   const rows = await q.execute();
   const hasMore = rows.length > limit;

@@ -1,25 +1,35 @@
 import { db } from "../db";
+import { BadRequestError } from "../errors";
 import { sql } from "kysely";
 
 function encodeCursor(lastActivityAt: Date | null, threadId: string): string {
   return Buffer.from(JSON.stringify({ lastActivityAt, threadId })).toString("base64url");
 }
 
-function decodeCursor(cursor: string): { lastActivityAt: string | null; threadId: string } {
-  return JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-}
-
 export interface ThreadsQuery {
   list?: string;
   q?: string;
-  from?: string;
-  to?: string;
+  from?: Date;
+  to?: Date;
   cursor?: string;
-  limit?: string;
+  limit: number;
+}
+
+function decodeCursorSafe(cursor: string): { lastActivityAt: string | null; threadId: string } | null {
+  try {
+    const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (decoded == null || typeof decoded !== "object") return null;
+    const { lastActivityAt, threadId } = decoded;
+    if (typeof threadId !== "string") return null;
+    if (lastActivityAt !== null && typeof lastActivityAt !== "string") return null;
+    return { lastActivityAt: lastActivityAt ?? null, threadId };
+  } catch {
+    return null;
+  }
 }
 
 export async function listThreads(query: ThreadsQuery) {
-  const limit = Math.min(Number(query.limit ?? 25), 100);
+  const limit = Math.min(Math.max(1, query.limit), 100);
 
   let q = db
     .selectFrom("threads")
@@ -32,11 +42,13 @@ export async function listThreads(query: ThreadsQuery) {
 
   if (query.list) q = q.where("lists.name", "=", query.list);
   if (query.q) q = q.where("threads.subject", "ilike", `%${query.q}%`);
-  if (query.from) q = q.where("threads.last_activity_at", ">=", new Date(query.from));
-  if (query.to) q = q.where("threads.last_activity_at", "<=", new Date(query.to));
+  if (query.from) q = q.where("threads.last_activity_at", ">=", query.from);
+  if (query.to) q = q.where("threads.last_activity_at", "<=", query.to);
 
   if (query.cursor) {
-    const { lastActivityAt, threadId } = decodeCursor(query.cursor);
+    const parsed = decodeCursorSafe(query.cursor);
+    if (parsed === null) throw new BadRequestError("Invalid cursor");
+    const { lastActivityAt, threadId } = parsed;
     if (lastActivityAt === null) {
       // We're in the null zone — only advance by thread_id
       q = q.where(({ eb, and }) =>
