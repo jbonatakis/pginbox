@@ -1,0 +1,11 @@
+# Reverse proxy: / -> frontend, /api/* -> API (prefix stripped)
+# Used by the caddy service in docker-compose.prod.yml
+
+:80 {
+    handle_path /api/* {
+        reverse_proxy api:3000
+    }
+    handle {
+        reverse_proxy frontend:80
+    }
+}

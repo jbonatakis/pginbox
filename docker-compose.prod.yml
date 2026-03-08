@@ -1,0 +1,32 @@
+# Production / VPS: API + frontend behind Caddy. DB is Supabase (set DATABASE_URL).
+# Usage: DATABASE_URL=postgresql://... docker compose -f docker-compose.prod.yml up -d
+
+services:
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - frontend
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: pginbox-api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    # No published ports; Caddy proxies /api to this
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: pginbox-frontend
+    restart: unless-stopped
+    # No published ports; Caddy proxies / to this

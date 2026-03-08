@@ -1,0 +1,20 @@
+# pginbox API — Bun + Elysia
+# Build: docker build -f Dockerfile.api -t pginbox-api .
+# Run: docker run --rm -e DATABASE_URL=postgresql://... -p 3000:3000 pginbox-api
+
+FROM oven/bun:1-alpine AS base
+WORKDIR /app
+
+# Install deps (server + shared types)
+COPY package.json bun.lock* ./
+COPY shared ./shared
+COPY src/server ./src/server
+COPY tsconfig.json ./
+
+RUN bun install --frozen-lockfile || bun install
+
+EXPOSE 3000
+ENV NODE_ENV=production
+
+# Run server directly so it is PID 1 and receives SIGTERM for graceful shutdown
+CMD ["bun", "run", "src/server/index.ts"]
