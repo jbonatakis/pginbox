@@ -6,7 +6,7 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api codegen test
+.PHONY: up down reset psql logs ingest backfill backfill-range charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api codegen test install-web dev-web
 
 up:
 	docker compose up -d
@@ -77,3 +77,9 @@ codegen:
 
 test:
 	bun test test
+
+install-web:
+	cd src/frontend && npm install
+
+dev-web:
+	cd src/frontend && npm run dev

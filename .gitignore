@@ -4,5 +4,8 @@ charts.png
 .claude/
 .venv/
 .env
+.env.local
+.env.*.local
 charts/
 node_modules/
+dist/
