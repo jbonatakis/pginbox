@@ -9,3 +9,5 @@ charts.png
 charts/
 node_modules/
 dist/
+.blackbird/
+blackbird.plan.json
