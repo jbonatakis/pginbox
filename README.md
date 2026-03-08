@@ -46,3 +46,35 @@ The long-term goal is simple:
 
 make PostgreSQL mailing-list history easy to search, understand, and learn from.
 
+## Frontend (MVP) local usage
+
+The frontend app lives in `src/frontend` and expects the API at `/api`.
+
+1. Start the API (from repo root):
+   ```bash
+   make api
+   ```
+   Alternative:
+   ```bash
+   bun src/server/index.ts
+   ```
+2. Run the frontend (new terminal):
+   ```bash
+   cd src/frontend
+   npm install
+   npm run dev
+   ```
+3. Build the frontend:
+   ```bash
+   cd src/frontend
+   npm run build
+   ```
+
+Dev server details:
+- Frontend: `http://localhost:5173`
+- API proxy: `/api` -> `http://localhost:3000`
+
+## MVP verification docs
+
+Frontend MVP QA checklist, scope boundaries, API assumptions, and build verification notes:
+- `docs/frontend-mvp-checklist.md`
