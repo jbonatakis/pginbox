@@ -22,10 +22,12 @@ import mailbox
 import os
 import re
 import sys
+import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 import psycopg2
 from psycopg2.extras import execute_batch
@@ -42,10 +44,17 @@ class MonthNotFound(Exception):
     pass
 
 
+class ArchiveAuthError(RuntimeError):
+    """Raised when archive downloads redirect to authentication endpoints."""
+
+
 LOGIN_URL = "https://www.postgresql.org/account/login/"
 BASE_URL = "https://www.postgresql.org/list/{list_name}/mbox/{list_name}.{year_month}"
+LIST_AUTH_URL = "https://www.postgresql.org/list/_auth/accounts/login/"
 CACHE_DIR = Path("mbox_cache")
 CHUNK_SIZE = 64 * 1024  # 64 KB
+HTTP_RETRIES = 5
+HTTP_RETRY_BASE_DELAY = 2.0
 
 
 
@@ -93,6 +102,69 @@ def make_session(username: str, password: str) -> requests.Session:
     return session
 
 
+def _archive_auth_url(url: str) -> str:
+    """Build the list-auth bootstrap URL used by the web UI's download form."""
+    split = urlsplit(url)
+    next_target = split.path + (f"?{split.query}" if split.query else "")
+    return f"{LIST_AUTH_URL}?next={quote(next_target, safe='/?=&')}"
+
+
+def _open_archive_response(
+    session: requests.Session,
+    url: str,
+    timeout: int,
+):
+    """Open an archive response via list-auth bootstrap flow."""
+    auth_url = _archive_auth_url(url)
+    last_error = None
+    for attempt in range(1, HTTP_RETRIES + 1):
+        try:
+            resp = session.get(auth_url, stream=True, timeout=timeout)
+            break
+        except requests.exceptions.TooManyRedirects as e:
+            raise ArchiveAuthError(
+                f"Archive request entered a redirect loop. URL: {auth_url}"
+            ) from e
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_error = e
+            if attempt >= HTTP_RETRIES:
+                raise
+            delay = HTTP_RETRY_BASE_DELAY * attempt
+            print(
+                f"  [retry] transient network error ({type(e).__name__}); "
+                f"retrying in {delay:.1f}s ({attempt}/{HTTP_RETRIES - 1})"
+            )
+            time.sleep(delay)
+    else:
+        raise RuntimeError(f"Failed to open archive URL after retries: {auth_url}") from last_error
+
+    content_type = resp.headers.get("content-type", "")
+    if (
+        "text/html" in content_type
+        and any(
+            marker in resp.url
+            for marker in ("/account/login", "/list/_auth/accounts/login", "/account/auth/")
+        )
+    ):
+        resp.close()
+        raise ArchiveAuthError(
+            f"Archive authentication failed or expired. Final URL: {resp.url}"
+        )
+
+    return resp
+
+
+def ensure_archive_access(session: requests.Session, list_name: str, year: int, month: int):
+    """Verify the current session can access archive data without auth redirects."""
+    year_month = f"{year:04d}{month:02d}"
+    url = BASE_URL.format(list_name=list_name, year_month=year_month)
+    with _open_archive_response(session, url, timeout=30) as resp:
+        if "text/html" in resp.headers.get("content-type", ""):
+            raise ArchiveAuthError(
+                f"Archive access returned HTML instead of mbox. URL: {resp.url}"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Lists
 # ---------------------------------------------------------------------------
@@ -102,7 +174,7 @@ def _validate_list(session: requests.Session, list_name: str, year: int, month: 
     year_month = f"{year:04d}{month:02d}"
     url = BASE_URL.format(list_name=list_name, year_month=year_month)
     print(f"  [validate] probing {url} ...", end="", flush=True)
-    with session.get(url, stream=True, timeout=30) as resp:
+    with _open_archive_response(session, url, timeout=30) as resp:
         content_type = resp.headers.get("content-type", "")
         if resp.status_code != 200 or "text/html" in content_type:
             raise RuntimeError(
@@ -170,7 +242,7 @@ def download_mbox(
     tmp_path = out_path.with_suffix(".tmp")
     print(f"  [download] {url}")
     try:
-        with session.get(url, stream=True, timeout=300) as resp:
+        with _open_archive_response(session, url, timeout=300) as resp:
             if resp.status_code == 404:
                 raise MonthNotFound(f"No mbox found for {list_name} {year_month} (404)")
             resp.raise_for_status()
@@ -339,17 +411,60 @@ def _strip_nul(s: str) -> str:
     return s.replace('\x00', '') if s else s
 
 
+def _sanitize_mbox_from_lines(path: Path) -> Path:
+    """Create a temp mbox copy with ASCII-safe Unix From-lines."""
+    tmp = tempfile.NamedTemporaryFile(
+        mode="wb",
+        prefix=f"{path.name}.",
+        suffix=".sanitized",
+        dir=path.parent,
+        delete=False,
+    )
+    tmp_path = Path(tmp.name)
+    try:
+        with path.open("rb") as src, tmp:
+            for raw in src:
+                if raw.startswith(b"From "):
+                    raw = raw.decode("utf-8", errors="replace").encode("ascii", errors="replace")
+                tmp.write(raw)
+        return tmp_path
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _iter_mbox_messages(path: Path):
+    mbox = mailbox.mbox(str(path))
+    try:
+        for msg in mbox:
+            yield msg
+        return
+    except UnicodeDecodeError as e:
+        print(f"  [warn] malformed mbox From-line ({e}); retrying with sanitized copy")
+    finally:
+        mbox.close()
+
+    sanitized_path = _sanitize_mbox_from_lines(path)
+    try:
+        mbox = mailbox.mbox(str(sanitized_path))
+        try:
+            for msg in mbox:
+                yield msg
+        finally:
+            mbox.close()
+    finally:
+        sanitized_path.unlink(missing_ok=True)
+
+
 def parse_mbox(path: Path, list_id: int):
     """Yield message dicts parsed from an mbox file."""
-    mbox = mailbox.mbox(str(path))
-
     # Derive the mbox month from the filename (e.g. pgsql-hackers.202306)
     # Used to clamp dates for git format-patch emails whose Date header
     # reflects the git commit date rather than the actual send date.
     mbox_ym = path.name.split(".")[-1]
     mbox_date = datetime(int(mbox_ym[:4]), int(mbox_ym[4:]), 1, tzinfo=timezone.utc)
 
-    for msg in mbox:
+    for msg in _iter_mbox_messages(path):
         # Skip header-less fragments caused by unescaped "From " lines in bodies
         if not msg.keys():
             continue
@@ -673,6 +788,10 @@ def main():
             sys.exit(1)
         print("[auth] logging in to postgresql.org...")
         session = make_session(args.pg_user, args.pg_pass)
+        first_download_month = next(
+            (y, m) for y, m in months if args.force_download or not is_cached(y, m, args.list_name)
+        )
+        ensure_archive_access(session, args.list_name, *first_download_month)
     else:
         session = requests.Session()
 
@@ -705,11 +824,21 @@ def main():
         for i, (year, month) in enumerate(months):
             # In range backfill mode, defer derive_threads until the final month
             derive = not args.backfill or (i == len(months) - 1)
-            grand_total += ingest(
-                conn, session, year, month,
-                args.list_name, args.force_download,
-                args.backfill, derive,
-            )
+            try:
+                grand_total += ingest(
+                    conn, session, year, month,
+                    args.list_name, args.force_download,
+                    args.backfill, derive,
+                )
+            except ArchiveAuthError:
+                print("  [auth] archive access failed, re-authenticating and retrying once...")
+                session = make_session(args.pg_user, args.pg_pass)
+                ensure_archive_access(session, args.list_name, year, month)
+                grand_total += ingest(
+                    conn, session, year, month,
+                    args.list_name, args.force_download,
+                    args.backfill, derive,
+                )
             if i < len(months) - 1:
                 time.sleep(args.delay)
 
