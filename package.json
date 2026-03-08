@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "bun --watch src/server/index.ts",
     "start": "bun src/server/index.ts",
+    "test": "bun test test",
     "codegen": "kysely-codegen --dialect postgres --url $DATABASE_URL --out-file src/server/types/db.d.ts"
   },
   "dependencies": {
