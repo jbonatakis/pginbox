@@ -1,7 +1,7 @@
 # Reverse proxy: / -> frontend, /api/* -> API (prefix stripped)
-# Used by the caddy service in docker-compose.prod.yml
+# Hardcoded production domain.
 
-:80 {
+pginbox.dev, www.pginbox.dev {
     handle_path /api/* {
         reverse_proxy api:3000
     }

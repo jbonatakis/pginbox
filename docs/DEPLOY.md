@@ -16,7 +16,8 @@ export DATABASE_URL="postgresql://postgres.[project-ref]:[password]@aws-0-[regio
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-- **Port 80** serves the app: `/` → frontend, `/api/*` → API (Caddy strips the prefix).
+- **Port 80 + 443** are exposed on Caddy.
+- Caddy serves `https://pginbox.dev` and `https://www.pginbox.dev`, and routes `/` -> frontend and `/api/*` -> API.
 - Frontend uses relative `/api` so no extra env for the frontend build.
 
 ## Redeploy independently
