@@ -9,8 +9,9 @@
     "codegen": "kysely-codegen --dialect postgres --url $DATABASE_URL --out-file src/server/types/db.d.ts"
   },
   "dependencies": {
-    "elysia": "latest",
+    "@elysiajs/cors": "^1.4.1",
     "@elysiajs/eden": "latest",
+    "elysia": "latest",
     "kysely": "latest",
     "pg": "latest"
   },

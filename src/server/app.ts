@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { cors } from "@elysiajs/cors";
 import { BadRequestError } from "./errors";
 import { analyticsRoutes } from "./routes/analytics";
 import { listsRoutes } from "./routes/lists";
@@ -11,6 +12,11 @@ function errorJson(message: string, code?: string) {
 }
 
 export const app = new Elysia()
+  .use(
+    cors({
+      origin: [/^https?:\/\/([a-z0-9-]+\.)?pginbox\.dev$/, /^https?:\/\/([a-z0-9-]+\.)?pginbox\.com$/],
+    }),
+  )
   .onError(({ error, code, set }) => {
     if (error instanceof BadRequestError) {
       set.status = 400;
