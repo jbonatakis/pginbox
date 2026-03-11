@@ -9,3 +9,6 @@ psql postgresql://pginbox:pginbox@localhost:5499/pginbox
 ```
 
 Or use `make pgcli` for an interactive session (pgcli is interactive-only, no `-c` flag).
+
+## Python
+Use pytest for all testing

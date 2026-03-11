@@ -55,6 +55,7 @@ CACHE_DIR = Path("mbox_cache")
 CHUNK_SIZE = 64 * 1024  # 64 KB
 HTTP_RETRIES = 5
 HTTP_RETRY_BASE_DELAY = 2.0
+MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
 
 
 
@@ -402,6 +403,23 @@ def _normalize_email(addr: str) -> str:
     return re.sub(r'\+[^@]*@', '@', addr)
 
 
+def _extract_message_ids(value: str | None) -> list[str]:
+    decoded = _decode_header(value or "").strip()
+    if not decoded:
+        return []
+    ids = MESSAGE_ID_RE.findall(decoded)
+    if ids:
+        return ids
+    return [part for part in decoded.split() if part]
+
+
+def _extract_message_id(value: str | None, *, prefer_last: bool = False) -> str | None:
+    ids = _extract_message_ids(value)
+    if not ids:
+        return None
+    return ids[-1] if prefer_last else ids[0]
+
+
 def _normalize_subject(subject: str) -> str:
     return re.sub(r'^(Re|Fwd?)\s*:\s*', '', subject, flags=re.IGNORECASE).strip()
 
@@ -470,7 +488,7 @@ def parse_mbox(path: Path, list_id: int):
             continue
 
         # Message-ID
-        message_id = (msg.get("Message-ID") or "").strip()
+        message_id = _extract_message_id(msg.get("Message-ID"))
         if not message_id:
             digest = hashlib.sha256(str(msg).encode()).hexdigest()[:16]
             message_id = f"<synthetic-{digest}@pginbox>"
@@ -515,11 +533,12 @@ def parse_mbox(path: Path, list_id: int):
             from_name = name or ""
             from_email = _normalize_email(addr) if addr else ""
 
-        in_reply_to = (msg.get("In-Reply-To") or "").strip() or None
+        in_reply_to = _extract_message_id(msg.get("In-Reply-To"), prefer_last=True)
 
-        refs = [r.strip() for r in (msg.get("References") or "").split() if r.strip()]
+        refs = _extract_message_ids(msg.get("References"))
 
-        # Thread root is the oldest ancestor in References, or self if this is a new thread
+        # Thread root is provisional here. Batch/global resolution can replace
+        # self-rooted replies that only carry In-Reply-To.
         thread_id = refs[0] if refs else message_id
 
         subject = msg.get("Subject") or ""
@@ -570,9 +589,15 @@ INSERT_ATTACHMENT_SQL = """
     VALUES (%(message_id)s, %(filename)s, %(content_type)s, %(size_bytes)s, %(content)s)
 """
 
-# Used after bulk message insert during backfill to derive threads in one pass.
+UPDATE_MESSAGE_THREAD_SQL = """
+    UPDATE messages
+    SET thread_id = %(thread_id)s
+    WHERE message_id = %(message_id)s
+"""
+
+# Used after bulk message insert during backfill to rebuild threads in one pass.
 # Takes subject from the earliest message in each thread.
-DERIVE_THREADS_SQL = """
+REBUILD_THREADS_SQL = """
     INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
     SELECT
         thread_id,
@@ -583,11 +608,81 @@ DERIVE_THREADS_SQL = """
         count(*)
     FROM messages
     GROUP BY thread_id, list_id
-    ON CONFLICT (thread_id) DO UPDATE SET
-        last_activity_at = GREATEST(threads.last_activity_at, EXCLUDED.last_activity_at),
-        message_count    = EXCLUDED.message_count
 """
 
+
+def _fetch_thread_ids(cur, message_ids: list[str]) -> dict[str, str]:
+    if not message_ids:
+        return {}
+    cur.execute(
+        "SELECT message_id, thread_id FROM messages WHERE message_id = ANY(%s)",
+        (message_ids,),
+    )
+    return {message_id: thread_id for message_id, thread_id in cur.fetchall()}
+
+
+def _resolve_thread_ids(
+    records: dict[str, dict],
+    known_thread_ids: dict[str, str] | None = None,
+) -> dict[str, str]:
+    known_thread_ids = known_thread_ids or {}
+    resolved: dict[str, str] = {}
+    visiting: set[str] = set()
+
+    def resolve(message_id: str) -> str:
+        if message_id in resolved:
+            return resolved[message_id]
+        if message_id in visiting:
+            return message_id
+
+        record = records[message_id]
+        visiting.add(message_id)
+        refs = record.get("refs") or []
+        if refs:
+            thread_id = refs[0]
+        else:
+            parent_id = record.get("in_reply_to")
+            if not parent_id or parent_id == message_id:
+                thread_id = message_id
+            elif parent_id in records:
+                thread_id = resolve(parent_id)
+            else:
+                thread_id = known_thread_ids.get(parent_id, message_id)
+        visiting.remove(message_id)
+        resolved[message_id] = thread_id
+        return thread_id
+
+    for message_id in records:
+        resolve(message_id)
+
+    return resolved
+
+
+def _resolve_batch_thread_ids(conn, batch: list):
+    if not batch:
+        return
+
+    batch_records = {
+        record["message_id"]: {
+            "in_reply_to": record.get("in_reply_to"),
+            "refs": record.get("refs"),
+        }
+        for record in batch
+    }
+    parent_ids = sorted({
+        record["in_reply_to"]
+        for record in batch
+        if record.get("in_reply_to")
+        and not record.get("refs")
+        and record["in_reply_to"] not in batch_records
+    })
+
+    with conn.cursor() as cur:
+        known_thread_ids = _fetch_thread_ids(cur, parent_ids)
+
+    resolved = _resolve_thread_ids(batch_records, known_thread_ids)
+    for record in batch:
+        record["thread_id"] = resolved[record["message_id"]]
 
 
 def _insert_attachments(cur, batch: list):
@@ -610,6 +705,7 @@ def _insert_attachments(cur, batch: list):
 
 def store_batch_live(conn, batch: list):
     """Upsert threads and insert messages in one transaction (live ingestion)."""
+    _resolve_batch_thread_ids(conn, batch)
     with conn.cursor() as cur:
         execute_batch(cur, UPSERT_THREAD_SQL, batch, page_size=500)
         execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
@@ -619,20 +715,54 @@ def store_batch_live(conn, batch: list):
 
 def store_batch_backfill(conn, batch: list):
     """Insert messages only; threads derived separately at the end."""
+    _resolve_batch_thread_ids(conn, batch)
     with conn.cursor() as cur:
         execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
         _insert_attachments(cur, batch)
     conn.commit()
 
 
+def rethread_messages(conn):
+    """Recompute messages.thread_id from References/In-Reply-To across the full dataset."""
+    print("  [rethread messages]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute("SELECT message_id, in_reply_to, refs, thread_id FROM messages")
+        rows = cur.fetchall()
+
+    records = {
+        message_id: {
+            "in_reply_to": in_reply_to,
+            "refs": refs,
+        }
+        for message_id, in_reply_to, refs, _thread_id in rows
+    }
+    current_thread_ids = {
+        message_id: thread_id
+        for message_id, _in_reply_to, _refs, thread_id in rows
+    }
+    updates = [
+        {"message_id": message_id, "thread_id": thread_id}
+        for message_id, thread_id in _resolve_thread_ids(records).items()
+        if current_thread_ids[message_id] != thread_id
+    ]
+
+    with conn.cursor() as cur:
+        if updates:
+            execute_batch(cur, UPDATE_MESSAGE_THREAD_SQL, updates, page_size=1000)
+    conn.commit()
+    print(f" {len(updates)} messages updated")
+
+
 def derive_threads(conn):
-    """Derive threads table from messages. Run once after backfill is complete."""
+    """Rethread messages, then rebuild the derived threads table from messages."""
+    rethread_messages(conn)
     print("  [derive threads]", end="", flush=True)
     with conn.cursor() as cur:
-        cur.execute(DERIVE_THREADS_SQL)
+        cur.execute("TRUNCATE threads")
+        cur.execute(REBUILD_THREADS_SQL)
         count = cur.rowcount
     conn.commit()
-    print(f" {count} threads upserted")
+    print(f" {count} threads rebuilt")
 
 
 def _ingest_worker(dsn: str, list_id: int, year: int, month: int, list_name: str) -> int:

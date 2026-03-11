@@ -75,13 +75,13 @@ people_emails
 ### Key design decisions
 
 **No FK from `messages.thread_id` to `threads`**
-During backfill, messages are inserted before their thread roots exist in the `threads` table. A foreign key would require careful ordering or deferred constraints. Since `thread_id` is derived from the message's own `References` header (not external input), integrity is maintained by the ingestion logic rather than the database.
+During backfill, messages are inserted before their thread roots exist in the `threads` table. A foreign key would require careful ordering or deferred constraints. Since `thread_id` is derived from message headers (`References`, with `In-Reply-To` fallback) rather than external input, integrity is maintained by the ingestion logic rather than the database.
 
-**Thread identity via `References[0]`**
-The `References` email header contains the full ancestor chain of a thread, oldest first. The first entry is the thread root's `message_id`. This lets us assign `thread_id` without recursive tree-walking and without needing the root message to be present in the database first.
+**Thread identity via `References[0]` with `In-Reply-To` fallback**
+The `References` email header contains the full ancestor chain of a thread, oldest first. The first entry is the thread root's `message_id`, so messages with `References` can be threaded immediately. When `References` is missing, ingestion falls back to `In-Reply-To`: live batches inherit the parent thread when the parent is already known, and backfills run a full rethread pass after load so out-of-order inserts still converge on the correct `thread_id`.
 
 **`threads` as a derived/materialized table**
-`threads` is not a source of truth — it's a rollup of data that lives in `messages`. During backfill it's rebuilt with a single `INSERT ... SELECT ... GROUP BY` after all messages are loaded. During live ingestion it's kept current via per-message upserts. It can always be fully rebuilt from `messages` if needed.
+`threads` is not a source of truth — it's a rollup of data that lives in `messages`. During backfill, `messages` are rethreaded and `threads` is rebuilt from scratch after all messages are loaded. During live ingestion it's kept current via per-message upserts. It can always be fully rebuilt from `messages` if needed.
 
 **`lists` registration with validation**
 When a new list name is provided, the ingestion code probes the mbox URL before inserting into `lists`. If the URL returns HTML (auth redirect or 404), it errors before writing anything to the database. Validation is skipped when the mbox file is already cached locally, since a successful prior download is sufficient proof.
