@@ -138,15 +138,18 @@ The frontend uses `q` end-to-end now. The old `search` field in thread query sta
 Current search is intentionally simple:
 
 - it uses `ILIKE` on `threads.subject`
-- there is no dedicated search index on `threads.subject`
-- there is no trigram or full-text search setup in the current schema
+- it is accelerated by PostgreSQL trigram indexing (`pg_trgm`)
+- it is not full-text search
 
 There are indexes for:
 
 - `threads.list_id`
 - `threads.last_activity_at`
+- `threads.subject` via a GIN trigram index
 
-There is not currently an index specifically for subject search.
+The subject-search index is:
+
+- `idx_threads_subject_trgm` on `threads.subject gin_trgm_ops`
 
 That is acceptable for MVP because:
 
@@ -179,8 +182,8 @@ If search needs to improve without changing the overall UX, the natural sequence
 
 The most straightforward upgrade paths are:
 
-1. Add trigram indexing on thread subjects for faster `ILIKE`-style matching.
-2. Move to PostgreSQL full-text search for thread subjects.
+1. Keep the existing trigram-backed subject search for substring matching.
+2. Add PostgreSQL full-text search if subject-only search needs better linguistic matching or ranking.
 3. Expand search to messages if subject-only search proves too narrow.
 4. Add ranking/highlighting once the backend supports it.
 
@@ -191,6 +194,7 @@ Today, search in `pginbox` is a thin, practical layer on top of the thread explo
 - users type a subject query
 - the frontend navigates to `/threads?q=...`
 - the backend filters `threads.subject` with `ILIKE`
+- PostgreSQL uses a trigram GIN index to accelerate those substring matches
 - results are shown in the normal threads list ordered by recent activity
 
 That keeps the implementation small while giving the homepage a real purpose and making search usable immediately.

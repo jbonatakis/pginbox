@@ -16,6 +16,20 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
+
+
+--
 -- Name: _normalize_subject(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -507,6 +521,13 @@ CREATE INDEX idx_threads_list_id ON public.threads USING btree (list_id);
 
 
 --
+-- Name: idx_threads_subject_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_threads_subject_trgm ON public.threads USING gin (subject public.gin_trgm_ops);
+
+
+--
 -- Name: attachments attachments_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -554,4 +575,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260301000002'),
     ('20260301000003'),
     ('20260301000004'),
-    ('20260312000005');
+    ('20260312000005'),
+    ('20260312000006');
