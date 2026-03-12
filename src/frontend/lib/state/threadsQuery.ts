@@ -3,15 +3,14 @@ export const THREADS_QUERY_MIN_LIMIT = 1;
 export const THREADS_QUERY_MAX_LIMIT = 100;
 export const THREADS_RESTORE_SCROLL_PARAM = "_scrollY";
 
-const OPAQUE_SEARCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
-const FILTER_PATCH_KEYS: Array<keyof ThreadsQueryPatch> = ["from", "limit", "list", "search", "to"];
+const FILTER_PATCH_KEYS: Array<keyof ThreadsQueryPatch> = ["from", "limit", "list", "q", "to"];
 
 export interface ThreadsQueryState {
   cursor?: string;
   from?: string;
   limit: number;
   list?: string;
-  search?: string;
+  q?: string;
   to?: string;
 }
 
@@ -20,7 +19,7 @@ export interface ThreadsQueryInput {
   from?: Date | string | null;
   limit?: number | null;
   list?: string | null;
-  search?: string | null;
+  q?: string | null;
   to?: Date | string | null;
 }
 
@@ -56,7 +55,7 @@ export function parseThreadsQuery(search: string | URLSearchParams): ThreadsQuer
     from: params.get("from"),
     limit: parseOptionalNumber(params.get("limit")),
     list: params.get("list"),
-    search: params.get("search"),
+    q: params.get("q") ?? params.get("search"),
     to: params.get("to"),
   });
 }
@@ -81,8 +80,8 @@ export function normalizeThreadsQueryState(
   const to = normalizeQueryDate(state.to);
   if (to) normalized.to = to;
 
-  const search = normalizeOpaqueSearchId(state.search);
-  if (search) normalized.search = search;
+  const q = normalizeQueryText(state.q);
+  if (q) normalized.q = q;
 
   const cursor = normalizeQueryText(state.cursor);
   if (cursor) normalized.cursor = cursor;
@@ -159,7 +158,7 @@ export function serializeThreadsQuery(state: ThreadsQueryInput): string {
   if (normalized.list) params.set("list", normalized.list);
   if (normalized.from) params.set("from", normalized.from);
   if (normalized.to) params.set("to", normalized.to);
-  if (normalized.search) params.set("search", normalized.search);
+  if (normalized.q) params.set("q", normalized.q);
   if (normalized.cursor) params.set("cursor", normalized.cursor);
   if (normalized.limit !== THREADS_QUERY_DEFAULT_LIMIT) {
     params.set("limit", String(normalized.limit));
@@ -192,14 +191,6 @@ function normalizeQueryDate(value: unknown): string | undefined {
 
   return parsed.toISOString();
 }
-
-function normalizeOpaqueSearchId(value: unknown): string | undefined {
-  const normalized = normalizeQueryText(value);
-  if (!normalized) return undefined;
-  if (!OPAQUE_SEARCH_ID_PATTERN.test(normalized)) return undefined;
-  return normalized;
-}
-
 function normalizeRestoreScroll(value: unknown): number | undefined {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return undefined;

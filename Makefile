@@ -6,7 +6,7 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range derive-threads decode-subjects charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api codegen test install-web dev-web build-api build-frontend prod-up prod-down prod-reload-caddy
+.PHONY: up down reset psql logs ingest backfill backfill-range derive-threads decode-subjects charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api codegen test install-web dev-web build-api build-frontend build-all build-release prod-up prod-up-no-build prod-down restart prod-reload-caddy
 
 up:
 	docker compose up -d
@@ -100,11 +100,20 @@ build-api:
 build-frontend:
 	docker build -f Dockerfile.frontend -t pginbox-frontend .
 
+build-all: build-api build-frontend
+
 prod-up:
 	docker compose -f docker-compose.prod.yml up -d --build
+
+prod-up-no-build:
+	docker compose -f docker-compose.prod.yml up -d
 
 prod-down:
 	docker compose -f docker-compose.prod.yml down
 
+restart: prod-down prod-up
+
 prod-reload-caddy:
 	docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+build-release: build-all prod-down prod-up-no-build

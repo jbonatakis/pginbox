@@ -9,6 +9,7 @@
   export let limitOptions: number[] = [10, 25, 50, 100];
   export let listOptions: List[] = [];
   export let listsErrorMessage: string | null = null;
+  export let searchQuery = "";
   export let selectedList: string | undefined;
   export let toDate = "";
 
@@ -18,8 +19,17 @@
     limitchange: number;
     listchange: string | null;
     retrylists: void;
+    searchsubmit: string | null;
     tochange: string | null;
   }>();
+
+  let searchDraft = searchQuery;
+  let lastSyncedSearchQuery = searchQuery;
+
+  $: if (searchQuery !== lastSyncedSearchQuery) {
+    searchDraft = searchQuery;
+    lastSyncedSearchQuery = searchQuery;
+  }
 
   $: hasUnknownSelectedList =
     typeof selectedList === "string" &&
@@ -67,9 +77,29 @@
   const emitRetryLists = (): void => {
     dispatch("retrylists");
   };
+
+  const emitSearchSubmit = (): void => {
+    const normalized = searchDraft.trim();
+    lastSyncedSearchQuery = normalized;
+    dispatch("searchsubmit", normalized.length > 0 ? normalized : null);
+  };
 </script>
 
 <section class="filters" aria-label="Thread filters">
+  <div class="field search-field">
+    <label for="threads-search">Subject search</label>
+    <form class="search-form" on:submit|preventDefault={emitSearchSubmit}>
+      <input
+        id="threads-search"
+        type="search"
+        bind:value={searchDraft}
+        placeholder="Search thread subjects"
+        disabled={isBusy}
+      />
+      <button type="submit" class="search-button" disabled={isBusy}>Search</button>
+    </form>
+  </div>
+
   <div class="field list-field">
     <label for="threads-list">List</label>
     <select
@@ -156,6 +186,10 @@
     align-content: start;
   }
 
+  .search-field {
+    grid-column: 1 / -1;
+  }
+
   .list-field {
     grid-column: span 2;
   }
@@ -185,6 +219,30 @@
   select:disabled {
     opacity: 0.7;
     cursor: not-allowed;
+  }
+
+  .search-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+  }
+
+  .search-button {
+    border: 1px solid #6f9fdd;
+    border-radius: 0.45rem;
+    background: #e8f2ff;
+    color: #0b4ea2;
+    font-weight: 700;
+    font-size: 0.82rem;
+    line-height: 1;
+    padding: 0.44rem 0.75rem;
+    cursor: pointer;
+    min-height: 2rem;
+  }
+
+  .search-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
   }
 
   .actions {
@@ -247,6 +305,10 @@
   }
 
   @media (max-width: 760px) {
+    .search-form {
+      grid-template-columns: 1fr;
+    }
+
     .list-field {
       grid-column: span 1;
     }

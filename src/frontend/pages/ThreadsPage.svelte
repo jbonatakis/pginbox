@@ -48,6 +48,7 @@
   $: isBusy = status === "loading" || isRefreshing;
   $: isInitialLoad = status === "idle" || (status === "loading" && threads.length === 0);
   $: listsErrorMessage = listsError?.message ?? null;
+  $: searchQuery = queryState.q ?? "";
   $: toDate = toDateInputValue(queryState.to);
   $: if (
     typeof window !== "undefined" &&
@@ -169,6 +170,7 @@
           from: state.from,
           limit: clampThreadsQueryLimit(state.limit),
           list: state.list,
+          q: state.q,
           to: state.to,
         },
         { signal: requestController.signal }
@@ -239,6 +241,7 @@
       from: null,
       limit: THREADS_QUERY_DEFAULT_LIMIT,
       list: null,
+      q: null,
       to: null,
     });
     commitQueryState(nextState, "replace");
@@ -269,6 +272,10 @@
     applyFilterPatch({ limit: clampThreadsQueryLimit(event.detail) });
   };
 
+  const handleSearchSubmit = (event: CustomEvent<string | null>): void => {
+    applyFilterPatch({ q: event.detail });
+  };
+
   onMount(() => {
     const initialState = syncStateFromLocation();
 
@@ -297,7 +304,7 @@
   <header class="page-header">
     <div class="header-copy">
       <h1 class="page-title" data-route-heading tabindex="-1">Threads</h1>
-      <p>Filter list activity, scan conversation subjects, and open thread timelines.</p>
+      <p>Search thread subjects, filter list activity, and open thread timelines.</p>
     </div>
 
     <button class="refresh-button" type="button" disabled={isBusy} on:click={retryThreads}
@@ -306,6 +313,7 @@
   </header>
 
   <ThreadsFilters
+    searchQuery={searchQuery}
     selectedList={queryState.list}
     fromDate={fromDate}
     toDate={toDate}
@@ -319,6 +327,7 @@
     on:fromchange={handleFromDateChange}
     on:tochange={handleToDateChange}
     on:limitchange={handleLimitChange}
+    on:searchsubmit={handleSearchSubmit}
     on:clear={clearFilters}
     on:retrylists={retryLists}
   />

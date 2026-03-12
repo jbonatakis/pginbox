@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { analyticsPath, onLinkClick, peoplePath, threadsPath } from "../router";
+  import { analyticsPath, navigate, onLinkClick, peoplePath, threadsPath } from "../router";
 
   type Shortcut = {
     description: string;
@@ -24,32 +24,51 @@
       description: "See archive-wide counts and activity patterns.",
     },
   ];
+
+  let searchQuery = "";
+
+  const threadsSearchPath = (query: string): string => {
+    const normalized = query.trim();
+    if (normalized.length === 0) return threadsPath;
+
+    const params = new URLSearchParams({ q: normalized });
+    return `${threadsPath}?${params.toString()}`;
+  };
+
+  const submitSearch = (): void => {
+    navigate(threadsSearchPath(searchQuery));
+  };
 </script>
 
 <section class="home-page">
   <div class="search-stage">
     <h1 class="page-title" data-route-heading tabindex="-1">Search PostgreSQL mailing list history</h1>
     <p class="lede">
-      Search will be the front door. For now, this page stays static and points into the archive
-      views that already work.
+      Start with a subject search, then drop into the thread explorer to refine by list and date.
     </p>
 
-    <div class="search-shell" role="search" aria-labelledby="home-search-label" aria-describedby="home-search-note">
+    <form
+      class="search-shell"
+      role="search"
+      aria-labelledby="home-search-label"
+      aria-describedby="home-search-note"
+      on:submit|preventDefault={submitSearch}
+    >
       <label id="home-search-label" class="sr-only" for="home-search">Search the archive</label>
       <div class="search-frame">
         <input
           id="home-search"
-          type="text"
-          placeholder="Search threads, subjects, contributors, and patches"
-          readonly
-          aria-readonly="true"
+          type="search"
+          name="q"
+          bind:value={searchQuery}
+          placeholder="Search thread subjects"
         />
-        <span class="search-badge">Coming soon</span>
+        <button type="submit" class="search-button">Search</button>
       </div>
-    </div>
+    </form>
 
     <p id="home-search-note" class="search-note">
-      Search is not wired up yet. Until then, browse by thread, contributor, or overall activity.
+      MVP search looks at thread subjects only. Results open in the threads view.
     </p>
 
     <div class="shortcut-grid" aria-label="Available archive views">
@@ -67,8 +86,7 @@
   </div>
 
   <p class="future-note">
-    Later this page can hold hot threads or recent discussions without becoming the default data
-    dump again.
+    Later this page can add hot threads or recent discussions under the search box.
   </p>
 </section>
 
@@ -157,18 +175,24 @@
       0 22px 45px -30px rgba(16, 42, 67, 0.4);
   }
 
-  .search-badge {
+  .search-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-height: 2.4rem;
     padding: 0.45rem 0.85rem;
+    border: 1px solid #6f9fdd;
     border-radius: 999px;
     background: #e8f2ff;
     color: #0b4ea2;
     font-size: 0.84rem;
     font-weight: 700;
     white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .search-button:hover {
+    background: #dcebff;
   }
 
   .search-note {
@@ -250,7 +274,7 @@
       padding: 0.8rem 0.9rem;
     }
 
-    .search-badge {
+    .search-button {
       min-height: 2rem;
     }
   }
