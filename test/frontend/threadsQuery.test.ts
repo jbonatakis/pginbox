@@ -14,7 +14,7 @@ import {
 describe("threads query state", () => {
   it("parses known query keys from location.search", () => {
     const parsed = parseThreadsQuery(
-      "?to=2025-01-04&list=pgsql-hackers&limit=200&search=srch_01ABCXYZ&cursor=abc123&from=2025-01-03"
+      "?to=2025-01-04&list=pgsql-hackers&limit=200&q=vacuum&cursor=abc123&from=2025-01-03"
     );
 
     expect(parsed).toEqual({
@@ -22,7 +22,7 @@ describe("threads query state", () => {
       from: "2025-01-03T00:00:00.000Z",
       limit: 100,
       list: "pgsql-hackers",
-      search: "srch_01ABCXYZ",
+      q: "vacuum",
       to: "2025-01-04T00:00:00.000Z",
     });
   });
@@ -47,38 +47,42 @@ describe("threads query state", () => {
       from: "2025-01-03",
       limit: 50,
       list: "pgsql-hackers",
-      search: "srch_opaque",
+      q: "vacuum freeze",
       to: "2025-01-04",
     });
 
     expect(serialized).toBe(
-      "?list=pgsql-hackers&from=2025-01-03T00%3A00%3A00.000Z&to=2025-01-04T00%3A00%3A00.000Z&search=srch_opaque&cursor=c42&limit=50"
+      "?list=pgsql-hackers&from=2025-01-03T00%3A00%3A00.000Z&to=2025-01-04T00%3A00%3A00.000Z&q=vacuum+freeze&cursor=c42&limit=50"
     );
   });
 
-  it("treats search as an opaque id and rejects semantic prompt text", () => {
-    expect(parseThreadsQuery("?search=how%20does%20vacuum%20work").search).toBeUndefined();
-    expect(serializeThreadsQuery({ search: "find messages about index bloat" })).toBe("");
-    expect(serializeThreadsQuery({ search: "srch_opaque-token" })).toBe("?search=srch_opaque-token");
+  it("accepts free-text q and upgrades the old search param", () => {
+    expect(parseThreadsQuery("?q=how%20does%20vacuum%20work").q).toBe("how does vacuum work");
+    expect(parseThreadsQuery("?search=how%20does%20vacuum%20work").q).toBe(
+      "how does vacuum work"
+    );
+    expect(serializeThreadsQuery({ q: "find messages about index bloat" })).toBe(
+      "?q=find+messages+about+index+bloat"
+    );
   });
 
   it("updates state and search strings through typed patches", () => {
     const nextState = updateThreadsQueryState(
       parseThreadsQuery("?list=pgsql-hackers&limit=25&cursor=abc"),
-      { cursor: null, limit: 80, search: "srch_123" }
+      { cursor: null, limit: 80, q: "wal sender" }
     );
     expect(nextState).toEqual({
       limit: 80,
       list: "pgsql-hackers",
-      search: "srch_123",
+      q: "wal sender",
     });
 
     const nextSearch = updateThreadsSearch("?list=pgsql-hackers&limit=25&cursor=abc", {
       cursor: null,
       limit: 80,
-      search: "srch_123",
+      q: "wal sender",
     });
-    expect(nextSearch).toBe("?list=pgsql-hackers&search=srch_123&limit=80");
+    expect(nextSearch).toBe("?list=pgsql-hackers&q=wal+sender&limit=80");
   });
 
   it("clears cursor when a non-cursor filter patch is applied", () => {

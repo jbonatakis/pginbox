@@ -26,9 +26,131 @@ CREATE FUNCTION public._normalize_subject(subject text) RETURNS text
 $$;
 
 
+--
+-- Name: refresh_analytics_views(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refresh_analytics_views() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    REFRESH MATERIALIZED VIEW analytics_summary;
+    REFRESH MATERIALIZED VIEW analytics_by_month;
+    REFRESH MATERIALIZED VIEW analytics_top_senders;
+    REFRESH MATERIALIZED VIEW analytics_by_hour;
+    REFRESH MATERIALIZED VIEW analytics_by_dow;
+END;
+$$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.messages (
+    id bigint NOT NULL,
+    message_id text NOT NULL,
+    thread_id text NOT NULL,
+    list_id integer NOT NULL,
+    sent_at timestamp with time zone,
+    from_name text,
+    from_email text,
+    subject text,
+    in_reply_to text,
+    refs text[],
+    body text,
+    sent_at_approx boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: analytics_by_dow; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.analytics_by_dow AS
+ SELECT (EXTRACT(dow FROM sent_at))::integer AS dow,
+    count(*) AS messages
+   FROM public.messages
+  WHERE ((sent_at_approx = false) AND (sent_at IS NOT NULL))
+  GROUP BY ((EXTRACT(dow FROM sent_at))::integer)
+  WITH NO DATA;
+
+
+--
+-- Name: analytics_by_hour; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.analytics_by_hour AS
+ SELECT (EXTRACT(hour FROM sent_at))::integer AS hour,
+    count(*) AS messages
+   FROM public.messages
+  WHERE ((sent_at_approx = false) AND (sent_at IS NOT NULL))
+  GROUP BY ((EXTRACT(hour FROM sent_at))::integer)
+  WITH NO DATA;
+
+
+--
+-- Name: analytics_by_month; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.analytics_by_month AS
+ SELECT (EXTRACT(year FROM sent_at))::integer AS year,
+    (EXTRACT(month FROM sent_at))::integer AS month,
+    count(*) AS messages
+   FROM public.messages
+  WHERE ((sent_at_approx = false) AND (sent_at IS NOT NULL))
+  GROUP BY ((EXTRACT(year FROM sent_at))::integer), ((EXTRACT(month FROM sent_at))::integer)
+  WITH NO DATA;
+
+
+--
+-- Name: threads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.threads (
+    thread_id text NOT NULL,
+    list_id integer NOT NULL,
+    subject text,
+    started_at timestamp with time zone,
+    last_activity_at timestamp with time zone,
+    message_count integer DEFAULT 1 NOT NULL
+);
+
+
+--
+-- Name: analytics_summary; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.analytics_summary AS
+ SELECT (1)::smallint AS singleton_id,
+    ( SELECT count(*) AS count
+           FROM public.messages) AS total_messages,
+    ( SELECT count(*) AS count
+           FROM public.threads) AS total_threads,
+    ( SELECT count(DISTINCT messages.from_email) AS count
+           FROM public.messages) AS unique_senders,
+    ( SELECT count(DISTINCT date_trunc('month'::text, messages.sent_at)) AS count
+           FROM public.messages
+          WHERE ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL))) AS months_ingested
+  WITH NO DATA;
+
+
+--
+-- Name: analytics_top_senders; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.analytics_top_senders AS
+ SELECT from_name,
+    from_email,
+    count(*) AS message_count
+   FROM public.messages
+  GROUP BY from_name, from_email
+  WITH NO DATA;
+
 
 --
 -- Name: attachments; Type: TABLE; Schema: public; Owner: -
@@ -86,26 +208,6 @@ CREATE SEQUENCE public.lists_id_seq
 --
 
 ALTER SEQUENCE public.lists_id_seq OWNED BY public.lists.id;
-
-
---
--- Name: messages; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.messages (
-    id bigint NOT NULL,
-    message_id text NOT NULL,
-    thread_id text NOT NULL,
-    list_id integer NOT NULL,
-    sent_at timestamp with time zone,
-    from_name text,
-    from_email text,
-    subject text,
-    in_reply_to text,
-    refs text[],
-    body text,
-    sent_at_approx boolean DEFAULT false NOT NULL
-);
 
 
 --
@@ -195,20 +297,6 @@ ALTER SEQUENCE public.people_id_seq OWNED BY public.people.id;
 
 CREATE TABLE public.schema_migrations (
     version character varying NOT NULL
-);
-
-
---
--- Name: threads; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.threads (
-    thread_id text NOT NULL,
-    list_id integer NOT NULL,
-    subject text,
-    started_at timestamp with time zone,
-    last_activity_at timestamp with time zone,
-    message_count integer DEFAULT 1 NOT NULL
 );
 
 
@@ -321,6 +409,48 @@ ALTER TABLE ONLY public.threads
 
 
 --
+-- Name: analytics_by_dow_dow_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_by_dow_dow_idx ON public.analytics_by_dow USING btree (dow);
+
+
+--
+-- Name: analytics_by_hour_hour_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_by_hour_hour_idx ON public.analytics_by_hour USING btree (hour);
+
+
+--
+-- Name: analytics_by_month_year_month_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_by_month_year_month_idx ON public.analytics_by_month USING btree (year, month);
+
+
+--
+-- Name: analytics_summary_singleton_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_summary_singleton_idx ON public.analytics_summary USING btree (singleton_id);
+
+
+--
+-- Name: analytics_top_senders_count_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_top_senders_count_idx ON public.analytics_top_senders USING btree (message_count DESC, from_email, from_name);
+
+
+--
+-- Name: analytics_top_senders_name_email_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_top_senders_name_email_idx ON public.analytics_top_senders USING btree (from_name, from_email);
+
+
+--
 -- Name: idx_attachments_message_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -423,4 +553,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260301000001'),
     ('20260301000002'),
     ('20260301000003'),
-    ('20260301000004');
+    ('20260301000004'),
+    ('20260312000005');

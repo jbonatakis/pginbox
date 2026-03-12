@@ -873,6 +873,15 @@ def derive_threads(conn):
     print(f" {count} threads rebuilt")
 
 
+def refresh_analytics_views(conn):
+    """Refresh analytics materialized views after archive data changes."""
+    print("  [refresh analytics]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute("SELECT refresh_analytics_views()")
+    conn.commit()
+    print(" done")
+
+
 def _ingest_worker(dsn: str, list_id: int, year: int, month: int, list_name: str) -> int:
     """Parallel backfill worker — creates its own DB connection."""
     conn = psycopg2.connect(dsn)
@@ -952,6 +961,9 @@ def ingest(
 
     if backfill and derive:
         derive_threads(conn)
+        refresh_analytics_views(conn)
+    elif not backfill:
+        refresh_analytics_views(conn)
 
     return total
 
@@ -1024,11 +1036,13 @@ def main():
     conn = psycopg2.connect(args.dsn)
     if args.derive_only:
         derive_threads(conn)
+        refresh_analytics_views(conn)
         conn.close()
         return
     if args.decode_subjects:
         decode_message_subjects(conn)
         derive_threads(conn)
+        refresh_analytics_views(conn)
         conn.close()
         return
 
@@ -1079,6 +1093,7 @@ def main():
                 grand_total += future.result()
 
         derive_threads(conn)
+        refresh_analytics_views(conn)
     else:
         grand_total = 0
         for i, (year, month) in enumerate(months):
