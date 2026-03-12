@@ -9,6 +9,12 @@ Usage:
     # Backfill (bulk insert messages, derive threads at the end):
     python3 ingest.py --year 2026 --month 2 --backfill
 
+    # Rebuild canonical message.thread_id values and the derived threads table:
+    python3 ingest.py --derive-only
+
+    # Decode stored RFC 2047 message subjects and rebuild threads:
+    python3 ingest.py --decode-subjects
+
     Credentials via --pg-user/--pg-pass or PG_LIST_USER/PG_LIST_PASS env vars.
     DB via --dsn or DATABASE_URL env var.
 """
@@ -55,6 +61,7 @@ CACHE_DIR = Path("mbox_cache")
 CHUNK_SIZE = 64 * 1024  # 64 KB
 HTTP_RETRIES = 5
 HTTP_RETRY_BASE_DELAY = 2.0
+MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
 
 
 
@@ -396,10 +403,31 @@ def _decode_header(value: str) -> str:
     return "".join(parts)
 
 
+def _decode_subject(value: str | None) -> str:
+    return _strip_nul(_decode_header(value or ""))
+
+
 def _normalize_email(addr: str) -> str:
     """Lowercase and strip +tags (e.g. user+tag@example.com → user@example.com)."""
     addr = addr.lower().strip()
     return re.sub(r'\+[^@]*@', '@', addr)
+
+
+def _extract_message_ids(value: str | None) -> list[str]:
+    decoded = _decode_header(value or "").strip()
+    if not decoded:
+        return []
+    ids = MESSAGE_ID_RE.findall(decoded)
+    if ids:
+        return ids
+    return [part for part in decoded.split() if part]
+
+
+def _extract_message_id(value: str | None, *, prefer_last: bool = False) -> str | None:
+    ids = _extract_message_ids(value)
+    if not ids:
+        return None
+    return ids[-1] if prefer_last else ids[0]
 
 
 def _normalize_subject(subject: str) -> str:
@@ -470,7 +498,7 @@ def parse_mbox(path: Path, list_id: int):
             continue
 
         # Message-ID
-        message_id = (msg.get("Message-ID") or "").strip()
+        message_id = _extract_message_id(msg.get("Message-ID"))
         if not message_id:
             digest = hashlib.sha256(str(msg).encode()).hexdigest()[:16]
             message_id = f"<synthetic-{digest}@pginbox>"
@@ -515,17 +543,16 @@ def parse_mbox(path: Path, list_id: int):
             from_name = name or ""
             from_email = _normalize_email(addr) if addr else ""
 
-        in_reply_to = (msg.get("In-Reply-To") or "").strip() or None
+        in_reply_to = _extract_message_id(msg.get("In-Reply-To"), prefer_last=True)
 
-        refs = [r.strip() for r in (msg.get("References") or "").split() if r.strip()]
+        refs = _extract_message_ids(msg.get("References"))
 
-        # Thread root is the oldest ancestor in References, or self if this is a new thread
+        # Thread root is provisional here. Batch/global resolution can replace
+        # self-rooted replies that only carry In-Reply-To.
         thread_id = refs[0] if refs else message_id
 
-        subject = msg.get("Subject") or ""
-
         body = _strip_nul(_decode_body(msg))
-        subject = _strip_nul(subject)
+        subject = _decode_subject(msg.get("Subject"))
         yield {
             "message_id": _strip_nul(message_id),
             "thread_id": _strip_nul(thread_id),
@@ -570,9 +597,21 @@ INSERT_ATTACHMENT_SQL = """
     VALUES (%(message_id)s, %(filename)s, %(content_type)s, %(size_bytes)s, %(content)s)
 """
 
-# Used after bulk message insert during backfill to derive threads in one pass.
+UPDATE_MESSAGE_THREAD_SQL = """
+    UPDATE messages
+    SET thread_id = %(thread_id)s
+    WHERE message_id = %(message_id)s
+"""
+
+UPDATE_MESSAGE_SUBJECT_SQL = """
+    UPDATE messages
+    SET subject = %(subject)s
+    WHERE message_id = %(message_id)s
+"""
+
+# Used after bulk message insert during backfill to rebuild threads in one pass.
 # Takes subject from the earliest message in each thread.
-DERIVE_THREADS_SQL = """
+REBUILD_THREADS_SQL = """
     INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
     SELECT
         thread_id,
@@ -583,11 +622,155 @@ DERIVE_THREADS_SQL = """
         count(*)
     FROM messages
     GROUP BY thread_id, list_id
-    ON CONFLICT (thread_id) DO UPDATE SET
-        last_activity_at = GREATEST(threads.last_activity_at, EXCLUDED.last_activity_at),
-        message_count    = EXCLUDED.message_count
 """
 
+
+def _fetch_thread_ids(cur, list_id: int, message_ids: list[str]) -> dict[str, str]:
+    if not message_ids:
+        return {}
+    cur.execute(
+        "SELECT message_id, thread_id FROM messages WHERE list_id = %s AND message_id = ANY(%s)",
+        (list_id, message_ids),
+    )
+    return {message_id: thread_id for message_id, thread_id in cur.fetchall()}
+
+
+def _last_known_reference(message_id: str, refs: list[str] | None, known_message_ids: set[str]) -> str | None:
+    for ref in reversed(refs or []):
+        if ref != message_id and ref in known_message_ids:
+            return ref
+    return None
+
+
+def _effective_parent_id(
+    message_id: str,
+    record: dict,
+    known_message_ids: set[str],
+) -> str | None:
+    parent_id = record.get("in_reply_to")
+    if parent_id and parent_id != message_id and parent_id in known_message_ids:
+        return parent_id
+    return _last_known_reference(message_id, record.get("refs"), known_message_ids)
+
+
+def _resolve_thread_ids(
+    records: dict[str, dict],
+    known_thread_ids: dict[str, str] | None = None,
+) -> dict[str, str]:
+    known_thread_ids = known_thread_ids or {}
+    known_message_ids = set(records) | set(known_thread_ids)
+    resolved: dict[str, str] = {}
+    visiting: set[str] = set()
+
+    def resolve(message_id: str) -> str:
+        if message_id in resolved:
+            return resolved[message_id]
+        if message_id in visiting:
+            return message_id
+
+        record = records[message_id]
+        visiting.add(message_id)
+        refs = record.get("refs") or []
+        parent_id = _effective_parent_id(message_id, record, known_message_ids)
+        if parent_id:
+            if parent_id in records:
+                thread_id = resolve(parent_id)
+            else:
+                thread_id = known_thread_ids[parent_id]
+        elif refs:
+            thread_id = refs[0]
+        else:
+            thread_id = message_id
+        visiting.remove(message_id)
+        resolved[message_id] = thread_id
+        return thread_id
+
+    for message_id in records:
+        resolve(message_id)
+
+    return resolved
+
+
+def _resolve_batch_thread_ids(conn, batch: list):
+    if not batch:
+        return
+
+    list_id = batch[0]["list_id"]
+    batch_records = {
+        record["message_id"]: {
+            "in_reply_to": record.get("in_reply_to"),
+            "refs": record.get("refs"),
+        }
+        for record in batch
+    }
+    known_ids_to_fetch = set()
+    for record in batch:
+        parent_id = record.get("in_reply_to")
+        if parent_id and parent_id not in batch_records:
+            known_ids_to_fetch.add(parent_id)
+        for ref in record.get("refs") or []:
+            if ref not in batch_records:
+                known_ids_to_fetch.add(ref)
+
+    with conn.cursor() as cur:
+        known_thread_ids = _fetch_thread_ids(cur, list_id, sorted(known_ids_to_fetch))
+
+    resolved = _resolve_thread_ids(batch_records, known_thread_ids)
+    for record in batch:
+        record["thread_id"] = resolved[record["message_id"]]
+
+
+def _message_sort_key(message_id: str, records: dict[str, dict]):
+    sent_at = records[message_id].get("sent_at")
+    return (sent_at is None, sent_at or datetime.max.replace(tzinfo=timezone.utc), message_id)
+
+
+def _canonical_thread_ids_for_list(records: dict[str, dict]) -> dict[str, str]:
+    if not records:
+        return {}
+
+    known_message_ids = set(records)
+    parents: dict[str, str] = {}
+
+    class UnionFind:
+        def __init__(self, items: list[str]):
+            self.parent = {item: item for item in items}
+
+        def find(self, item: str) -> str:
+            while self.parent[item] != item:
+                self.parent[item] = self.parent[self.parent[item]]
+                item = self.parent[item]
+            return item
+
+        def union(self, left: str, right: str):
+            left_root = self.find(left)
+            right_root = self.find(right)
+            if left_root != right_root:
+                self.parent[right_root] = left_root
+
+    uf = UnionFind(list(records))
+    for message_id, record in records.items():
+        parent_id = _effective_parent_id(message_id, record, known_message_ids)
+        if not parent_id:
+            continue
+        parents[message_id] = parent_id
+        uf.union(message_id, parent_id)
+
+    components: dict[str, list[str]] = {}
+    for message_id in records:
+        root = uf.find(message_id)
+        components.setdefault(root, []).append(message_id)
+
+    canonical: dict[str, str] = {}
+    for members in components.values():
+        member_set = set(members)
+        root_candidates = [message_id for message_id in members if parents.get(message_id) not in member_set]
+        candidates = root_candidates or members
+        thread_id = min(candidates, key=lambda message_id: _message_sort_key(message_id, records))
+        for message_id in members:
+            canonical[message_id] = thread_id
+
+    return canonical
 
 
 def _insert_attachments(cur, batch: list):
@@ -610,6 +793,7 @@ def _insert_attachments(cur, batch: list):
 
 def store_batch_live(conn, batch: list):
     """Upsert threads and insert messages in one transaction (live ingestion)."""
+    _resolve_batch_thread_ids(conn, batch)
     with conn.cursor() as cur:
         execute_batch(cur, UPSERT_THREAD_SQL, batch, page_size=500)
         execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
@@ -619,20 +803,74 @@ def store_batch_live(conn, batch: list):
 
 def store_batch_backfill(conn, batch: list):
     """Insert messages only; threads derived separately at the end."""
+    _resolve_batch_thread_ids(conn, batch)
     with conn.cursor() as cur:
         execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
         _insert_attachments(cur, batch)
     conn.commit()
 
 
+def rethread_messages(conn):
+    """Recompute messages.thread_id as canonical conversation IDs per list."""
+    print("  [rethread messages]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute("SELECT list_id, message_id, sent_at, in_reply_to, refs, thread_id FROM messages")
+        rows = cur.fetchall()
+
+    records_by_list: dict[int, dict[str, dict]] = {}
+    current_thread_ids: dict[tuple[int, str], str] = {}
+    for list_id, message_id, sent_at, in_reply_to, refs, thread_id in rows:
+        records_by_list.setdefault(list_id, {})[message_id] = {
+            "sent_at": sent_at,
+            "in_reply_to": in_reply_to,
+            "refs": refs,
+        }
+        current_thread_ids[(list_id, message_id)] = thread_id
+
+    updates = []
+    for list_id, records in records_by_list.items():
+        canonical_thread_ids = _canonical_thread_ids_for_list(records)
+        for message_id, thread_id in canonical_thread_ids.items():
+            if current_thread_ids[(list_id, message_id)] != thread_id:
+                updates.append({"message_id": message_id, "thread_id": thread_id})
+
+    with conn.cursor() as cur:
+        if updates:
+            execute_batch(cur, UPDATE_MESSAGE_THREAD_SQL, updates, page_size=1000)
+    conn.commit()
+    print(f" {len(updates)} messages updated")
+
+
+def decode_message_subjects(conn):
+    """Decode stored RFC 2047 encoded-word subjects in messages."""
+    print("  [decode subjects]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute("SELECT message_id, subject FROM messages")
+        rows = cur.fetchall()
+
+    updates = []
+    for message_id, subject in rows:
+        decoded = _decode_subject(subject)
+        if decoded != subject:
+            updates.append({"message_id": message_id, "subject": decoded})
+
+    with conn.cursor() as cur:
+        if updates:
+            execute_batch(cur, UPDATE_MESSAGE_SUBJECT_SQL, updates, page_size=1000)
+    conn.commit()
+    print(f" {len(updates)} messages updated")
+
+
 def derive_threads(conn):
-    """Derive threads table from messages. Run once after backfill is complete."""
+    """Rethread messages, then rebuild the derived threads table from messages."""
+    rethread_messages(conn)
     print("  [derive threads]", end="", flush=True)
     with conn.cursor() as cur:
-        cur.execute(DERIVE_THREADS_SQL)
+        cur.execute("TRUNCATE threads")
+        cur.execute(REBUILD_THREADS_SQL)
         count = cur.rowcount
     conn.commit()
-    print(f" {count} threads upserted")
+    print(f" {count} threads rebuilt")
 
 
 def _ingest_worker(dsn: str, list_id: int, year: int, month: int, list_name: str) -> int:
@@ -748,8 +986,12 @@ def main():
                         help="Seconds to wait between downloads in range mode (default: 2)")
     parser.add_argument("--parallel", type=int, default=1, metavar="N",
                         help="Number of parallel workers for cache-only backfill (default: 1)")
+    parser.add_argument("--derive-only", action="store_true",
+                        help="Recompute canonical message thread IDs and rebuild the threads table")
+    parser.add_argument("--decode-subjects", action="store_true",
+                        help="Decode stored RFC 2047 message subjects and rebuild the threads table")
 
-    mode = parser.add_mutually_exclusive_group(required=True)
+    mode = parser.add_mutually_exclusive_group(required=False)
     mode.add_argument("--year", type=int, help="Single month: year")
     mode.add_argument("--from", dest="from_ym", type=_parse_year_month,
                       metavar="YYYY-MM", help="Range start (inclusive)")
@@ -760,11 +1002,35 @@ def main():
 
     args = parser.parse_args()
 
+    if not args.derive_only and not args.decode_subjects and args.year is None and args.from_ym is None:
+        parser.error("one of --derive-only, --decode-subjects, --year, or --from is required")
+
     # Validate single vs range args
     if args.year is not None and args.month is None:
         parser.error("--month is required with --year")
     if args.from_ym is not None and args.to_ym is None:
         parser.error("--to is required with --from")
+    if args.derive_only and args.decode_subjects:
+        parser.error("--derive-only cannot be combined with --decode-subjects")
+    if args.derive_only and any(value is not None for value in (args.year, args.month, args.from_ym, args.to_ym)):
+        parser.error("--derive-only cannot be combined with --year/--month/--from/--to")
+    if args.decode_subjects and any(value is not None for value in (args.year, args.month, args.from_ym, args.to_ym)):
+        parser.error("--decode-subjects cannot be combined with --year/--month/--from/--to")
+
+    if not args.dsn:
+        print("Error: provide --dsn or set DATABASE_URL", file=sys.stderr)
+        sys.exit(1)
+
+    conn = psycopg2.connect(args.dsn)
+    if args.derive_only:
+        derive_threads(conn)
+        conn.close()
+        return
+    if args.decode_subjects:
+        decode_message_subjects(conn)
+        derive_threads(conn)
+        conn.close()
+        return
 
     # Build list of (year, month) to process
     if args.year is not None:
@@ -773,10 +1039,6 @@ def main():
         from_y, from_m = args.from_ym
         to_y, to_m = args.to_ym
         months = list(month_range(from_y, from_m, to_y, to_m))
-
-    if not args.dsn:
-        print("Error: provide --dsn or set DATABASE_URL", file=sys.stderr)
-        sys.exit(1)
 
     # Only auth if at least one month needs downloading
     needs_download = args.force_download or any(
@@ -794,8 +1056,6 @@ def main():
         ensure_archive_access(session, args.list_name, *first_download_month)
     else:
         session = requests.Session()
-
-    conn = psycopg2.connect(args.dsn)
 
     use_parallel = (
         args.parallel > 1
