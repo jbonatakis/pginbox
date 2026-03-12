@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import AnalyticsPage from "./pages/AnalyticsPage.svelte";
+  import HomePage from "./pages/HomePage.svelte";
   import NotFoundPage from "./pages/NotFoundPage.svelte";
   import PeoplePage from "./pages/PeoplePage.svelte";
   import PersonDetailPage from "./pages/PersonDetailPage.svelte";
@@ -9,6 +10,7 @@
   import {
     analyticsPath,
     currentRoute,
+    homePath,
     onLinkClick,
     peoplePath,
     threadsPath,
@@ -25,6 +27,7 @@
     path: string;
     activeWhen: AppRoute["name"][];
   }> = [
+    { label: "Home", path: homePath, activeWhen: ["home"] },
     { label: "Threads", path: threadsPath, activeWhen: ["threads", "thread-detail"] },
     { label: "People", path: peoplePath, activeWhen: ["people", "person-detail"] },
     { label: "Analytics", path: analyticsPath, activeWhen: ["analytics"] },
@@ -88,6 +91,7 @@
   let handledRoutePathname: string | null = null;
 
   const documentTitleForRoute = (route: AppRoute): string => {
+    if (route.name === "home") return "pginbox | PostgreSQL mailing list archive";
     if (route.name === "threads") return "Threads | pginbox";
     if (route.name === "thread-detail") return `Thread ${clipped(route.params.threadId, 48)} | pginbox`;
     if (route.name === "people") return "People | pginbox";
@@ -124,7 +128,7 @@
 
   <header class="shell-header">
     <div class="brand-block">
-      <a href={threadsPath} class="brand-link" on:click={(event) => onLinkClick(event, threadsPath)}
+      <a href={homePath} class="brand-link" on:click={(event) => onLinkClick(event, homePath)}
         >pginbox</a
       >
       <p>Searchable PostgreSQL mailing list history</p>
@@ -142,17 +146,21 @@
     </nav>
   </header>
 
-  <section class="context-strip" aria-label="Current context">
-    {#each contextChipsForRoute($currentRoute) as chip}
-      <p class="context-chip">
-        <span>{chip.label}</span>
-        <strong>{chip.value}</strong>
-      </p>
-    {/each}
-  </section>
+  {#if $currentRoute.name !== "home"}
+    <section class="context-strip" aria-label="Current context">
+      {#each contextChipsForRoute($currentRoute) as chip}
+        <p class="context-chip">
+          <span>{chip.label}</span>
+          <strong>{chip.value}</strong>
+        </p>
+      {/each}
+    </section>
+  {/if}
 
   <main id="main-content" class="content" tabindex="-1" bind:this={contentElement}>
-    {#if $currentRoute.name === "threads"}
+    {#if $currentRoute.name === "home"}
+      <HomePage />
+    {:else if $currentRoute.name === "threads"}
       <ThreadsPage />
     {:else if $currentRoute.name === "thread-detail"}
       <ThreadDetailPage threadId={$currentRoute.params.threadId} />

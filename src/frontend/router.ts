@@ -1,10 +1,15 @@
 import { readonly, writable } from "svelte/store";
 
+export const homePath = "/";
 export const threadsPath = "/threads";
 export const peoplePath = "/people";
 export const analyticsPath = "/analytics";
 
 export type AppRoute =
+  | {
+      name: "home";
+      pathname: typeof homePath;
+    }
   | {
       name: "threads";
       pathname: typeof threadsPath;
@@ -36,7 +41,7 @@ type NavigateOptions = {
   replace?: boolean;
 };
 
-const defaultRoute: AppRoute = { name: "threads", pathname: threadsPath };
+const defaultRoute: AppRoute = { name: "home", pathname: homePath };
 const routeStore = writable<AppRoute>(resolveRouteFromLocation());
 
 if (typeof window !== "undefined") {
@@ -121,6 +126,10 @@ function resolveRouteFromLocation(): AppRoute {
 }
 
 function matchRoute(pathname: string): AppRoute {
+  if (pathname === homePath) {
+    return { name: "home", pathname: homePath };
+  }
+
   if (pathname === threadsPath) {
     return { name: "threads", pathname: threadsPath };
   }
@@ -155,8 +164,7 @@ function matchRoute(pathname: string): AppRoute {
 }
 
 function canonicalizePathname(pathname: string): string {
-  const normalized = normalizePathname(pathname);
-  return normalized === "/" ? threadsPath : normalized;
+  return normalizePathname(pathname);
 }
 
 function normalizePathname(pathname: string): string {
