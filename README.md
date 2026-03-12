@@ -78,3 +78,6 @@ Dev server details:
 
 Frontend MVP QA checklist, scope boundaries, API assumptions, and build verification notes:
 - `docs/frontend-mvp-checklist.md`
+
+Current implemented search behavior and limitations:
+- `docs/SEARCH.md`
