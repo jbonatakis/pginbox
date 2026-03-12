@@ -24,8 +24,8 @@ if [[ -z "$DSN" ]]; then
 fi
 
 LIST_NAME="${1:-${PGINBOX_LIST_NAME:-pgsql-hackers}}"
-YEAR="$(date -u +%Y)"
-MONTH="$(date -u +%-m)"
+YEAR="$(date +%Y)"
+MONTH="$(date +%-m)"
 
 exec "$UV_BIN" run python3 src/ingestion/ingest.py \
   --list "$LIST_NAME" \
