@@ -39,6 +39,16 @@ export interface ThreadWithMessages extends Thread {
   messages: Message[];
 }
 
+export interface ThreadMessagePagination {
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface ThreadDetail extends ThreadWithMessages {
+  messagePagination: ThreadMessagePagination;
+}
+
 export interface AttachmentSummary {
   id: string;
   filename: string | null;

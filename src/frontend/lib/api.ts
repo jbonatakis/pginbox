@@ -8,12 +8,13 @@ import type {
   Person,
   PersonListItem,
   Thread,
-  ThreadWithMessages,
+  ThreadDetail,
   TopSender,
 } from "shared/api";
 
 const API_BASE_PATH = "/api";
 const DEFAULT_PAGINATION_LIMIT = 25;
+const DEFAULT_THREAD_MESSAGES_LIMIT = 50;
 const MIN_PAGINATION_LIMIT = 1;
 const MAX_PAGINATION_LIMIT = 100;
 
@@ -49,6 +50,11 @@ export interface ListThreadsParams {
 export interface ListPeopleParams {
   cursor?: string;
   limit?: number;
+}
+
+export interface GetThreadParams {
+  limit?: number;
+  page?: number;
 }
 
 export class ApiClientError extends Error implements ApiErrorShape {
@@ -129,6 +135,11 @@ export function clampThreadLimit(limit?: number): number {
 
 export function clampPeopleLimit(limit?: number): number {
   if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_PAGINATION_LIMIT;
+  return Math.max(MIN_PAGINATION_LIMIT, Math.min(MAX_PAGINATION_LIMIT, Math.trunc(limit)));
+}
+
+export function clampThreadMessageLimit(limit?: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_THREAD_MESSAGES_LIMIT;
   return Math.max(MIN_PAGINATION_LIMIT, Math.min(MAX_PAGINATION_LIMIT, Math.trunc(limit)));
 }
 
@@ -258,10 +269,14 @@ export async function listThreads(
 
 export async function getThread(
   threadId: string,
+  params: GetThreadParams = {},
   options: RequestOptions = {}
-): Promise<ThreadWithMessages> {
-  const path = withApiBase(`/threads/${encodePathParam(threadId)}`);
-  return requestJson<ThreadWithMessages>(path, options);
+): Promise<ThreadDetail> {
+  const path = withApiBase(`/threads/${encodePathParam(threadId)}`, {
+    limit: clampThreadMessageLimit(params.limit),
+    page: params.page,
+  });
+  return requestJson<ThreadDetail>(path, options);
 }
 
 export async function listLists(options: RequestOptions = {}): Promise<List[]> {

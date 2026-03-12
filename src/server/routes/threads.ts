@@ -1,12 +1,19 @@
-import type { Paginated, Thread, ThreadWithMessages } from "shared/api";
+import type { Paginated, Thread, ThreadDetail } from "shared/api";
 import { Elysia, t } from "elysia";
-import { toThread, toThreadWithMessages } from "../serialize";
+import { toThread, toThreadDetail } from "../serialize";
 import { listThreads, getThread } from "../services/threads.service";
 
 function parseLimit(value: string | undefined, defaultVal: number): number | null {
   if (value === undefined) return defaultVal;
   const n = Number(value);
   if (Number.isNaN(n) || !Number.isInteger(n) || n < 1 || n > 100) return null;
+  return n;
+}
+
+function parsePage(value: string | undefined): number | null | undefined {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  if (Number.isNaN(n) || !Number.isInteger(n) || n < 1) return null;
   return n;
 }
 
@@ -49,10 +56,24 @@ export const threadsRoutes = new Elysia({ prefix: "/threads" })
   )
   .get(
     "/:threadId",
-    async ({ params, status }): Promise<ThreadWithMessages | ReturnType<typeof status>> => {
-      const raw = await getThread(params.threadId);
+    async ({ params, query, status }): Promise<ThreadDetail | ReturnType<typeof status>> => {
+      const limit = parseLimit(query.limit, 50);
+      if (limit === null) return status(400, { message: "limit must be an integer between 1 and 100" });
+      const page = parsePage(query.page);
+      if (query.page !== undefined && page === null) return status(400, { message: "page must be a positive integer" });
+      const resolvedPage = page ?? undefined;
+      const raw = await getThread(params.threadId, {
+        limit,
+        page: resolvedPage,
+      });
       if (!raw) return status(404, { message: "Thread not found" });
-      return toThreadWithMessages(raw, raw.messages);
+      return toThreadDetail(raw, raw.messages, raw.messagePagination);
     },
-    { params: t.Object({ threadId: t.String() }) }
+    {
+      params: t.Object({ threadId: t.String() }),
+      query: t.Object({
+        limit: t.Optional(t.String()),
+        page: t.Optional(t.String()),
+      }),
+    }
   );

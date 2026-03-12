@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { ThreadWithMessages } from "shared/api";
+  import type { ThreadDetail } from "shared/api";
   import { onDestroy } from "svelte";
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
+  import ThreadPageControls from "../components/thread/ThreadPageControls.svelte";
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
   import {
@@ -12,10 +13,11 @@
   import { onLinkClick, threadsPath } from "../router";
 
   type ThreadDetailStatus = "idle" | "loading" | "success" | "error";
-  type LoadMode = "replace" | "preserve";
+  type LoadMode = "navigate" | "refresh" | "replace";
 
   export let threadId: string;
 
+  const THREAD_MESSAGES_PAGE_LIMIT = 50;
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -24,12 +26,16 @@
 
   let activeRequestController: AbortController | null = null;
   let error: ApiErrorShape | null = null;
+  let errorMode: LoadMode | null = null;
+  let errorPage: number | null = null;
   let hasThreadId = false;
+  let isNavigatingPage = false;
   let isRefreshing = false;
   let lastLoadedThreadId: string | null = null;
+  let requestedPage: number | null = null;
   let requestSequence = 0;
   let status: ThreadDetailStatus = "idle";
-  let thread: ThreadWithMessages | null = null;
+  let thread: ThreadDetail | null = null;
   let backToThreadsPath = threadsPath;
 
   const threadSubject = (subject: string | null): string => {
@@ -62,13 +68,36 @@
     return `${apiError.method} ${path} -> ${apiError.code ?? "NETWORK_ERROR"}`;
   };
 
+  const pageSummaryLabel = (page: number, totalPages: number): string => {
+    if (totalPages <= 1) return "Single-page thread.";
+    if (page === 1) return `Page 1 of ${numberFormatter.format(totalPages)} (oldest).`;
+    if (page === totalPages) {
+      return `Page ${numberFormatter.format(page)} of ${numberFormatter.format(totalPages)} (latest).`;
+    }
+    return `Page ${numberFormatter.format(page)} of ${numberFormatter.format(totalPages)}.`;
+  };
+
+  const messageRangeLabel = (startIndex: number, count: number, totalCount: number): string => {
+    if (count === 0) return "No messages are available for this page.";
+    const start = startIndex + 1;
+    const end = startIndex + count;
+    if (start === end) {
+      return `Showing message ${numberFormatter.format(start)} of ${numberFormatter.format(totalCount)}.`;
+    }
+    return `Showing messages ${numberFormatter.format(start)}-${numberFormatter.format(end)} of ${numberFormatter.format(totalCount)}.`;
+  };
+
   const clearActiveRequest = (): void => {
     if (!activeRequestController) return;
     activeRequestController.abort();
     activeRequestController = null;
   };
 
-  const loadThread = async (targetThreadId: string, mode: LoadMode): Promise<void> => {
+  const loadThread = async (
+    targetThreadId: string,
+    mode: LoadMode,
+    targetPage?: number
+  ): Promise<void> => {
     clearActiveRequest();
     const requestController = new AbortController();
     activeRequestController = requestController;
@@ -77,16 +106,29 @@
     const hasThread = thread !== null;
 
     error = null;
+    errorMode = null;
+    errorPage = null;
+    requestedPage = targetPage ?? null;
+
     if (mode === "replace" || !hasThread) {
       thread = null;
       status = "loading";
+      isNavigatingPage = false;
+      isRefreshing = false;
+    } else if (mode === "navigate") {
+      isNavigatingPage = true;
       isRefreshing = false;
     } else {
+      isNavigatingPage = false;
       isRefreshing = true;
     }
 
     try {
-      const response = await api.threads.get(targetThreadId, { signal: requestController.signal });
+      const response = await api.threads.get(
+        targetThreadId,
+        { limit: THREAD_MESSAGES_PAGE_LIMIT, page: targetPage },
+        { signal: requestController.signal }
+      );
       if (requestId !== requestSequence) return;
 
       thread = response;
@@ -96,6 +138,8 @@
       if (apiError.code === "ABORTED" || requestId !== requestSequence) return;
 
       error = apiError;
+      errorMode = mode;
+      errorPage = targetPage ?? null;
       if (mode === "replace" || !hasThread) {
         thread = null;
         status = "error";
@@ -103,16 +147,63 @@
     } finally {
       if (requestId !== requestSequence) return;
 
+      isNavigatingPage = false;
       isRefreshing = false;
+      requestedPage = null;
       if (activeRequestController === requestController) {
         activeRequestController = null;
       }
     }
   };
 
+  const refresh = (): void => {
+    if (!hasThreadId || isBusy) return;
+    void loadThread(threadId, thread === null ? "replace" : "refresh", thread?.messagePagination.page);
+  };
+
   const retry = (): void => {
     if (!hasThreadId) return;
-    void loadThread(threadId, "preserve");
+    if (thread === null) {
+      void loadThread(threadId, "replace");
+      return;
+    }
+    if (errorMode === "navigate" && errorPage !== null) {
+      void loadThread(threadId, "navigate", errorPage);
+      return;
+    }
+    void loadThread(threadId, "refresh", thread.messagePagination.page);
+  };
+
+  const goToPage = (page: number): void => {
+    if (!thread || isBusy) return;
+    const totalPages = thread.messagePagination.totalPages;
+    const nextPage = Math.max(1, Math.min(page, totalPages));
+    if (nextPage === thread.messagePagination.page) return;
+    void loadThread(threadId, "navigate", nextPage);
+  };
+
+  const goToFirstPage = (): void => {
+    if (!thread) return;
+    goToPage(1);
+  };
+
+  const goToPreviousPage = (): void => {
+    if (!thread) return;
+    goToPage(thread.messagePagination.page - 1);
+  };
+
+  const goToNextPage = (): void => {
+    if (!thread) return;
+    goToPage(thread.messagePagination.page + 1);
+  };
+
+  const goToLastPage = (): void => {
+    if (!thread) return;
+    goToPage(thread.messagePagination.totalPages);
+  };
+
+  const handlePageChange = (event: CustomEvent<number>): void => {
+    goToPage(event.detail);
   };
 
   const syncBackToThreadsPath = (): void => {
@@ -130,6 +221,16 @@
   };
 
   $: hasThreadId = threadId.length > 0;
+  $: currentPage = thread?.messagePagination.page ?? 1;
+  $: totalPages = thread?.messagePagination.totalPages ?? 1;
+  $: pageSize = thread?.messagePagination.pageSize ?? THREAD_MESSAGES_PAGE_LIMIT;
+  $: startIndex = (currentPage - 1) * pageSize;
+  $: pageSummary = pageSummaryLabel(currentPage, totalPages);
+  $: rangeSummary = thread ? messageRangeLabel(startIndex, thread.messages.length, thread.message_count) : null;
+  $: pendingPageLabel =
+    requestedPage === null || requestedPage === currentPage
+      ? pageSummary
+      : pageSummaryLabel(requestedPage, totalPages);
 
   $: if (!hasThreadId) {
     backToThreadsPath = threadsPath;
@@ -142,8 +243,12 @@
     clearActiveRequest();
 
     error = null;
+    errorMode = null;
+    errorPage = null;
+    isNavigatingPage = false;
     isRefreshing = false;
     lastLoadedThreadId = null;
+    requestedPage = null;
     thread = null;
     status = "error";
   } else if (threadId !== lastLoadedThreadId) {
@@ -151,13 +256,14 @@
     void loadThread(threadId, "replace");
   }
 
-  $: isBusy = status === "loading" || isRefreshing;
+  $: isBusy = status === "loading" || isNavigatingPage || isRefreshing;
   $: isInitialLoad = status === "idle" || (status === "loading" && thread === null);
   $: isNotFound = hasThreadId && status === "error" && error?.status === 404;
   $: isInvalidThreadResponse =
     hasThreadId &&
     status === "error" &&
     (error?.status === 400 || error?.status === 422 || error?.code === "BAD_REQUEST");
+  $: refreshButtonLabel = isRefreshing ? "Refreshing..." : isNavigatingPage ? "Working..." : "Refresh";
 
   onDestroy(() => {
     requestSequence += 1;
@@ -176,8 +282,8 @@
       {/if}
     </div>
 
-    <button class="refresh-button" type="button" disabled={!hasThreadId || isBusy} on:click={retry}
-      >{isBusy ? "Refreshing..." : "Refresh"}</button
+    <button class="refresh-button" type="button" disabled={!hasThreadId || isBusy} on:click={refresh}
+      >{refreshButtonLabel}</button
     >
   </header>
 
@@ -189,8 +295,8 @@
     />
   {:else if isInitialLoad}
     <LoadingState
-      title="Loading thread metadata"
-      message="Subject, list, activity, and message totals are loading."
+      title="Loading latest thread activity"
+      message="Subject, list, activity, and the newest page of messages are loading."
     />
   {:else if isNotFound}
     <ErrorState
@@ -200,7 +306,7 @@
     />
   {:else if isInvalidThreadResponse}
     <ErrorState
-      title="Invalid thread identifier"
+      title="Invalid thread request"
       message={error?.message ?? "The thread request is not valid."}
       detail={formatErrorDetail(error)}
     />
@@ -215,15 +321,22 @@
     </div>
   {:else if thread}
     {#if isRefreshing}
-      <p class="inline-status" role="status">Refreshing thread metadata...</p>
+      <p class="inline-status" role="status">Refreshing {pageSummary.toLowerCase()}</p>
+    {:else if isNavigatingPage}
+      <p class="inline-status" role="status">Loading {pendingPageLabel.toLowerCase()}</p>
     {/if}
 
     {#if error}
-      <ErrorState
-        title="Unable to refresh thread data"
-        message={error.message}
-        detail={formatErrorDetail(error)}
-      />
+      <div class="status-block">
+        <ErrorState
+          title={errorMode === "navigate" ? "Unable to change message page" : "Unable to refresh thread data"}
+          message={error.message}
+          detail={formatErrorDetail(error)}
+        />
+        <button class="retry-button" type="button" disabled={isBusy} on:click={retry}
+          >{errorMode === "navigate" ? "Retry page change" : "Retry refresh"}</button
+        >
+      </div>
     {/if}
 
     <article class="summary-card" aria-label="Thread metadata">
@@ -246,13 +359,41 @@
           <dd>{numberFormatter.format(thread.message_count)}</dd>
         </div>
         <div>
-          <dt>Loaded messages</dt>
-          <dd>{numberFormatter.format(thread.messages.length)}</dd>
+          <dt>Viewing</dt>
+          <dd>{pageSummary}</dd>
         </div>
       </dl>
     </article>
 
-    <ThreadTimeline messages={thread.messages} />
+    <ThreadPageControls
+      {currentPage}
+      {isBusy}
+      {pageSummary}
+      {rangeSummary}
+      {totalPages}
+      selectId="thread-page-select-top"
+      on:first={goToFirstPage}
+      on:previous={goToPreviousPage}
+      on:pagechange={handlePageChange}
+      on:next={goToNextPage}
+      on:last={goToLastPage}
+    />
+
+    <ThreadTimeline messages={thread.messages} startIndex={startIndex} totalCount={thread.message_count} />
+
+    <ThreadPageControls
+      {currentPage}
+      {isBusy}
+      {pageSummary}
+      {rangeSummary}
+      {totalPages}
+      selectId="thread-page-select-bottom"
+      on:first={goToFirstPage}
+      on:previous={goToPreviousPage}
+      on:pagechange={handlePageChange}
+      on:next={goToNextPage}
+      on:last={goToLastPage}
+    />
   {/if}
 
   <p class="route-link">
@@ -338,9 +479,12 @@
     border-radius: 0.75rem;
     background: rgba(255, 255, 255, 0.92);
     padding: 0.75rem 0.85rem;
+    min-width: 0;
+  }
+
+  .summary-card {
     display: grid;
     gap: 0.55rem;
-    min-width: 0;
   }
 
   .summary-card h3 {
@@ -388,5 +532,11 @@
     color: #0b4ea2;
     font-weight: 600;
     text-decoration-thickness: 1px;
+  }
+
+  @media (max-width: 640px) {
+    .refresh-button {
+      width: 100%;
+    }
   }
 </style>

@@ -500,6 +500,13 @@ CREATE INDEX idx_messages_thread_id ON public.messages USING btree (thread_id);
 
 
 --
+-- Name: idx_messages_thread_id_sent_at_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_messages_thread_id_sent_at_id ON public.messages USING btree (thread_id, sent_at, id);
+
+
+--
 -- Name: idx_people_emails_person_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -576,4 +583,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260301000003'),
     ('20260301000004'),
     ('20260312000005'),
-    ('20260312000006');
+    ('20260312000006'),
+    ('20260312000007');

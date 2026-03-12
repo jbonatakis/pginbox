@@ -3,9 +3,21 @@
   import ThreadTimelineItem from "./ThreadTimelineItem.svelte";
 
   export let messages: Message[] = [];
+  export let startIndex = 0;
+  export let totalCount: number | null = null;
   const numberFormatter = new Intl.NumberFormat("en-US");
 
   const messageCountLabel = (count: number): string => {
+    if (count === 0) return "No messages are available for this page.";
+
+    if (totalCount !== null) {
+      const start = startIndex + 1;
+      const end = startIndex + count;
+      if (start === end) {
+        return `Showing message ${numberFormatter.format(start)} of ${numberFormatter.format(totalCount)} in chronological order.`;
+      }
+      return `Showing messages ${numberFormatter.format(start)}-${numberFormatter.format(end)} of ${numberFormatter.format(totalCount)} in chronological order.`;
+    }
     if (count === 1) return "1 message in chronological order.";
     return `${numberFormatter.format(count)} messages in chronological order.`;
   };
@@ -36,9 +48,10 @@
     <nav class="jump-nav" aria-label="Jump to message">
       <ol>
         {#each messages as message, index (`${message.id}:${index}`)}
-          {@const anchorId = messageAnchorId(message, index)}
+          {@const absoluteIndex = startIndex + index}
+          {@const anchorId = messageAnchorId(message, absoluteIndex)}
           <li>
-            <a href={`#${anchorId}`}>#{index + 1}</a>
+            <a href={`#${anchorId}`}>#{absoluteIndex + 1}</a>
           </li>
         {/each}
       </ol>
@@ -46,9 +59,10 @@
 
     <ol class="timeline-list">
       {#each messages as message, index (`${message.id}:${index}`)}
-        {@const anchorId = messageAnchorId(message, index)}
+        {@const absoluteIndex = startIndex + index}
+        {@const anchorId = messageAnchorId(message, absoluteIndex)}
         <li>
-          <ThreadTimelineItem {message} {index} {anchorId} />
+          <ThreadTimelineItem {message} index={absoluteIndex} {anchorId} />
         </li>
       {/each}
     </ol>

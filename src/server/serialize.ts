@@ -5,6 +5,8 @@ import type {
   MessageWithAttachments,
   Person,
   PersonTopThread,
+  ThreadDetail,
+  ThreadMessagePagination,
   Thread,
   ThreadWithMessages,
 } from "shared/api";
@@ -47,7 +49,7 @@ export function toThread(row: ThreadRow): Thread {
 
 // Message: id and sent_at serialized
 type MessageRow = {
-  id: bigint;
+  id: bigint | number | string;
   message_id: string;
   thread_id: string;
   list_id: number;
@@ -79,7 +81,7 @@ export function toMessage(row: MessageRow): Message {
 }
 
 type AttachmentRow = {
-  id: bigint;
+  id: bigint | number | string;
   filename: string | null;
   content_type: string | null;
   size_bytes: number | null;
@@ -111,6 +113,17 @@ export function toThreadWithMessages(
   return {
     ...toThread(thread),
     messages: messages.map(toMessage),
+  };
+}
+
+export function toThreadDetail(
+  thread: ThreadRow,
+  messages: MessageRow[],
+  messagePagination: ThreadMessagePagination
+): ThreadDetail {
+  return {
+    ...toThreadWithMessages(thread, messages),
+    messagePagination,
   };
 }
 

@@ -15,6 +15,11 @@ export interface ThreadsQuery {
   limit: number;
 }
 
+export interface ThreadMessagesQuery {
+  limit: number;
+  page?: number;
+}
+
 function decodeCursorSafe(cursor: string): { lastActivityAt: string | null; threadId: string } | null {
   try {
     const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
@@ -75,7 +80,8 @@ export async function listThreads(query: ThreadsQuery) {
   return { items, nextCursor };
 }
 
-export async function getThread(threadId: string) {
+export async function getThread(threadId: string, query: ThreadMessagesQuery) {
+  const limit = Math.min(Math.max(1, query.limit), 100);
   const thread = await db
     .selectFrom("threads")
     .innerJoin("lists", "lists.id", "threads.list_id")
@@ -86,12 +92,28 @@ export async function getThread(threadId: string) {
 
   if (!thread) return null;
 
+  const totalPages = Math.max(1, Math.ceil(thread.message_count / limit));
+  const requestedPage = query.page ?? totalPages;
+  const page = Math.max(1, Math.min(requestedPage, totalPages));
+  const offset = (page - 1) * limit;
+
   const messages = await db
     .selectFrom("messages")
     .selectAll()
-    .where("thread_id", "=", threadId)
-    .orderBy("sent_at", "asc")
+    .where("messages.thread_id", "=", threadId)
+    .orderBy(sql`messages.sent_at ASC NULLS LAST`)
+    .orderBy("messages.id", "asc")
+    .limit(limit)
+    .offset(offset)
     .execute();
 
-  return { ...thread, messages };
+  return {
+    ...thread,
+    messages,
+    messagePagination: {
+      page,
+      pageSize: limit,
+      totalPages,
+    },
+  };
 }

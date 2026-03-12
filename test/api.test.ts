@@ -54,6 +54,18 @@ describe("API validation (4xx)", () => {
     expect(json).toEqual({ message: "limit must be an integer between 1 and 100" });
   });
 
+  it("GET /threads/:threadId?limit=foo returns 400", async () => {
+    const { status, json } = await get("/threads/example-thread?limit=foo");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "limit must be an integer between 1 and 100" });
+  });
+
+  it("GET /threads/:threadId?page=foo returns 400", async () => {
+    const { status, json } = await get("/threads/example-thread?page=foo");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "page must be a positive integer" });
+  });
+
   it("GET /threads?from=not-a-date returns 400", async () => {
     const { status, json } = await get("/threads?from=not-a-date");
     expect(status).toBe(400);
@@ -90,6 +102,21 @@ describe("API not-found and success (require DB)", () => {
     const { status, json } = await get("/threads/not-a-real-thread-id");
     expect(status).toBe(404);
     expect(json).toEqual({ message: "Thread not found" });
+  });
+
+  it("GET /threads/:threadId returns 200 with messages and pagination", async () => {
+    const threadsResponse = await get("/threads?limit=1");
+    expect(threadsResponse.status).toBe(200);
+
+    const items = (threadsResponse.json as { items: Array<{ thread_id: string }> }).items;
+    if (items.length === 0) return;
+
+    const threadId = encodeURIComponent(items[0].thread_id);
+    const { status, json } = await get(`/threads/${threadId}?limit=1`);
+    expect(status).toBe(200);
+    expect(json).toHaveProperty("messages");
+    expect(json).toHaveProperty("messagePagination");
+    expect(Array.isArray((json as { messages: unknown[] }).messages)).toBe(true);
   });
 
   it("GET /lists returns 200 and array", async () => {
