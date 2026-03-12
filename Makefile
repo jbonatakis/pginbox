@@ -6,7 +6,7 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api codegen test install-web dev-web build-api build-frontend prod-up prod-down prod-reload-caddy
+.PHONY: up down reset psql logs ingest backfill backfill-range derive-threads decode-subjects charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api codegen test install-web dev-web build-api build-frontend prod-up prod-down prod-reload-caddy
 
 up:
 	docker compose up -d
@@ -52,8 +52,17 @@ ingest:
 backfill:
 	uv run python3 src/ingestion/ingest.py --list $(LIST) --year $(YEAR) --month $(MONTH) --backfill
 
+force-backfill:
+	uv run python3 src/ingestion/ingest.py --list $(LIST) --year $(YEAR) --month $(MONTH) --backfill --force-download
+
 backfill-range:
 	uv run python3 src/ingestion/ingest.py --list $(LIST) --from $(FROM) --to $(TO) --backfill $(if $(PARALLEL),--parallel $(PARALLEL))
+
+derive-threads:
+	uv run python3 src/ingestion/ingest.py --dsn $(DSN) --derive-only
+
+decode-subjects:
+	uv run python3 src/ingestion/ingest.py --dsn $(DSN) --decode-subjects
 
 people: seed-people match-people
 

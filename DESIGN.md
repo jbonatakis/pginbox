@@ -41,7 +41,7 @@ lists
   name      TEXT UNIQUE           -- e.g. "pgsql-hackers"
 
 threads
-  thread_id        TEXT PRIMARY KEY   -- message_id of the root message
+  thread_id        TEXT PRIMARY KEY   -- message_id of the canonical conversation root
   list_id          INTEGER REFERENCES lists(id)
   subject          TEXT               -- Re:/Fwd: stripped
   started_at       TIMESTAMPTZ
@@ -75,13 +75,41 @@ people_emails
 ### Key design decisions
 
 **No FK from `messages.thread_id` to `threads`**
-During backfill, messages are inserted before their thread roots exist in the `threads` table. A foreign key would require careful ordering or deferred constraints. Since `thread_id` is derived from message headers (`References`, with `In-Reply-To` fallback) rather than external input, integrity is maintained by the ingestion logic rather than the database.
+During backfill, messages are inserted before their canonical threads exist in the `threads` table. A foreign key would require careful ordering or deferred constraints. Since `thread_id` is derived from message headers and a later rethread pass rather than external input, integrity is maintained by the ingestion logic rather than the database.
 
-**Thread identity via `References[0]` with `In-Reply-To` fallback**
-The `References` email header contains the full ancestor chain of a thread, oldest first. The first entry is the thread root's `message_id`, so messages with `References` can be threaded immediately. When `References` is missing, ingestion falls back to `In-Reply-To`: live batches inherit the parent thread when the parent is already known, and backfills run a full rethread pass after load so out-of-order inserts still converge on the correct `thread_id`.
+**Thread identity via conversation graph**
+`thread_id` represents canonical conversation membership, not a raw header-derived root. During ingestion, messages get provisional thread IDs: replies inherit a known parent's `thread_id`, otherwise they fall back to `References[0]` or self-rooting. During backfill, a rethread pass rebuilds conversation components per list using `In-Reply-To` as the primary edge and `References` as fallback when `In-Reply-To` is missing or malformed. Each component is assigned one canonical root message ID as its final `thread_id`.
 
 **`threads` as a derived/materialized table**
-`threads` is not a source of truth — it's a rollup of data that lives in `messages`. During backfill, `messages` are rethreaded and `threads` is rebuilt from scratch after all messages are loaded. During live ingestion it's kept current via per-message upserts. It can always be fully rebuilt from `messages` if needed.
+`threads` is not a source of truth — it's a rollup of data that lives in `messages`. During backfill, `messages` are rethreaded to canonical conversation IDs and `threads` is rebuilt from scratch after all messages are loaded. During live ingestion it's kept current via per-message upserts. It can always be fully rebuilt from `messages` if needed.
+
+**One conversation `thread_id`, no separate `conversation_id`**
+To match the PostgreSQL archive's idea of a thread, we do not need both a raw `thread_id` and a `conversation_id`. A single `thread_id` field is sufficient if it means "conversation membership" rather than "oldest `References[0]` seen on this message."
+
+The model would be:
+
+- A root message starts a new provisional thread.
+- A reply inherits its parent's `thread_id` when the parent is already known.
+- Backfill or delayed-parent cases are reconciled later by a full rethread pass over `messages`.
+- `threads.thread_id` remains the primary key for the derived rollup table.
+
+The important implementation detail is that `thread_id` should be deterministic, not random. A UUID would work as a grouping token, but it would make thread URLs unstable across full reloads and make diffs/debugging harder. Instead, the canonical `thread_id` should be derived from the conversation itself, preferably the canonical root message's `message_id`.
+
+Recommended algorithm:
+
+1. Ingest messages with provisional `thread_id` values.
+2. Build reply edges from `In-Reply-To`.
+3. Use `References` as fallback evidence when `In-Reply-To` is missing or malformed.
+4. Compute conversation components within each list.
+5. Choose one canonical message per component:
+   - prefer a message with no parent inside the component
+   - among those, pick the earliest `sent_at`
+   - tie-break by `message_id`
+   - if the component is cyclic or ambiguous, fall back to earliest `sent_at`, then `message_id`
+6. Rewrite every message in the component to that canonical `thread_id`.
+7. Rebuild `threads` from `messages`.
+
+This keeps one stable threading field, allows live ingestion to stay cheap, and still converges to the same thread grouping after a backfill rebuild. It also matches the archive behavior better than strict `References[0]` grouping, because replies that temporarily "fork" the visible root still collapse back into one conversation when the full reply graph is considered.
 
 **`lists` registration with validation**
 When a new list name is provided, the ingestion code probes the mbox URL before inserting into `lists`. If the URL returns HTML (auth redirect or 404), it errors before writing anything to the database. Validation is skipped when the mbox file is already cached locally, since a successful prior download is sufficient proof.
