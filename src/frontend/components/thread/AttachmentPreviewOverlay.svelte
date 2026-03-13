@@ -13,6 +13,11 @@
     maximumFractionDigits: 1,
   });
   const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+  const HUNK_HEADER_ANYWHERE_RE = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m;
+  const GIT_DIFF_ANYWHERE_RE = /^diff --git /m;
+  const BINARY_PATCH_ANYWHERE_RE = /^GIT binary patch$/m;
+  const OLD_FILE_HEADER_ANYWHERE_RE = /^--- (?:a\/|\/dev\/null|\S+)/m;
+  const NEW_FILE_HEADER_ANYWHERE_RE = /^\+\+\+ (?:b\/|\/dev\/null|\S+)/m;
 
   type PatchLineKind =
     | "file-meta"
@@ -22,6 +27,7 @@
     | "add"
     | "remove"
     | "context"
+    | "plain"
     | "notice";
 
   interface PatchPreviewLine {
@@ -60,6 +66,21 @@
     return filename.slice(dotIndex + 1).toLowerCase();
   };
 
+  const hasPatchStructure = (previewContent: string | null): boolean => {
+    const normalized = previewContent?.replace(/\r\n/g, "\n") ?? "";
+    if (normalized.length === 0) return false;
+
+    if (GIT_DIFF_ANYWHERE_RE.test(normalized)) return true;
+
+    const hasUnifiedFileHeaders =
+      OLD_FILE_HEADER_ANYWHERE_RE.test(normalized) &&
+      NEW_FILE_HEADER_ANYWHERE_RE.test(normalized);
+    const hasHunkHeaders = HUNK_HEADER_ANYWHERE_RE.test(normalized);
+    if (hasUnifiedFileHeaders && hasHunkHeaders) return true;
+
+    return hasUnifiedFileHeaders && BINARY_PATCH_ANYWHERE_RE.test(normalized);
+  };
+
   const isPatchAttachment = (value: AttachmentSummary, previewContent: string | null): boolean => {
     const contentType = value.content_type?.toLowerCase() ?? "";
     const extension = attachmentExtension(value);
@@ -73,12 +94,7 @@
       return true;
     }
 
-    const text = previewContent?.trimStart() ?? "";
-    return (
-      text.startsWith("diff --git ") ||
-      text.startsWith("--- ") ||
-      text.startsWith("@@ ")
-    );
+    return hasPatchStructure(previewContent);
   };
 
   const parsePatchPreview = (previewContent: string): PatchPreviewLine[] => {
@@ -89,12 +105,14 @@
     const parsed: PatchPreviewLine[] = [];
     let oldLineNumber: number | null = null;
     let newLineNumber: number | null = null;
+    let inHunk = false;
 
     for (const raw of lines) {
       const hunkHeaderMatch = raw.match(HUNK_HEADER_RE);
       if (hunkHeaderMatch) {
         oldLineNumber = Number(hunkHeaderMatch[1]);
         newLineNumber = Number(hunkHeaderMatch[2]);
+        inHunk = true;
         parsed.push({
           kind: "hunk",
           oldLineNumber: null,
@@ -111,10 +129,13 @@
         raw.startsWith("deleted file mode ") ||
         raw.startsWith("similarity index ") ||
         raw.startsWith("rename from ") ||
-        raw.startsWith("rename to ")
+        raw.startsWith("rename to ") ||
+        raw.startsWith("Binary files ") ||
+        raw.startsWith("GIT binary patch")
       ) {
         oldLineNumber = null;
         newLineNumber = null;
+        inHunk = false;
         parsed.push({
           kind: "file-meta",
           oldLineNumber: null,
@@ -125,6 +146,7 @@
       }
 
       if (raw.startsWith("--- ")) {
+        inHunk = false;
         parsed.push({
           kind: "file-old",
           oldLineNumber: null,
@@ -135,6 +157,7 @@
       }
 
       if (raw.startsWith("+++ ")) {
+        inHunk = false;
         parsed.push({
           kind: "file-new",
           oldLineNumber: null,
@@ -154,7 +177,7 @@
         continue;
       }
 
-      if (raw.startsWith("+")) {
+      if (inHunk && raw.startsWith("+")) {
         parsed.push({
           kind: "add",
           oldLineNumber: null,
@@ -165,7 +188,7 @@
         continue;
       }
 
-      if (raw.startsWith("-")) {
+      if (inHunk && raw.startsWith("-")) {
         parsed.push({
           kind: "remove",
           oldLineNumber,
@@ -176,7 +199,7 @@
         continue;
       }
 
-      if (raw.startsWith(" ")) {
+      if (inHunk && raw.startsWith(" ")) {
         parsed.push({
           kind: "context",
           oldLineNumber,
@@ -189,7 +212,7 @@
       }
 
       parsed.push({
-        kind: "file-meta",
+        kind: inHunk ? "file-meta" : "plain",
         oldLineNumber: null,
         newLineNumber: null,
         raw,
@@ -428,6 +451,7 @@
   .patch-row-file-old .patch-code,
   .patch-row-file-new .patch-code,
   .patch-row-hunk .patch-code,
+  .patch-row-plain .patch-code,
   .patch-row-notice .patch-code {
     padding-top: 0.12rem;
     padding-bottom: 0.12rem;
@@ -437,6 +461,7 @@
   .patch-row-file-old .line-no,
   .patch-row-file-new .line-no,
   .patch-row-hunk .line-no,
+  .patch-row-plain .line-no,
   .patch-row-notice .line-no {
     color: transparent;
   }
@@ -474,6 +499,11 @@
   .patch-row-context {
     background: #f8fafc;
     color: #1f2937;
+  }
+
+  .patch-row-plain {
+    background: #f8fafc;
+    color: #243b53;
   }
 
   .patch-row-notice {
