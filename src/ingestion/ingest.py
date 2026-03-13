@@ -3,7 +3,7 @@
 POC: Download, parse, and store PostgreSQL mailing list mbox archives into Postgres.
 
 Usage:
-    # Live (upserts threads per message):
+    # Live (inserts messages, refreshes affected threads):
     python3 ingest.py --year 2026 --month 2
 
     # Backfill (bulk insert messages, derive threads at the end):
@@ -574,12 +574,24 @@ def parse_mbox(path: Path, list_id: int):
 # Store
 # ---------------------------------------------------------------------------
 
-UPSERT_THREAD_SQL = """
+UPSERT_TOUCHED_THREADS_SQL = """
     INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
-    VALUES (%(thread_id)s, %(list_id)s, %(_normalized_subject)s, %(sent_at)s, %(sent_at)s, 1)
+    SELECT
+        thread_id,
+        list_id,
+        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]),
+        min(sent_at),
+        max(sent_at),
+        count(*)
+    FROM messages
+    WHERE thread_id = ANY(%s)
+    GROUP BY thread_id, list_id
     ON CONFLICT (thread_id) DO UPDATE SET
-        last_activity_at = GREATEST(threads.last_activity_at, EXCLUDED.last_activity_at),
-        message_count    = threads.message_count + 1
+        list_id          = EXCLUDED.list_id,
+        subject          = EXCLUDED.subject,
+        started_at       = EXCLUDED.started_at,
+        last_activity_at = EXCLUDED.last_activity_at,
+        message_count    = EXCLUDED.message_count
 """
 
 INSERT_MESSAGE_SQL = """
@@ -791,12 +803,24 @@ def _insert_attachments(cur, batch: list):
         execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)
 
 
+def _refresh_threads_for_message_ids(cur, list_id: int, message_ids: list[str]):
+    thread_ids = sorted(set(_fetch_thread_ids(cur, list_id, message_ids).values()))
+    if not thread_ids:
+        return
+    cur.execute(UPSERT_TOUCHED_THREADS_SQL, (thread_ids,))
+
+
 def store_batch_live(conn, batch: list):
-    """Upsert threads and insert messages in one transaction (live ingestion)."""
+    """Insert messages and refresh affected thread aggregates in one transaction."""
+    if not batch:
+        return
+
     _resolve_batch_thread_ids(conn, batch)
+    list_id = batch[0]["list_id"]
+    message_ids = [record["message_id"] for record in batch]
     with conn.cursor() as cur:
-        execute_batch(cur, UPSERT_THREAD_SQL, batch, page_size=500)
         execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
+        _refresh_threads_for_message_ids(cur, list_id, message_ids)
         _insert_attachments(cur, batch)
     conn.commit()
 
