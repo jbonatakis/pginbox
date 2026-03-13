@@ -4,11 +4,15 @@
   import { attachmentDownloadPath } from "../../lib/api";
 
   export let attachment: AttachmentSummary;
+  export let canGoNext = false;
+  export let canGoPrevious = false;
+  export let currentIndex: number | null = null;
   export let content: string | null = null;
   export let errorMessage: string | null = null;
   export let isLoading = false;
+  export let totalCount = 0;
 
-  const dispatch = createEventDispatcher<{ close: void }>();
+  const dispatch = createEventDispatcher<{ close: void; next: void; previous: void }>();
   const sizeFormatter = new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 1,
   });
@@ -228,6 +232,16 @@
     dispatch("close");
   };
 
+  const goPrevious = (): void => {
+    if (!canGoPrevious) return;
+    dispatch("previous");
+  };
+
+  const goNext = (): void => {
+    if (!canGoNext) return;
+    dispatch("next");
+  };
+
   const handleBackdropClick = (event: MouseEvent): void => {
     if (event.target === event.currentTarget) close();
   };
@@ -236,11 +250,25 @@
     if (event.key === "Escape") {
       event.preventDefault();
       close();
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      goPrevious();
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      goNext();
     }
   };
 
   $: showPatchPreview = content !== null && content !== "" && isPatchAttachment(attachment, content);
   $: patchLines = showPatchPreview && content ? parsePatchPreview(content) : [];
+  $: attachmentPositionLabel =
+    currentIndex === null || totalCount <= 1 ? null : `${currentIndex + 1} of ${totalCount}`;
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -251,6 +279,9 @@
       <div class="header-copy">
         <h3 id="attachment-preview-title">{attachmentName(attachment)}</h3>
         <p>
+          {#if attachmentPositionLabel}
+            <span>{attachmentPositionLabel}</span>
+          {/if}
           {#if formatBytes(attachment.size_bytes)}
             <span>{formatBytes(attachment.size_bytes)}</span>
           {/if}
@@ -261,7 +292,15 @@
       </div>
 
       <div class="header-actions">
-        <a class="download-button" href={attachmentDownloadPath(attachment.id)}>Download</a>
+        <div class="nav-actions">
+          <button class="nav-button" type="button" disabled={!canGoPrevious} on:click={goPrevious}
+            >←</button
+          >
+          <button class="nav-button" type="button" disabled={!canGoNext} on:click={goNext}>→</button>
+        </div>
+        {#if attachment.has_content}
+          <a class="download-button" href={attachmentDownloadPath(attachment.id)}>Download</a>
+        {/if}
         <button class="close-button" type="button" on:click={close}>Close</button>
       </div>
     </header>
@@ -301,7 +340,7 @@
 
   .dialog {
     width: min(72rem, 100%);
-    max-height: min(88vh, 60rem);
+    height: min(88vh, 60rem);
     background: #f8fbff;
     border: 1px solid #bcccdc;
     border-radius: 0.9rem;
@@ -355,6 +394,13 @@
     gap: 0.45rem;
   }
 
+  .nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .nav-button,
   .download-button,
   .close-button {
     border: 1px solid #6f9fdd;
@@ -368,19 +414,31 @@
     white-space: nowrap;
   }
 
+  .nav-button {
+    min-width: 2.2rem;
+    cursor: pointer;
+  }
+
   .download-button {
     text-decoration: none;
   }
 
+  .nav-button:hover:not(:disabled),
   .download-button:hover,
   .close-button:hover {
     background: #dcedff;
+  }
+
+  .nav-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .close-button {
     cursor: pointer;
   }
 
+  .nav-button:focus-visible,
   .download-button:focus-visible,
   .close-button:focus-visible {
     outline: 2px solid #0b4ea2;
@@ -390,8 +448,13 @@
   .status {
     margin: 0;
     padding: 1rem;
+    height: 100%;
     color: #486581;
     font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
   }
 
   .error {
@@ -528,11 +591,17 @@
     }
 
     .dialog {
-      max-height: 92vh;
+      height: 92vh;
     }
 
     .dialog-header {
       padding: 0.75rem 0.8rem;
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .header-actions {
+      justify-content: space-between;
     }
 
     .preview {

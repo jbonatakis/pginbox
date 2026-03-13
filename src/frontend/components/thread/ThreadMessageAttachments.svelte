@@ -82,6 +82,7 @@
   const isPreviewable = (attachment: AttachmentSummary): boolean => attachment.has_content;
 
   let activeRequestController: AbortController | null = null;
+  let previewAttachmentIndex: number | null = null;
   let previewAttachment: AttachmentSummary | null = null;
   let previewContent: string | null = null;
   let previewError: string | null = null;
@@ -95,21 +96,29 @@
 
   const closePreview = (): void => {
     clearActiveRequest();
+    previewAttachmentIndex = null;
     previewAttachment = null;
     previewContent = null;
     previewError = null;
     previewLoading = false;
   };
 
-  const openPreview = async (attachment: AttachmentSummary): Promise<void> => {
-    if (!isPreviewable(attachment)) return;
+  const openPreviewByIndex = async (index: number): Promise<void> => {
+    const attachment = attachments[index];
+    if (!attachment) return;
 
     clearActiveRequest();
-    const requestController = new AbortController();
-    activeRequestController = requestController;
+    previewAttachmentIndex = index;
     previewAttachment = attachment;
     previewContent = null;
     previewError = null;
+    if (!attachment.has_content) {
+      previewLoading = false;
+      return;
+    }
+
+    const requestController = new AbortController();
+    activeRequestController = requestController;
     previewLoading = true;
 
     try {
@@ -131,6 +140,22 @@
         previewLoading = false;
       }
     }
+  };
+
+  const openPreview = async (attachment: AttachmentSummary): Promise<void> => {
+    const index = attachments.findIndex((item) => item.id === attachment.id);
+    if (index === -1) return;
+    await openPreviewByIndex(index);
+  };
+
+  const showPreviousPreview = (): void => {
+    if (previewAttachmentIndex === null || previewAttachmentIndex <= 0) return;
+    void openPreviewByIndex(previewAttachmentIndex - 1);
+  };
+
+  const showNextPreview = (): void => {
+    if (previewAttachmentIndex === null || previewAttachmentIndex >= attachments.length - 1) return;
+    void openPreviewByIndex(previewAttachmentIndex + 1);
   };
 
   onDestroy(() => {
@@ -223,10 +248,16 @@
 {#if previewAttachment}
   <AttachmentPreviewOverlay
     attachment={previewAttachment}
+    currentIndex={previewAttachmentIndex}
     content={previewContent}
+    canGoPrevious={previewAttachmentIndex !== null && previewAttachmentIndex > 0}
+    canGoNext={previewAttachmentIndex !== null && previewAttachmentIndex < attachments.length - 1}
     errorMessage={previewError}
     isLoading={previewLoading}
+    totalCount={attachments.length}
     on:close={closePreview}
+    on:previous={showPreviousPreview}
+    on:next={showNextPreview}
   />
 {/if}
 
