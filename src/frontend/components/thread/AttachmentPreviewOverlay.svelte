@@ -12,6 +12,24 @@
   const sizeFormatter = new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 1,
   });
+  const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+  type PatchLineKind =
+    | "file-meta"
+    | "file-old"
+    | "file-new"
+    | "hunk"
+    | "add"
+    | "remove"
+    | "context"
+    | "notice";
+
+  interface PatchPreviewLine {
+    kind: PatchLineKind;
+    newLineNumber: number | null;
+    oldLineNumber: number | null;
+    raw: string;
+  }
 
   const attachmentName = (value: AttachmentSummary): string => {
     const filename = value.filename?.trim() ?? "";
@@ -35,6 +53,154 @@
     return `${sizeFormatter.format(size)} ${units[unitIndex]}`;
   };
 
+  const attachmentExtension = (value: AttachmentSummary): string => {
+    const filename = value.filename?.trim() ?? "";
+    const dotIndex = filename.lastIndexOf(".");
+    if (dotIndex === -1 || dotIndex === filename.length - 1) return "";
+    return filename.slice(dotIndex + 1).toLowerCase();
+  };
+
+  const isPatchAttachment = (value: AttachmentSummary, previewContent: string | null): boolean => {
+    const contentType = value.content_type?.toLowerCase() ?? "";
+    const extension = attachmentExtension(value);
+
+    if (
+      contentType.includes("patch") ||
+      contentType.includes("diff") ||
+      extension === "patch" ||
+      extension === "diff"
+    ) {
+      return true;
+    }
+
+    const text = previewContent?.trimStart() ?? "";
+    return (
+      text.startsWith("diff --git ") ||
+      text.startsWith("--- ") ||
+      text.startsWith("@@ ")
+    );
+  };
+
+  const parsePatchPreview = (previewContent: string): PatchPreviewLine[] => {
+    const normalized = previewContent.replace(/\r\n/g, "\n");
+    const lines = normalized.endsWith("\n")
+      ? normalized.slice(0, -1).split("\n")
+      : normalized.split("\n");
+    const parsed: PatchPreviewLine[] = [];
+    let oldLineNumber: number | null = null;
+    let newLineNumber: number | null = null;
+
+    for (const raw of lines) {
+      const hunkHeaderMatch = raw.match(HUNK_HEADER_RE);
+      if (hunkHeaderMatch) {
+        oldLineNumber = Number(hunkHeaderMatch[1]);
+        newLineNumber = Number(hunkHeaderMatch[2]);
+        parsed.push({
+          kind: "hunk",
+          oldLineNumber: null,
+          newLineNumber: null,
+          raw,
+        });
+        continue;
+      }
+
+      if (
+        raw.startsWith("diff --git ") ||
+        raw.startsWith("index ") ||
+        raw.startsWith("new file mode ") ||
+        raw.startsWith("deleted file mode ") ||
+        raw.startsWith("similarity index ") ||
+        raw.startsWith("rename from ") ||
+        raw.startsWith("rename to ")
+      ) {
+        oldLineNumber = null;
+        newLineNumber = null;
+        parsed.push({
+          kind: "file-meta",
+          oldLineNumber: null,
+          newLineNumber: null,
+          raw,
+        });
+        continue;
+      }
+
+      if (raw.startsWith("--- ")) {
+        parsed.push({
+          kind: "file-old",
+          oldLineNumber: null,
+          newLineNumber: null,
+          raw,
+        });
+        continue;
+      }
+
+      if (raw.startsWith("+++ ")) {
+        parsed.push({
+          kind: "file-new",
+          oldLineNumber: null,
+          newLineNumber: null,
+          raw,
+        });
+        continue;
+      }
+
+      if (raw === "\\ No newline at end of file") {
+        parsed.push({
+          kind: "notice",
+          oldLineNumber: null,
+          newLineNumber: null,
+          raw,
+        });
+        continue;
+      }
+
+      if (raw.startsWith("+")) {
+        parsed.push({
+          kind: "add",
+          oldLineNumber: null,
+          newLineNumber,
+          raw,
+        });
+        if (newLineNumber !== null) newLineNumber += 1;
+        continue;
+      }
+
+      if (raw.startsWith("-")) {
+        parsed.push({
+          kind: "remove",
+          oldLineNumber,
+          newLineNumber: null,
+          raw,
+        });
+        if (oldLineNumber !== null) oldLineNumber += 1;
+        continue;
+      }
+
+      if (raw.startsWith(" ")) {
+        parsed.push({
+          kind: "context",
+          oldLineNumber,
+          newLineNumber,
+          raw,
+        });
+        if (oldLineNumber !== null) oldLineNumber += 1;
+        if (newLineNumber !== null) newLineNumber += 1;
+        continue;
+      }
+
+      parsed.push({
+        kind: "file-meta",
+        oldLineNumber: null,
+        newLineNumber: null,
+        raw,
+      });
+    }
+
+    return parsed;
+  };
+
+  const formatLineNumber = (value: number | null): string => (value === null ? "" : String(value));
+
   const close = (): void => {
     dispatch("close");
   };
@@ -49,6 +215,9 @@
       close();
     }
   };
+
+  $: showPatchPreview = content !== null && content !== "" && isPatchAttachment(attachment, content);
+  $: patchLines = showPatchPreview && content ? parsePatchPreview(content) : [];
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -80,6 +249,16 @@
       <p class="status error">{errorMessage}</p>
     {:else if content === null || content === ""}
       <p class="status">No extracted attachment preview is available.</p>
+    {:else if showPatchPreview}
+      <div class="patch-preview" role="region" aria-label="Patch preview">
+        {#each patchLines as line, index (`${index}:${line.kind}:${line.raw}`)}
+          <div class={`patch-row patch-row-${line.kind}`}>
+            <span class="line-no line-no-old">{formatLineNumber(line.oldLineNumber)}</span>
+            <span class="line-no line-no-new">{formatLineNumber(line.newLineNumber)}</span>
+            <code class="patch-code">{line.raw}</code>
+          </div>
+        {/each}
+      </div>
     {:else}
       <pre class="preview"><code>{content}</code></pre>
     {/if}
@@ -212,6 +391,107 @@
     font-family: inherit;
   }
 
+  .patch-preview {
+    overflow: auto;
+    background: #f8fafc;
+    color: #102a43;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    border-top: 1px solid #d9e2ec;
+  }
+
+  .patch-row {
+    display: grid;
+    grid-template-columns: 4.5rem 4.5rem minmax(0, 1fr);
+    min-width: max-content;
+  }
+
+  .line-no {
+    padding: 0 0.75rem;
+    text-align: right;
+    color: #7b8794;
+    background: #f1f5f9;
+    user-select: none;
+    border-right: 1px solid #d9e2ec;
+  }
+
+  .patch-code {
+    display: block;
+    padding: 0 1rem;
+    white-space: pre;
+    color: inherit;
+    font-family: inherit;
+  }
+
+  .patch-row-file-meta .patch-code,
+  .patch-row-file-old .patch-code,
+  .patch-row-file-new .patch-code,
+  .patch-row-hunk .patch-code,
+  .patch-row-notice .patch-code {
+    padding-top: 0.12rem;
+    padding-bottom: 0.12rem;
+  }
+
+  .patch-row-file-meta .line-no,
+  .patch-row-file-old .line-no,
+  .patch-row-file-new .line-no,
+  .patch-row-hunk .line-no,
+  .patch-row-notice .line-no {
+    color: transparent;
+  }
+
+  .patch-row-file-meta {
+    background: #e9eef5;
+    color: #243b53;
+  }
+
+  .patch-row-file-old {
+    background: #fecaca;
+    color: #7f1d1d;
+  }
+
+  .patch-row-file-new {
+    background: #bbf7d0;
+    color: #14532d;
+  }
+
+  .patch-row-hunk {
+    background: #edf4ff;
+    color: #1d4ed8;
+  }
+
+  .patch-row-add {
+    background: #bbf7d0;
+    color: #14532d;
+  }
+
+  .patch-row-remove {
+    background: #fecaca;
+    color: #7f1d1d;
+  }
+
+  .patch-row-context {
+    background: #f8fafc;
+    color: #1f2937;
+  }
+
+  .patch-row-notice {
+    background: #f3f4f6;
+    color: #4b5563;
+    font-style: italic;
+  }
+
+  .patch-row-add .line-no {
+    background: #86efac;
+    color: #14532d;
+  }
+
+  .patch-row-remove .line-no {
+    background: #fca5a5;
+    color: #7f1d1d;
+  }
+
   @media (max-width: 640px) {
     .overlay {
       padding: 0.5rem;
@@ -228,6 +508,22 @@
     .preview {
       padding: 0.85rem;
       font-size: 0.78rem;
+    }
+
+    .patch-preview {
+      font-size: 0.78rem;
+    }
+
+    .patch-row {
+      grid-template-columns: 3.4rem 3.4rem minmax(0, 1fr);
+    }
+
+    .line-no {
+      padding: 0 0.45rem;
+    }
+
+    .patch-code {
+      padding: 0 0.8rem;
     }
   }
 </style>
