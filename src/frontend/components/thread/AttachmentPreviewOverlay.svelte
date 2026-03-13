@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { onMount } from "svelte";
   import type { AttachmentSummary } from "shared/api";
   import { attachmentDownloadPath } from "../../lib/api";
 
@@ -269,6 +270,19 @@
   $: patchLines = showPatchPreview && content ? parsePatchPreview(content) : [];
   $: attachmentPositionLabel =
     currentIndex === null || totalCount <= 1 ? null : `${currentIndex + 1} of ${totalCount}`;
+
+  onMount(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  });
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -338,6 +352,7 @@
     display: grid;
     place-items: center;
     padding: 1rem;
+    overscroll-behavior: contain;
   }
 
   .dialog {
@@ -480,6 +495,7 @@
     line-height: 1.45;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     white-space: pre;
+    overscroll-behavior: contain;
   }
 
   .preview code {
@@ -494,6 +510,7 @@
     line-height: 1.45;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     border-top: 1px solid #d9e2ec;
+    overscroll-behavior: contain;
   }
 
   .patch-row {
