@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { BadRequestError } from "./errors";
 import { analyticsRoutes } from "./routes/analytics";
+import { attachmentsRoutes } from "./routes/attachments";
 import { listsRoutes } from "./routes/lists";
 import { messagesRoutes } from "./routes/messages";
 import { peopleRoutes } from "./routes/people";
@@ -33,6 +34,7 @@ export const app = new Elysia()
     set.status = 500;
     return errorJson("Internal server error", "INTERNAL_ERROR");
   })
+  .use(attachmentsRoutes)
   .use(analyticsRoutes)
   .use(listsRoutes)
   .use(messagesRoutes)

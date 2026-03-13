@@ -1,4 +1,5 @@
 import type {
+  AttachmentDetail,
   AttachmentSummary,
   List,
   Message,
@@ -85,6 +86,7 @@ type AttachmentRow = {
   filename: string | null;
   content_type: string | null;
   size_bytes: number | null;
+  has_content: boolean;
 };
 
 export function toAttachmentSummary(row: AttachmentRow): AttachmentSummary {
@@ -93,6 +95,18 @@ export function toAttachmentSummary(row: AttachmentRow): AttachmentSummary {
     filename: row.filename,
     content_type: row.content_type,
     size_bytes: row.size_bytes,
+    has_content: row.has_content,
+  };
+}
+
+type AttachmentDetailRow = AttachmentRow & {
+  content: string | null;
+};
+
+export function toAttachmentDetail(row: AttachmentDetailRow): AttachmentDetail {
+  return {
+    ...toAttachmentSummary(row),
+    content: row.content,
   };
 }
 
@@ -106,19 +120,23 @@ export function toMessageWithAttachments(
   };
 }
 
+type MessageWithAttachmentsRow = MessageRow & {
+  attachments: AttachmentRow[];
+};
+
 export function toThreadWithMessages(
   thread: ThreadRow,
-  messages: MessageRow[]
+  messages: MessageWithAttachmentsRow[]
 ): ThreadWithMessages {
   return {
     ...toThread(thread),
-    messages: messages.map(toMessage),
+    messages: messages.map((message) => toMessageWithAttachments(message, message.attachments)),
   };
 }
 
 export function toThreadDetail(
   thread: ThreadRow,
-  messages: MessageRow[],
+  messages: MessageWithAttachmentsRow[],
   messagePagination: ThreadMessagePagination
 ): ThreadDetail {
   return {

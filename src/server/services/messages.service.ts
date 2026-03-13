@@ -1,4 +1,5 @@
 import { db } from "../db";
+import { getAttachmentsForMessage } from "./attachments.service";
 
 export async function getMessage(id: bigint) {
   const message = await db
@@ -9,11 +10,7 @@ export async function getMessage(id: bigint) {
 
   if (!message) return null;
 
-  const attachments = await db
-    .selectFrom("attachments")
-    .select(["id", "filename", "content_type", "size_bytes"])
-    .where("message_id", "=", id)
-    .execute();
+  const attachments = await getAttachmentsForMessage(id);
 
   return { ...message, attachments };
 }

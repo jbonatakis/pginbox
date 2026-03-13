@@ -1,10 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import { app } from "../src/server/app";
+import { db } from "../src/server/db";
 
 const base = "http://localhost";
 
+async function request(path: string): Promise<Response> {
+  return app.handle(new Request(`${base}${path}`));
+}
+
 async function get(path: string): Promise<{ status: number; json: unknown }> {
-  const res = await app.handle(new Request(`${base}${path}`));
+  const res = await request(path);
   const json = res.headers.get("content-type")?.includes("application/json")
     ? ((await res.json()) as unknown)
     : await res.text();
@@ -22,6 +27,30 @@ describe("API validation (4xx)", () => {
     const { status, json } = await get("/messages/-1");
     expect(status).toBe(400);
     expect(json).toEqual({ message: "Invalid message id" });
+  });
+
+  it("GET /attachments/:id returns 400 for non-numeric id", async () => {
+    const { status, json } = await get("/attachments/abc");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "Invalid attachment id" });
+  });
+
+  it("GET /attachments/:id returns 400 for negative id", async () => {
+    const { status, json } = await get("/attachments/-1");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "Invalid attachment id" });
+  });
+
+  it("GET /attachments/:id/download returns 400 for non-numeric id", async () => {
+    const { status, json } = await get("/attachments/abc/download");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "Invalid attachment id" });
+  });
+
+  it("GET /attachments/:id/download returns 400 for negative id", async () => {
+    const { status, json } = await get("/attachments/-1/download");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "Invalid attachment id" });
   });
 
   it("GET /people/:id returns 400 for non-numeric id", async () => {
@@ -86,10 +115,64 @@ describe("API validation (4xx)", () => {
 });
 
 describe("API not-found and success (require DB)", () => {
+  it("GET /attachments/:id returns 404 for nonexistent id", async () => {
+    const { status, json } = await get("/attachments/999999999999999");
+    expect(status).toBe(404);
+    expect(json).toEqual({ message: "Attachment not found" });
+  });
+
+  it("GET /attachments/:id/download returns 404 for nonexistent id", async () => {
+    const { status, json } = await get("/attachments/999999999999999/download");
+    expect(status).toBe(404);
+    expect(json).toEqual({ message: "Attachment not found" });
+  });
+
   it("GET /messages/:id returns 404 for nonexistent id", async () => {
     const { status, json } = await get("/messages/999999999999999");
     expect(status).toBe(404);
     expect(json).toEqual({ message: "Message not found" });
+  });
+
+  it("GET /attachments/:id returns 200 with content for a previewable attachment", async () => {
+    const attachment = await db
+      .selectFrom("attachments")
+      .select(["id", "filename", "content_type", "size_bytes"])
+      .where("content", "is not", null)
+      .orderBy("id", "asc")
+      .executeTakeFirst();
+
+    if (!attachment) return;
+
+    const { status, json } = await get(`/attachments/${attachment.id}`);
+    expect(status).toBe(200);
+    expect(json).toMatchObject({
+      id: String(attachment.id),
+      filename: attachment.filename,
+      content_type: attachment.content_type,
+      size_bytes: attachment.size_bytes,
+      has_content: true,
+    });
+    expect(typeof (json as { content: unknown }).content).toBe("string");
+  });
+
+  it("GET /attachments/:id/download returns attachment content for a previewable attachment", async () => {
+    const attachment = await db
+      .selectFrom("attachments")
+      .select(["id", "filename", "content_type"])
+      .where("content", "is not", null)
+      .where("size_bytes", "<=", 65536)
+      .orderBy("size_bytes", "asc")
+      .orderBy("id", "asc")
+      .executeTakeFirst();
+
+    if (!attachment) return;
+
+    const response = await request(`/attachments/${attachment.id}/download`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain("attachment;");
+    const contentType = response.headers.get("content-type");
+    expect(typeof contentType).toBe("string");
+    expect(contentType?.length ?? 0).toBeGreaterThan(0);
   });
 
   it("GET /people/:id returns 404 for nonexistent id", async () => {
@@ -116,7 +199,12 @@ describe("API not-found and success (require DB)", () => {
     expect(status).toBe(200);
     expect(json).toHaveProperty("messages");
     expect(json).toHaveProperty("messagePagination");
-    expect(Array.isArray((json as { messages: unknown[] }).messages)).toBe(true);
+    const messages = (json as { messages: Array<{ attachments?: unknown }> }).messages;
+    expect(Array.isArray(messages)).toBe(true);
+    if (messages.length > 0) {
+      expect(messages[0]).toHaveProperty("attachments");
+      expect(Array.isArray(messages[0].attachments)).toBe(true);
+    }
   });
 
   it("GET /lists returns 200 and array", async () => {

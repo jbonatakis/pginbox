@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { BadRequestError } from "../errors";
 import { sql } from "kysely";
+import { getAttachmentsByMessageIds } from "./attachments.service";
 
 function encodeCursor(lastActivityAt: Date | null, threadId: string): string {
   return Buffer.from(JSON.stringify({ lastActivityAt, threadId })).toString("base64url");
@@ -107,9 +108,15 @@ export async function getThread(threadId: string, query: ThreadMessagesQuery) {
     .offset(offset)
     .execute();
 
+  const attachmentsByMessageId = await getAttachmentsByMessageIds(messages.map((message) => message.id));
+  const messagesWithAttachments = messages.map((message) => ({
+    ...message,
+    attachments: attachmentsByMessageId.get(String(message.id)) ?? [],
+  }));
+
   return {
     ...thread,
-    messages,
+    messages: messagesWithAttachments,
     messagePagination: {
       page,
       pageSize: limit,

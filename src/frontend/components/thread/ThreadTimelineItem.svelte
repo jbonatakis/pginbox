@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { Message } from "shared/api";
+  import type { MessageWithAttachments } from "shared/api";
+  import ThreadMessageAttachments from "./ThreadMessageAttachments.svelte";
 
-  export let message: Message;
+  export let message: MessageWithAttachments;
   export let index: number;
   export let anchorId: string;
 
@@ -80,6 +81,8 @@
   </header>
 
   <p class="body">{bodyText(message.body)}</p>
+
+  <ThreadMessageAttachments attachments={message.attachments} />
 </article>
 
 <style>

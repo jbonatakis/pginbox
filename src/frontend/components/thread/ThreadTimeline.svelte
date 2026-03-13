@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { Message } from "shared/api";
+  import type { MessageWithAttachments } from "shared/api";
   import ThreadTimelineItem from "./ThreadTimelineItem.svelte";
 
-  export let messages: Message[] = [];
+  export let messages: MessageWithAttachments[] = [];
   export let startIndex = 0;
   export let totalCount: number | null = null;
   const numberFormatter = new Intl.NumberFormat("en-US");
@@ -29,7 +29,7 @@
       .replace(/[^a-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "");
 
-  const messageAnchorId = (message: Message, index: number): string => {
+  const messageAnchorId = (message: MessageWithAttachments, index: number): string => {
     const token = anchorToken(message.id);
     if (token.length > 0) return `message-${token}-${index + 1}`;
     return `message-${index + 1}`;

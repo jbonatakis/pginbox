@@ -35,8 +35,24 @@ export interface Message {
   sent_at_approx: boolean;
 }
 
+export interface AttachmentSummary {
+  id: string;
+  filename: string | null;
+  content_type: string | null;
+  size_bytes: number | null;
+  has_content: boolean;
+}
+
+export interface AttachmentDetail extends AttachmentSummary {
+  content: string | null;
+}
+
+export interface MessageWithAttachments extends Message {
+  attachments: AttachmentSummary[];
+}
+
 export interface ThreadWithMessages extends Thread {
-  messages: Message[];
+  messages: MessageWithAttachments[];
 }
 
 export interface ThreadMessagePagination {
@@ -47,17 +63,6 @@ export interface ThreadMessagePagination {
 
 export interface ThreadDetail extends ThreadWithMessages {
   messagePagination: ThreadMessagePagination;
-}
-
-export interface AttachmentSummary {
-  id: string;
-  filename: string | null;
-  content_type: string | null;
-  size_bytes: number | null;
-}
-
-export interface MessageWithAttachments extends Message {
-  attachments: AttachmentSummary[];
 }
 
 // ---- People ----

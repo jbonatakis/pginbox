@@ -1,4 +1,5 @@
 import type {
+  AttachmentDetail,
   AnalyticsSummary,
   ByDow,
   ByHour,
@@ -279,6 +280,17 @@ export async function getThread(
   return requestJson<ThreadDetail>(path, options);
 }
 
+export async function getAttachment(
+  id: string | number,
+  options: RequestOptions = {}
+): Promise<AttachmentDetail> {
+  return requestJson<AttachmentDetail>(withApiBase(`/attachments/${encodePathParam(id)}`), options);
+}
+
+export function attachmentDownloadPath(id: string | number): string {
+  return withApiBase(`/attachments/${encodePathParam(id)}/download`);
+}
+
 export async function listLists(options: RequestOptions = {}): Promise<List[]> {
   return requestJson<List[]>(withApiBase("/lists"), options);
 }
@@ -322,6 +334,9 @@ export async function getAnalyticsByDow(options: RequestOptions = {}): Promise<B
 }
 
 export const api = {
+  attachments: {
+    get: getAttachment,
+  },
   analytics: {
     getByDow: getAnalyticsByDow,
     getByHour: getAnalyticsByHour,
