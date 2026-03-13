@@ -300,6 +300,8 @@
         </div>
         {#if attachment.has_content}
           <a class="download-button" href={attachmentDownloadPath(attachment.id)}>Download</a>
+        {:else}
+          <button class="download-button" type="button" disabled>Download</button>
         {/if}
         <button class="close-button" type="button" on:click={close}>Close</button>
       </div>
@@ -427,6 +429,13 @@
   .download-button:hover,
   .close-button:hover {
     background: #dcedff;
+  }
+
+  .download-button:disabled {
+    border-color: #bcccdc;
+    background: #f1f5f9;
+    color: #7b8794;
+    cursor: not-allowed;
   }
 
   .nav-button:disabled {

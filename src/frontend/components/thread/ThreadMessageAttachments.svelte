@@ -183,7 +183,11 @@
                   >
                     {attachmentName(attachment)}
                   </button>
-                  <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                  {#if attachment.has_content}
+                    <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                  {:else}
+                    <button class="attachment-download" type="button" disabled>Download</button>
+                  {/if}
                 </div>
               {:else}
                 <strong>{attachmentName(attachment)}</strong>
@@ -222,7 +226,11 @@
                   >
                     {attachmentName(attachment)}
                   </button>
-                  <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                  {#if attachment.has_content}
+                    <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                  {:else}
+                    <button class="attachment-download" type="button" disabled>Download</button>
+                  {/if}
                 </div>
               {:else}
                 <strong>{attachmentName(attachment)}</strong>
@@ -375,13 +383,20 @@
     white-space: nowrap;
   }
 
-  .attachment-download:hover {
+  .attachment-download:hover:not(:disabled) {
     background: #dcedff;
   }
 
   .attachment-download:focus-visible {
     outline: 2px solid #0b4ea2;
     outline-offset: 2px;
+  }
+
+  .attachment-download:disabled {
+    border-color: #bcccdc;
+    background: #f1f5f9;
+    color: #7b8794;
+    cursor: not-allowed;
   }
 
   .family-pill {
