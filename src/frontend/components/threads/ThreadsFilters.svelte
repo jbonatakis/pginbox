@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { List } from "shared/api";
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import { THREADS_QUERY_DEFAULT_LIMIT } from "../../lib/state/threadsQuery";
+
+  const DATE_TEXT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+  const DATE_SEPARATOR_PATTERN = /[\u2010-\u2015\u2212/.\s]+/g;
 
   export let fromDate = "";
   export let defaultLimit = THREADS_QUERY_DEFAULT_LIMIT;
@@ -32,11 +35,63 @@
   let toDateDraft = toDate;
   let limitDraft = limit;
   let isExpanded = false;
+  let useCompactDateInputs = false;
   let lastSyncedFilterState = "";
+  let fromInputElement: HTMLInputElement | null = null;
+  let toInputElement: HTMLInputElement | null = null;
 
   const normalizedDraftText = (value: string): string | null => {
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
+  };
+
+  const normalizeDateDraftInput = (value: string): string =>
+    value.trim().replace(DATE_SEPARATOR_PATTERN, "-");
+
+  const isValidDateDraft = (value: string): boolean => {
+    const normalized = normalizeDateDraftInput(value);
+    const match = DATE_TEXT_PATTERN.exec(normalized);
+    if (!match) return false;
+
+    const [, yearText, monthText, dayText] = match;
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+
+    return (
+      parsed.getUTCFullYear() === year &&
+      parsed.getUTCMonth() === month - 1 &&
+      parsed.getUTCDate() === day
+    );
+  };
+
+  const syncDateInputValidity = (): void => {
+    const fromDraft = normalizeDateDraftInput(fromDateDraft);
+    const toDraft = normalizeDateDraftInput(toDateDraft);
+    const invalidDateMessage = "Use YYYY-MM-DD";
+
+    if (fromInputElement) {
+      const isInvalidFrom = useCompactDateInputs && fromDraft !== "" && !isValidDateDraft(fromDraft);
+      fromInputElement.setCustomValidity(isInvalidFrom ? invalidDateMessage : "");
+    }
+
+    if (toInputElement) {
+      const isInvalidTo = useCompactDateInputs && toDraft !== "" && !isValidDateDraft(toDraft);
+      toInputElement.setCustomValidity(isInvalidTo ? invalidDateMessage : "");
+    }
+
+    const hasValidRange =
+      fromDraft !== "" &&
+      toDraft !== "" &&
+      isValidDateDraft(fromDraft) &&
+      isValidDateDraft(toDraft);
+
+    if (hasValidRange && fromDraft > toDraft) {
+      const rangeMessage = "From date must be on or before To date";
+      fromInputElement?.setCustomValidity(rangeMessage);
+      toInputElement?.setCustomValidity(rangeMessage);
+    }
   };
 
   const serializeFilterState = (): string =>
@@ -94,17 +149,63 @@
     isExpanded = !isExpanded;
   };
 
+  const normalizeFromDateDraft = (): void => {
+    fromDateDraft = normalizeDateDraftInput(fromDateDraft);
+  };
+
+  const normalizeToDateDraft = (): void => {
+    toDateDraft = normalizeDateDraftInput(toDateDraft);
+  };
+
   const emitSearchSubmit = (): void => {
+    normalizeFromDateDraft();
+    normalizeToDateDraft();
+    syncDateInputValidity();
+
+    const invalidInput = [fromInputElement, toInputElement].find(
+      (input) => input !== null && !input.checkValidity()
+    );
+    if (invalidInput) {
+      invalidInput.reportValidity();
+      invalidInput.focus();
+      return;
+    }
+
     const parsedLimit = Number(limitDraft);
 
     dispatch("searchsubmit", {
-      from: normalizedDraftText(fromDateDraft),
+      from: normalizedDraftText(normalizeDateDraftInput(fromDateDraft)),
       limit: Number.isInteger(parsedLimit) ? parsedLimit : limit,
       list: normalizedDraftText(selectedListDraft),
       q: normalizedDraftText(searchDraft),
-      to: normalizedDraftText(toDateDraft),
+      to: normalizedDraftText(normalizeDateDraftInput(toDateDraft)),
     });
   };
+
+  $: syncDateInputValidity();
+
+  onMount(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const mediaQuery = window.matchMedia("(max-width: 760px)");
+    const updateCompactDateMode = (): void => {
+      useCompactDateInputs = mediaQuery.matches;
+    };
+
+    updateCompactDateMode();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateCompactDateMode);
+      return () => {
+        mediaQuery.removeEventListener("change", updateCompactDateMode);
+      };
+    }
+
+    mediaQuery.addListener(updateCompactDateMode);
+    return () => {
+      mediaQuery.removeListener(updateCompactDateMode);
+    };
+  });
 </script>
 
 <section class="filters-card" aria-label="Thread filters">
@@ -176,10 +277,14 @@
       <label for="threads-from">From</label>
       <input
         id="threads-from"
-        type="date"
+        type={useCompactDateInputs ? "text" : "date"}
+        inputmode={useCompactDateInputs ? "numeric" : undefined}
+        placeholder={useCompactDateInputs ? "YYYY-MM-DD" : undefined}
         bind:value={fromDateDraft}
-        max={toDateDraft || undefined}
+        max={!useCompactDateInputs ? toDateDraft || undefined : undefined}
         disabled={isBusy}
+        bind:this={fromInputElement}
+        on:blur={normalizeFromDateDraft}
       />
     </div>
 
@@ -187,10 +292,14 @@
       <label for="threads-to">To</label>
       <input
         id="threads-to"
-        type="date"
+        type={useCompactDateInputs ? "text" : "date"}
+        inputmode={useCompactDateInputs ? "numeric" : undefined}
+        placeholder={useCompactDateInputs ? "YYYY-MM-DD" : undefined}
         bind:value={toDateDraft}
-        min={fromDateDraft || undefined}
+        min={!useCompactDateInputs ? fromDateDraft || undefined : undefined}
         disabled={isBusy}
+        bind:this={toInputElement}
+        on:blur={normalizeToDateDraft}
       />
     </div>
 
