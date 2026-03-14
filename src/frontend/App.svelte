@@ -70,6 +70,7 @@
   let contentElement: HTMLElement | null = null;
   let handledRoutePathname: string | null =
     typeof window !== "undefined" ? window.location.pathname : null;
+  let mobileNavOpen = false;
   let routeContextChips: ContextChip[] = [];
 
   const documentTitleForRoute = (route: AppRoute): string => {
@@ -94,11 +95,20 @@
     contentElement?.focus();
   };
 
+  const toggleMobileNav = (): void => {
+    mobileNavOpen = !mobileNavOpen;
+  };
+
+  const closeMobileNav = (): void => {
+    mobileNavOpen = false;
+  };
+
   $: if (typeof document !== "undefined") {
     const route = $currentRoute;
     document.title = documentTitleForRoute(route);
 
     if (route.pathname !== handledRoutePathname) {
+      mobileNavOpen = false;
       handledRoutePathname = route.pathname;
       void focusRouteHeading();
     }
@@ -111,23 +121,50 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
   <header class="shell-header">
-    <div class="brand-block">
-      <a href={homePath} class="brand-link" on:click={(event) => onLinkClick(event, homePath)}
-        >pginbox</a
-      >
-      <p>Searchable PostgreSQL mailing list history</p>
-    </div>
-
-    <nav aria-label="Primary navigation">
-      {#each navItems as item}
-        <a
-          href={item.path}
-          class:active={isActiveNavItem(item, $currentRoute.name)}
-          aria-current={isActiveNavItem(item, $currentRoute.name) ? "page" : undefined}
-          on:click={(event) => onLinkClick(event, item.path)}>{item.label}</a
+    <div class="header-bar">
+      <div class="brand-block">
+        <a href={homePath} class="brand-link" on:click={(event) => onLinkClick(event, homePath)}
+          >pginbox</a
         >
-      {/each}
-    </nav>
+        <p>Searchable PostgreSQL mailing list history</p>
+      </div>
+
+      <div class="nav-popover">
+        <button
+          type="button"
+          class="nav-toggle"
+          aria-controls="primary-navigation"
+          aria-expanded={mobileNavOpen}
+          aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
+          on:click={toggleMobileNav}
+        >
+          <span class="nav-toggle-text">Menu</span>
+          <span class="nav-toggle-icon" aria-hidden="true">
+            <span class:open={mobileNavOpen}></span>
+            <span class:open={mobileNavOpen}></span>
+            <span class:open={mobileNavOpen}></span>
+          </span>
+        </button>
+
+        <nav
+          id="primary-navigation"
+          class:mobile-open={mobileNavOpen}
+          aria-label="Primary navigation"
+        >
+          {#each navItems as item}
+            <a
+              href={item.path}
+              class:active={isActiveNavItem(item, $currentRoute.name)}
+              aria-current={isActiveNavItem(item, $currentRoute.name) ? "page" : undefined}
+              on:click={(event) => {
+                closeMobileNav();
+                onLinkClick(event, item.path);
+              }}>{item.label}</a
+            >
+          {/each}
+        </nav>
+      </div>
+    </div>
   </header>
 
   {#if $currentRoute.name !== "home" && routeContextChips.length > 0}
@@ -211,6 +248,7 @@
     margin: 0 auto;
     padding: 1rem 1.25rem 2.5rem;
     display: grid;
+    align-content: start;
     gap: 1rem;
     min-width: 0;
   }
@@ -235,12 +273,24 @@
   }
 
   .shell-header {
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid #bcccdc;
+  }
+
+  .header-bar {
     display: flex;
     align-items: end;
     justify-content: space-between;
     gap: 0.9rem;
-    padding-bottom: 0.9rem;
-    border-bottom: 1px solid #bcccdc;
+    min-width: 0;
+  }
+
+  .nav-popover {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-left: auto;
   }
 
   .brand-block {
@@ -261,6 +311,45 @@
     margin: 0;
     color: #486581;
     font-size: 0.92rem;
+  }
+
+  .nav-toggle {
+    display: none;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid #c5d0da;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: #243b53;
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .nav-toggle-text {
+    white-space: nowrap;
+  }
+
+  .nav-toggle-icon {
+    width: 1rem;
+    height: 0.8rem;
+    display: grid;
+    align-content: center;
+    gap: 0.18rem;
+  }
+
+  .nav-toggle-icon span {
+    display: block;
+    width: 100%;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    transition:
+      transform 140ms ease,
+      opacity 140ms ease;
+    transform-origin: center;
   }
 
   nav {
@@ -351,21 +440,58 @@
     }
 
     .shell-header {
+      padding-bottom: 0.7rem;
+    }
+
+    .header-bar {
       align-items: start;
-      flex-direction: column;
-      gap: 0.7rem;
+    }
+
+    .nav-toggle {
+      display: inline-flex;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+
+    .nav-toggle-icon span.open:nth-child(1) {
+      transform: translateY(0.31rem) rotate(45deg);
+    }
+
+    .nav-toggle-icon span.open:nth-child(2) {
+      opacity: 0;
+    }
+
+    .nav-toggle-icon span.open:nth-child(3) {
+      transform: translateY(-0.31rem) rotate(-45deg);
     }
 
     nav {
-      width: 100%;
-      flex-wrap: wrap;
+      position: absolute;
+      top: calc(100% + 0.45rem);
+      right: 0;
+      display: none;
+      justify-content: stretch;
       gap: 0.45rem;
+      width: min(14rem, calc(100vw - 1.5rem));
+      padding: 0.45rem;
+      border: 1px solid #cdd7e1;
+      border-radius: 1rem;
+      background: rgba(255, 255, 255, 0.98);
+      box-shadow:
+        0 20px 45px -28px rgba(16, 42, 67, 0.45),
+        0 8px 18px -16px rgba(16, 42, 67, 0.35);
+      z-index: 30;
+    }
+
+    nav.mobile-open {
+      display: grid;
     }
 
     nav a {
-      flex: 1 1 calc(50% - 0.4rem);
-      text-align: center;
-      min-width: 5.5rem;
+      width: 100%;
+      text-align: left;
+      padding: 0.7rem 0.85rem;
+      border-radius: 0.8rem;
     }
 
     .context-strip {

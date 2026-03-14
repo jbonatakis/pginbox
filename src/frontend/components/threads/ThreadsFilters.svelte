@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { List } from "shared/api";
   import { createEventDispatcher } from "svelte";
+  import { THREADS_QUERY_DEFAULT_LIMIT } from "../../lib/state/threadsQuery";
 
   export let fromDate = "";
+  export let defaultLimit = THREADS_QUERY_DEFAULT_LIMIT;
   export let isBusy = false;
   export let isListsLoading = false;
   export let limit = 25;
@@ -14,64 +16,67 @@
   export let toDate = "";
 
   const dispatch = createEventDispatcher<{
-    clear: void;
-    fromchange: string | null;
-    limitchange: number;
-    listchange: string | null;
     retrylists: void;
-    searchsubmit: string | null;
-    tochange: string | null;
+    searchsubmit: {
+      from: string | null;
+      limit: number;
+      list: string | null;
+      q: string | null;
+      to: string | null;
+    };
   }>();
 
   let searchDraft = searchQuery;
-  let lastSyncedSearchQuery = searchQuery;
+  let selectedListDraft = selectedList ?? "";
+  let fromDateDraft = fromDate;
+  let toDateDraft = toDate;
+  let limitDraft = limit;
+  let lastSyncedFilterState = "";
 
-  $: if (searchQuery !== lastSyncedSearchQuery) {
-    searchDraft = searchQuery;
-    lastSyncedSearchQuery = searchQuery;
+  const normalizedDraftText = (value: string): string | null => {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  };
+
+  const serializeFilterState = (): string =>
+    JSON.stringify({
+      fromDate,
+      limit,
+      searchQuery,
+      selectedList: selectedList ?? null,
+      toDate,
+    });
+
+  $: {
+    const nextSyncedFilterState = serializeFilterState();
+    if (nextSyncedFilterState === lastSyncedFilterState) {
+      // No applied-filter change to sync into the local draft state.
+    } else {
+      lastSyncedFilterState = nextSyncedFilterState;
+      fromDateDraft = fromDate;
+      limitDraft = limit;
+      searchDraft = searchQuery;
+      selectedListDraft = selectedList ?? "";
+      toDateDraft = toDate;
+    }
   }
 
   $: hasUnknownSelectedList =
-    typeof selectedList === "string" &&
-    selectedList.length > 0 &&
-    !listOptions.some((candidate) => candidate.name === selectedList);
-
-  const emitListChange = (event: Event): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLSelectElement)) return;
-
-    const normalized = target.value.trim();
-    dispatch("listchange", normalized.length > 0 ? normalized : null);
-  };
-
-  const emitFromChange = (event: Event): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLInputElement)) return;
-
-    const normalized = target.value.trim();
-    dispatch("fromchange", normalized.length > 0 ? normalized : null);
-  };
-
-  const emitToChange = (event: Event): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLInputElement)) return;
-
-    const normalized = target.value.trim();
-    dispatch("tochange", normalized.length > 0 ? normalized : null);
-  };
-
-  const emitLimitChange = (event: Event): void => {
-    const target = event.currentTarget;
-    if (!(target instanceof HTMLSelectElement)) return;
-
-    const parsed = Number(target.value);
-    if (!Number.isInteger(parsed)) return;
-
-    dispatch("limitchange", parsed);
-  };
+    selectedListDraft.length > 0 &&
+    !listOptions.some((candidate) => candidate.name === selectedListDraft);
+  $: hasModifiedFilters =
+    searchDraft !== "" ||
+    selectedListDraft !== "" ||
+    fromDateDraft !== "" ||
+    toDateDraft !== "" ||
+    Number(limitDraft) !== defaultLimit;
 
   const emitClear = (): void => {
-    dispatch("clear");
+    fromDateDraft = "";
+    limitDraft = defaultLimit;
+    searchDraft = "";
+    selectedListDraft = "";
+    toDateDraft = "";
   };
 
   const emitRetryLists = (): void => {
@@ -79,38 +84,43 @@
   };
 
   const emitSearchSubmit = (): void => {
-    const normalized = searchDraft.trim();
-    lastSyncedSearchQuery = normalized;
-    dispatch("searchsubmit", normalized.length > 0 ? normalized : null);
+    const parsedLimit = Number(limitDraft);
+
+    dispatch("searchsubmit", {
+      from: normalizedDraftText(fromDateDraft),
+      limit: Number.isInteger(parsedLimit) ? parsedLimit : limit,
+      list: normalizedDraftText(selectedListDraft),
+      q: normalizedDraftText(searchDraft),
+      to: normalizedDraftText(toDateDraft),
+    });
   };
 </script>
 
-<section class="filters" aria-label="Thread filters">
+<form class="filters" aria-label="Thread filters" on:submit|preventDefault={emitSearchSubmit}>
   <div class="field search-field">
-    <label for="threads-search">Subject search</label>
-    <form class="search-form" on:submit|preventDefault={emitSearchSubmit}>
+    <label for="threads-search">Search threads</label>
+    <div class="search-form">
       <input
         id="threads-search"
         type="search"
         bind:value={searchDraft}
-        placeholder="Search thread subjects"
+        placeholder="Search threads"
         disabled={isBusy}
       />
       <button type="submit" class="search-button" disabled={isBusy}>Search</button>
-    </form>
+    </div>
   </div>
 
   <div class="field list-field">
     <label for="threads-list">List</label>
     <select
       id="threads-list"
-      value={selectedList ?? ""}
+      bind:value={selectedListDraft}
       disabled={isBusy || isListsLoading}
-      on:change={emitListChange}
     >
       <option value="">All lists</option>
       {#if hasUnknownSelectedList}
-        <option value={selectedList}>{selectedList} (Unavailable)</option>
+        <option value={selectedListDraft}>{selectedListDraft} (Unavailable)</option>
       {/if}
       {#each listOptions as list (list.id)}
         <option value={list.name}>{list.name}</option>
@@ -132,10 +142,9 @@
     <input
       id="threads-from"
       type="date"
-      value={fromDate}
-      max={toDate || undefined}
+      bind:value={fromDateDraft}
+      max={toDateDraft || undefined}
       disabled={isBusy}
-      on:change={emitFromChange}
     />
   </div>
 
@@ -144,16 +153,15 @@
     <input
       id="threads-to"
       type="date"
-      value={toDate}
-      min={fromDate || undefined}
+      bind:value={toDateDraft}
+      min={fromDateDraft || undefined}
       disabled={isBusy}
-      on:change={emitToChange}
     />
   </div>
 
   <div class="field">
     <label for="threads-limit">Limit</label>
-    <select id="threads-limit" value={limit} disabled={isBusy} on:change={emitLimitChange}>
+    <select id="threads-limit" bind:value={limitDraft} disabled={isBusy}>
       {#each limitOptions as option}
         <option value={option}>{option}</option>
       {/each}
@@ -161,11 +169,16 @@
   </div>
 
   <div class="actions">
-    <button type="button" class="clear-button" disabled={isBusy} on:click={emitClear}
+    <button
+      type="button"
+      class="clear-button"
+      class:modified={hasModifiedFilters}
+      disabled={isBusy}
+      on:click={emitClear}
       >Clear filters</button
     >
   </div>
-</section>
+</form>
 
 <style>
   .filters {
@@ -248,6 +261,7 @@
   .actions {
     display: flex;
     align-items: end;
+    align-self: end;
   }
 
   .clear-button {
@@ -261,6 +275,12 @@
     padding: 0.44rem 0.6rem;
     cursor: pointer;
     min-height: 2rem;
+  }
+
+  .clear-button.modified {
+    border-color: #6f9fdd;
+    background: #e8f2ff;
+    color: #0b4ea2;
   }
 
   .clear-button:disabled {
@@ -316,6 +336,7 @@
     .actions {
       grid-column: span 1;
       align-items: start;
+      align-self: start;
     }
   }
 </style>

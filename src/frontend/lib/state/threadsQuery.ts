@@ -2,6 +2,7 @@ export const THREADS_QUERY_DEFAULT_LIMIT = 25;
 export const THREADS_QUERY_MIN_LIMIT = 1;
 export const THREADS_QUERY_MAX_LIMIT = 100;
 export const THREADS_RESTORE_SCROLL_PARAM = "_scrollY";
+const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const FILTER_PATCH_KEYS: Array<keyof ThreadsQueryPatch> = ["from", "limit", "list", "q", "to"];
 
@@ -186,11 +187,37 @@ function normalizeQueryDate(value: unknown): string | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
 
+  const normalizedDateOnly = normalizeDateOnly(trimmed);
+  if (normalizedDateOnly) return normalizedDateOnly;
+  if (DATE_ONLY_PATTERN.test(trimmed)) return undefined;
+
   const parsed = new Date(trimmed);
   if (!Number.isFinite(parsed.getTime())) return undefined;
 
   return parsed.toISOString();
 }
+
+function normalizeDateOnly(value: string): string | undefined {
+  const match = DATE_ONLY_PATTERN.exec(value);
+  if (!match) return undefined;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+
+  return `${yearText}-${monthText}-${dayText}`;
+}
+
 function normalizeRestoreScroll(value: unknown): number | undefined {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return undefined;

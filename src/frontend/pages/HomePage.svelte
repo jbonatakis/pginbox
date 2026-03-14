@@ -31,8 +31,8 @@
           type="search"
           name="q"
           bind:value={searchQuery}
-          aria-label="Search thread subjects"
-          placeholder="Search thread subjects"
+          aria-label="Search threads"
+          placeholder="Search threads"
         />
         <button type="submit" class="search-button">Search</button>
       </div>
@@ -63,7 +63,7 @@
     max-width: 12ch;
     color: #102a43;
     font-size: clamp(2.4rem, 7vw, 4.8rem);
-    line-height: 0.95;
+    line-height: 1.02;
     letter-spacing: -0.05em;
   }
 
@@ -91,17 +91,28 @@
     border: 0;
     padding: 0.6rem 0;
     background: transparent;
+    -webkit-appearance: none;
+    appearance: none;
     color: #102a43;
     font-size: clamp(1rem, 2.2vw, 1.15rem);
     line-height: 1.2;
+  }
+
+  input::-webkit-search-decoration,
+  input::-webkit-search-cancel-button,
+  input::-webkit-search-results-button,
+  input::-webkit-search-results-decoration {
+    -webkit-appearance: none;
   }
 
   input::placeholder {
     color: #7b8794;
   }
 
-  input:focus {
+  input:focus,
+  input:focus-visible {
     outline: none;
+    box-shadow: none;
   }
 
   .search-frame:focus-within {
@@ -148,14 +159,15 @@
     }
 
     .search-frame {
-      grid-template-columns: 1fr;
-      justify-items: start;
-      border-radius: 1.2rem;
-      padding: 0.8rem 0.9rem;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.55rem;
+      padding: 0.5rem 0.55rem 0.5rem 0.9rem;
     }
 
     .search-button {
-      min-height: 2rem;
+      min-height: 2.15rem;
+      padding: 0.4rem 0.72rem;
+      font-size: 0.8rem;
     }
   }
 </style>

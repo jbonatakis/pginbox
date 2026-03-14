@@ -19,11 +19,11 @@ describe("threads query state", () => {
 
     expect(parsed).toEqual({
       cursor: "abc123",
-      from: "2025-01-03T00:00:00.000Z",
+      from: "2025-01-03",
       limit: 100,
       list: "pgsql-hackers",
       q: "vacuum",
-      to: "2025-01-04T00:00:00.000Z",
+      to: "2025-01-04",
     });
   });
 
@@ -35,7 +35,7 @@ describe("threads query state", () => {
   });
 
   it("ignores invalid dates without crashing", () => {
-    const parsed = parseThreadsQuery("?from=not-a-date&to=also-not-a-date");
+    const parsed = parseThreadsQuery("?from=not-a-date&to=2025-02-30");
 
     expect(parsed.from).toBeUndefined();
     expect(parsed.to).toBeUndefined();
@@ -52,8 +52,13 @@ describe("threads query state", () => {
     });
 
     expect(serialized).toBe(
-      "?list=pgsql-hackers&from=2025-01-03T00%3A00%3A00.000Z&to=2025-01-04T00%3A00%3A00.000Z&q=vacuum+freeze&cursor=c42&limit=50"
+      "?list=pgsql-hackers&from=2025-01-03&to=2025-01-04&q=vacuum+freeze&cursor=c42&limit=50"
     );
+  });
+
+  it("preserves date-only filters but canonicalizes timestamp filters", () => {
+    expect(parseThreadsQuery("?from=2025-01-03").from).toBe("2025-01-03");
+    expect(parseThreadsQuery("?to=2025-01-04T12:34:56-05:00").to).toBe("2025-01-04T17:34:56.000Z");
   });
 
   it("accepts free-text q and upgrades the old search param", () => {

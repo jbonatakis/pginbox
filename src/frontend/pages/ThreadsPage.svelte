@@ -25,6 +25,13 @@
   type ListsStatus = "idle" | "loading" | "success" | "error";
   type LoadMode = "replace" | "preserve";
   type ThreadsStatus = "idle" | "loading" | "success" | "empty" | "error";
+  type SubmittedFilters = {
+    from: string | null;
+    limit: number;
+    list: string | null;
+    q: string | null;
+    to: string | null;
+  };
 
   const LIMIT_OPTIONS = [10, 25, 50, 100];
 
@@ -321,24 +328,14 @@
     void loadThreads(queryState, mode);
   };
 
-  const handleListChange = (event: CustomEvent<string | null>): void => {
-    applyFilterPatch({ list: event.detail });
-  };
-
-  const handleFromDateChange = (event: CustomEvent<string | null>): void => {
-    applyFilterPatch({ from: event.detail });
-  };
-
-  const handleToDateChange = (event: CustomEvent<string | null>): void => {
-    applyFilterPatch({ to: event.detail });
-  };
-
-  const handleLimitChange = (event: CustomEvent<number>): void => {
-    applyFilterPatch({ limit: clampThreadsQueryLimit(event.detail) });
-  };
-
-  const handleSearchSubmit = (event: CustomEvent<string | null>): void => {
-    applyFilterPatch({ q: event.detail });
+  const handleSearchSubmit = (event: CustomEvent<SubmittedFilters>): void => {
+    applyFilterPatch({
+      from: event.detail.from,
+      limit: clampThreadsQueryLimit(event.detail.limit),
+      list: event.detail.list,
+      q: event.detail.q,
+      to: event.detail.to,
+    });
   };
 
   onMount(() => {
@@ -369,6 +366,7 @@
   <h1 class="sr-only" data-route-heading tabindex="-1">Threads</h1>
 
   <ThreadsFilters
+    defaultLimit={THREADS_QUERY_DEFAULT_LIMIT}
     searchQuery={searchQuery}
     selectedList={queryState.list}
     fromDate={fromDate}
@@ -379,12 +377,7 @@
     isBusy={isBusy}
     isListsLoading={listsStatus === "loading"}
     listsErrorMessage={listsStatus === "error" ? listsErrorMessage : null}
-    on:listchange={handleListChange}
-    on:fromchange={handleFromDateChange}
-    on:tochange={handleToDateChange}
-    on:limitchange={handleLimitChange}
     on:searchsubmit={handleSearchSubmit}
-    on:clear={clearFilters}
     on:retrylists={retryLists}
   />
 
