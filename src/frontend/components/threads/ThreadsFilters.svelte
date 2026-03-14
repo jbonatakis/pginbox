@@ -5,6 +5,7 @@
 
   const DATE_TEXT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
   const DATE_SEPARATOR_PATTERN = /[\u2010-\u2015\u2212/.\s]+/g;
+  const NON_DIGIT_PATTERN = /\D+/g;
 
   export let fromDate = "";
   export let defaultLimit = THREADS_QUERY_DEFAULT_LIMIT;
@@ -45,8 +46,27 @@
     return normalized.length > 0 ? normalized : null;
   };
 
-  const normalizeDateDraftInput = (value: string): string =>
-    value.trim().replace(DATE_SEPARATOR_PATTERN, "-");
+  const formatDateDigits = (value: string): string => {
+    const digits = value.replace(NON_DIGIT_PATTERN, "").slice(0, 8);
+    if (digits.length <= 4) return digits;
+    if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+  };
+
+  const normalizeDateDraftInput = (value: string): string => {
+    const trimmed = value.trim();
+    if (trimmed === "") return "";
+
+    const hasLetters = /[a-z]/i.test(trimmed);
+    if (!hasLetters) {
+      const digits = trimmed.replace(NON_DIGIT_PATTERN, "");
+      if (digits.length > 0) {
+        return formatDateDigits(digits);
+      }
+    }
+
+    return trimmed.replace(DATE_SEPARATOR_PATTERN, "-");
+  };
 
   const isValidDateDraft = (value: string): boolean => {
     const normalized = normalizeDateDraftInput(value);
@@ -155,6 +175,18 @@
 
   const normalizeToDateDraft = (): void => {
     toDateDraft = normalizeDateDraftInput(toDateDraft);
+  };
+
+  const handleFromDateInput = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement) || !useCompactDateInputs) return;
+    fromDateDraft = normalizeDateDraftInput(target.value);
+  };
+
+  const handleToDateInput = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement) || !useCompactDateInputs) return;
+    toDateDraft = normalizeDateDraftInput(target.value);
   };
 
   const emitSearchSubmit = (): void => {
@@ -280,10 +312,12 @@
         type={useCompactDateInputs ? "text" : "date"}
         inputmode={useCompactDateInputs ? "numeric" : undefined}
         placeholder={useCompactDateInputs ? "YYYY-MM-DD" : undefined}
+        maxlength={useCompactDateInputs ? 10 : undefined}
         bind:value={fromDateDraft}
         max={!useCompactDateInputs ? toDateDraft || undefined : undefined}
         disabled={isBusy}
         bind:this={fromInputElement}
+        on:input={handleFromDateInput}
         on:blur={normalizeFromDateDraft}
       />
     </div>
@@ -295,10 +329,12 @@
         type={useCompactDateInputs ? "text" : "date"}
         inputmode={useCompactDateInputs ? "numeric" : undefined}
         placeholder={useCompactDateInputs ? "YYYY-MM-DD" : undefined}
+        maxlength={useCompactDateInputs ? 10 : undefined}
         bind:value={toDateDraft}
         min={!useCompactDateInputs ? fromDateDraft || undefined : undefined}
         disabled={isBusy}
         bind:this={toInputElement}
+        on:input={handleToDateInput}
         on:blur={normalizeToDateDraft}
       />
     </div>
