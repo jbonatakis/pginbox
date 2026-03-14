@@ -221,6 +221,7 @@
     border: 1px solid #d9e2ec;
     border-radius: 0.75rem;
     background: rgba(255, 255, 255, 0.92);
+    overflow: hidden;
     padding: 0.7rem;
     display: grid;
     gap: 0.65rem;
@@ -327,9 +328,17 @@
   }
 
   input[type="date"] {
+    box-sizing: border-box;
     display: block;
+    inline-size: 100%;
+    min-inline-size: 0;
     max-width: 100%;
     min-width: 0;
+    overflow: hidden;
+  }
+
+  input[type="date"]::-webkit-date-and-time-value {
+    text-align: left;
   }
 
   .search-form {
