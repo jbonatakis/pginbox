@@ -326,6 +326,12 @@
     cursor: not-allowed;
   }
 
+  input[type="date"] {
+    display: block;
+    max-width: 100%;
+    min-width: 0;
+  }
+
   .search-form {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -431,6 +437,10 @@
 
     .filters {
       grid-template-columns: 1fr;
+    }
+
+    input[type="date"] {
+      width: 100%;
     }
 
     .search-form {
