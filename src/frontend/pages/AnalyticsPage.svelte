@@ -63,16 +63,7 @@
 </script>
 
 <section class="page">
-  <header class="page-header">
-    <div class="header-copy">
-      <h1 class="page-title" data-route-heading tabindex="-1">Analytics</h1>
-      <p>Inspect mailing list trends and activity over time.</p>
-    </div>
-
-    <button class="refresh-button" type="button" disabled={$analyticsState.isLoading} on:click={retry}
-      >{$analyticsState.isLoading ? "Refreshing..." : "Refresh"}</button
-    >
-  </header>
+  <h1 class="sr-only" data-route-heading tabindex="-1">Analytics</h1>
 
   {#if isInitialLoad}
     <LoadingState
@@ -142,34 +133,6 @@
     min-width: 0;
   }
 
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.8rem;
-    flex-wrap: wrap;
-  }
-
-  .header-copy {
-    display: grid;
-    gap: 0.2rem;
-    min-width: 0;
-  }
-
-  .page-title {
-    margin: 0;
-    font-size: 1.2rem;
-    color: #102a43;
-  }
-
-  p {
-    margin: 0;
-    color: #486581;
-    line-height: 1.4;
-    min-width: 0;
-  }
-
-  .refresh-button,
   .retry-button {
     border: 1px solid #6f9fdd;
     border-radius: 0.55rem;
@@ -183,7 +146,6 @@
     white-space: nowrap;
   }
 
-  .refresh-button:disabled,
   .retry-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
@@ -209,9 +171,15 @@
     min-width: 0;
   }
 
-  @media (max-width: 480px) {
-    .refresh-button {
-      width: 100%;
-    }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

@@ -301,16 +301,7 @@
 </script>
 
 <section class="page">
-  <header class="page-header">
-    <div class="header-copy">
-      <h1 class="page-title" data-route-heading tabindex="-1">Threads</h1>
-      <p>Search thread subjects, filter list activity, and open thread timelines.</p>
-    </div>
-
-    <button class="refresh-button" type="button" disabled={isBusy} on:click={retryThreads}
-      >{isBusy ? "Refreshing..." : "Refresh"}</button
-    >
-  </header>
+  <h1 class="sr-only" data-route-heading tabindex="-1">Threads</h1>
 
   <ThreadsFilters
     searchQuery={searchQuery}
@@ -391,34 +382,6 @@
     min-width: 0;
   }
 
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.8rem;
-    flex-wrap: wrap;
-  }
-
-  .header-copy {
-    display: grid;
-    gap: 0.2rem;
-    min-width: 0;
-  }
-
-  .page-title {
-    margin: 0;
-    font-size: 1.2rem;
-    color: #102a43;
-  }
-
-  p {
-    margin: 0;
-    color: #486581;
-    line-height: 1.4;
-    min-width: 0;
-  }
-
-  .refresh-button,
   .retry-button,
   .reset-button {
     border: 1px solid #6f9fdd;
@@ -433,7 +396,6 @@
     white-space: nowrap;
   }
 
-  .refresh-button:disabled,
   .retry-button:disabled,
   .reset-button:disabled {
     opacity: 0.6;
@@ -461,13 +423,20 @@
   }
 
   .inline-status {
+    margin: 0;
     font-size: 0.84rem;
     color: #486581;
   }
 
-  @media (max-width: 480px) {
-    .refresh-button {
-      width: 100%;
-    }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>

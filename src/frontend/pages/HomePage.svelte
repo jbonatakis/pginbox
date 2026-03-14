@@ -1,29 +1,5 @@
 <script lang="ts">
-  import { analyticsPath, navigate, onLinkClick, peoplePath, threadsPath } from "../router";
-
-  type Shortcut = {
-    description: string;
-    href: string;
-    label: string;
-  };
-
-  const shortcuts: Shortcut[] = [
-    {
-      href: threadsPath,
-      label: "Threads",
-      description: "Browse discussions by subject, date, and timeline.",
-    },
-    {
-      href: peoplePath,
-      label: "People",
-      description: "Start from contributors instead of conversations.",
-    },
-    {
-      href: analyticsPath,
-      label: "Analytics",
-      description: "See archive-wide counts and activity patterns.",
-    },
-  ];
+  import { navigate, threadsPath } from "../router";
 
   let searchQuery = "";
 
@@ -43,61 +19,35 @@
 <section class="home-page">
   <div class="search-stage">
     <h1 class="page-title" data-route-heading tabindex="-1">Search PostgreSQL mailing list history</h1>
-    <p class="lede">
-      Start with a subject search, then drop into the thread explorer to refine by list and date.
-    </p>
 
     <form
       class="search-shell"
       role="search"
-      aria-labelledby="home-search-label"
-      aria-describedby="home-search-note"
       on:submit|preventDefault={submitSearch}
     >
-      <label id="home-search-label" class="sr-only" for="home-search">Search the archive</label>
       <div class="search-frame">
         <input
           id="home-search"
           type="search"
           name="q"
           bind:value={searchQuery}
+          aria-label="Search thread subjects"
           placeholder="Search thread subjects"
         />
         <button type="submit" class="search-button">Search</button>
       </div>
     </form>
-
-    <p id="home-search-note" class="search-note">
-      MVP search looks at thread subjects only. Results open in the threads view.
-    </p>
-
-    <div class="shortcut-grid" aria-label="Available archive views">
-      {#each shortcuts as shortcut}
-        <a
-          class="shortcut-card"
-          href={shortcut.href}
-          on:click={(event) => onLinkClick(event, shortcut.href)}
-        >
-          <strong>{shortcut.label}</strong>
-          <span>{shortcut.description}</span>
-        </a>
-      {/each}
-    </div>
   </div>
-
-  <p class="future-note">
-    Later this page can add hot threads or recent discussions under the search box.
-  </p>
 </section>
 
 <style>
   .home-page {
     min-height: calc(100vh - 11rem);
     display: grid;
-    align-content: center;
+    align-content: start;
     justify-items: center;
     gap: 1rem;
-    padding: 1.2rem 0 2rem;
+    padding: clamp(2.5rem, 8vh, 5.5rem) 0 2rem;
   }
 
   .search-stage {
@@ -115,20 +65,6 @@
     font-size: clamp(2.4rem, 7vw, 4.8rem);
     line-height: 0.95;
     letter-spacing: -0.05em;
-  }
-
-  .lede,
-  .search-note,
-  .future-note,
-  .shortcut-card span {
-    margin: 0;
-    color: #486581;
-    line-height: 1.5;
-  }
-
-  .lede {
-    max-width: 40rem;
-    font-size: 1.02rem;
   }
 
   .search-shell {
@@ -193,62 +129,6 @@
 
   .search-button:hover {
     background: #dcebff;
-  }
-
-  .search-note {
-    max-width: 36rem;
-    font-size: 0.95rem;
-  }
-
-  .shortcut-grid {
-    width: 100%;
-    display: grid;
-    gap: 0.75rem;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
-  }
-
-  .shortcut-card {
-    padding: 0.95rem 1rem;
-    border: 1px solid rgba(151, 169, 190, 0.42);
-    border-radius: 1rem;
-    background: rgba(255, 255, 255, 0.88);
-    text-decoration: none;
-    display: grid;
-    gap: 0.35rem;
-    text-align: left;
-    transition:
-      transform 140ms ease,
-      border-color 140ms ease,
-      box-shadow 140ms ease;
-  }
-
-  .shortcut-card strong {
-    color: #102a43;
-    font-size: 1rem;
-  }
-
-  .shortcut-card:hover {
-    transform: translateY(-1px);
-    border-color: #93b3da;
-    box-shadow: 0 16px 30px -26px rgba(16, 42, 67, 0.42);
-  }
-
-  .future-note {
-    width: min(100%, 42rem);
-    text-align: center;
-    font-size: 0.92rem;
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
   }
 
   @media (max-width: 640px) {

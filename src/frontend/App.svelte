@@ -41,11 +41,7 @@
 
   const contextChipsForRoute = (route: AppRoute): ContextChip[] => {
     if (route.name === "threads") {
-      return [
-        { label: "View", value: "Threads" },
-        { label: "Search", value: "All messages" },
-        { label: "Session", value: "MVP scaffold" },
-      ];
+      return [];
     }
 
     if (route.name === "thread-detail") {
@@ -57,11 +53,7 @@
     }
 
     if (route.name === "people") {
-      return [
-        { label: "View", value: "People" },
-        { label: "Sort", value: "Activity rank" },
-        { label: "Session", value: "MVP scaffold" },
-      ];
+      return [];
     }
 
     if (route.name === "person-detail") {
@@ -73,11 +65,7 @@
     }
 
     if (route.name === "analytics") {
-      return [
-        { label: "View", value: "Analytics" },
-        { label: "Window", value: "All-time" },
-        { label: "Session", value: "Summary mode" },
-      ];
+      return [];
     }
 
     return [
@@ -88,7 +76,9 @@
   };
 
   let contentElement: HTMLElement | null = null;
-  let handledRoutePathname: string | null = null;
+  let handledRoutePathname: string | null =
+    typeof window !== "undefined" ? window.location.pathname : null;
+  let routeContextChips: ContextChip[] = [];
 
   const documentTitleForRoute = (route: AppRoute): string => {
     if (route.name === "home") return "pginbox | PostgreSQL mailing list archive";
@@ -121,6 +111,8 @@
       void focusRouteHeading();
     }
   }
+
+  $: routeContextChips = contextChipsForRoute($currentRoute);
 </script>
 
 <div class="shell">
@@ -146,9 +138,9 @@
     </nav>
   </header>
 
-  {#if $currentRoute.name !== "home"}
+  {#if $currentRoute.name !== "home" && routeContextChips.length > 0}
     <section class="context-strip" aria-label="Current context">
-      {#each contextChipsForRoute($currentRoute) as chip}
+      {#each routeContextChips as chip}
         <p class="context-chip">
           <span>{chip.label}</span>
           <strong>{chip.value}</strong>
@@ -215,7 +207,7 @@
     box-shadow: 0 0 0 3px var(--focus-ring-shadow);
   }
 
-  :global([data-route-heading]:focus) {
+  :global([data-route-heading]:focus-visible) {
     outline: 3px solid var(--focus-ring-color);
     outline-offset: 2px;
     border-radius: 0.25rem;
