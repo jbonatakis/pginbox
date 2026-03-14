@@ -31,6 +31,7 @@
   let fromDateDraft = fromDate;
   let toDateDraft = toDate;
   let limitDraft = limit;
+  let isExpanded = false;
   let lastSyncedFilterState = "";
 
   const normalizedDraftText = (value: string): string | null => {
@@ -64,12 +65,18 @@
   $: hasUnknownSelectedList =
     selectedListDraft.length > 0 &&
     !listOptions.some((candidate) => candidate.name === selectedListDraft);
+  $: modifiedFilterCount =
+    Number(searchDraft !== "") +
+    Number(selectedListDraft !== "") +
+    Number(fromDateDraft !== "") +
+    Number(toDateDraft !== "") +
+    Number(Number(limitDraft) !== defaultLimit);
   $: hasModifiedFilters =
-    searchDraft !== "" ||
-    selectedListDraft !== "" ||
-    fromDateDraft !== "" ||
-    toDateDraft !== "" ||
-    Number(limitDraft) !== defaultLimit;
+    modifiedFilterCount > 0;
+  $: filtersSummary =
+    modifiedFilterCount > 0
+      ? `${modifiedFilterCount} filter${modifiedFilterCount === 1 ? "" : "s"} selected`
+      : "All threads view";
 
   const emitClear = (): void => {
     fromDateDraft = "";
@@ -81,6 +88,10 @@
 
   const emitRetryLists = (): void => {
     dispatch("retrylists");
+  };
+
+  const toggleExpanded = (): void => {
+    isExpanded = !isExpanded;
   };
 
   const emitSearchSubmit = (): void => {
@@ -96,100 +107,180 @@
   };
 </script>
 
-<form class="filters" aria-label="Thread filters" on:submit|preventDefault={emitSearchSubmit}>
-  <div class="field search-field">
-    <label for="threads-search">Search threads</label>
-    <div class="search-form">
-      <input
-        id="threads-search"
-        type="search"
-        bind:value={searchDraft}
-        placeholder="Search threads"
-        disabled={isBusy}
-      />
-      <button type="submit" class="search-button" disabled={isBusy}>Search</button>
+<section class="filters-card" aria-label="Thread filters">
+  <div class="filters-header">
+    <div class="filters-summary">
+      <h2>Filters</h2>
+      <p>{filtersSummary}</p>
     </div>
-  </div>
 
-  <div class="field list-field">
-    <label for="threads-list">List</label>
-    <select
-      id="threads-list"
-      bind:value={selectedListDraft}
-      disabled={isBusy || isListsLoading}
-    >
-      <option value="">All lists</option>
-      {#if hasUnknownSelectedList}
-        <option value={selectedListDraft}>{selectedListDraft} (Unavailable)</option>
-      {/if}
-      {#each listOptions as list (list.id)}
-        <option value={list.name}>{list.name}</option>
-      {/each}
-    </select>
-
-    {#if isListsLoading}
-      <p class="field-note" role="status">Loading list options...</p>
-    {:else if listsErrorMessage}
-      <div class="field-error" role="alert">
-        <p>{listsErrorMessage}</p>
-        <button type="button" on:click={emitRetryLists} disabled={isBusy}>Retry lists</button>
-      </div>
-    {/if}
-  </div>
-
-  <div class="field">
-    <label for="threads-from">From</label>
-    <input
-      id="threads-from"
-      type="date"
-      bind:value={fromDateDraft}
-      max={toDateDraft || undefined}
-      disabled={isBusy}
-    />
-  </div>
-
-  <div class="field">
-    <label for="threads-to">To</label>
-    <input
-      id="threads-to"
-      type="date"
-      bind:value={toDateDraft}
-      min={fromDateDraft || undefined}
-      disabled={isBusy}
-    />
-  </div>
-
-  <div class="field">
-    <label for="threads-limit">Limit</label>
-    <select id="threads-limit" bind:value={limitDraft} disabled={isBusy}>
-      {#each limitOptions as option}
-        <option value={option}>{option}</option>
-      {/each}
-    </select>
-  </div>
-
-  <div class="actions">
     <button
       type="button"
-      class="clear-button"
+      class="filters-toggle"
       class:modified={hasModifiedFilters}
-      disabled={isBusy}
-      on:click={emitClear}
-      >Clear filters</button
+      aria-controls="threads-filter-fields"
+      aria-expanded={isExpanded}
+      on:click={toggleExpanded}
     >
+      {isExpanded ? "Hide filters" : "Show filters"}
+    </button>
   </div>
-</form>
+
+  <form
+    id="threads-filter-fields"
+    class="filters"
+    hidden={!isExpanded}
+    on:submit|preventDefault={emitSearchSubmit}
+  >
+    <div class="field search-field">
+      <label for="threads-search">Search threads</label>
+      <div class="search-form">
+        <input
+          id="threads-search"
+          type="search"
+          bind:value={searchDraft}
+          placeholder="Search threads"
+          disabled={isBusy}
+        />
+        <button type="submit" class="search-button" disabled={isBusy}>Search</button>
+      </div>
+    </div>
+
+    <div class="field list-field">
+      <label for="threads-list">List</label>
+      <select
+        id="threads-list"
+        bind:value={selectedListDraft}
+        disabled={isBusy || isListsLoading}
+      >
+        <option value="">All lists</option>
+        {#if hasUnknownSelectedList}
+          <option value={selectedListDraft}>{selectedListDraft} (Unavailable)</option>
+        {/if}
+        {#each listOptions as list (list.id)}
+          <option value={list.name}>{list.name}</option>
+        {/each}
+      </select>
+
+      {#if isListsLoading}
+        <p class="field-note" role="status">Loading list options...</p>
+      {:else if listsErrorMessage}
+        <div class="field-error" role="alert">
+          <p>{listsErrorMessage}</p>
+          <button type="button" on:click={emitRetryLists} disabled={isBusy}>Retry lists</button>
+        </div>
+      {/if}
+    </div>
+
+    <div class="field">
+      <label for="threads-from">From</label>
+      <input
+        id="threads-from"
+        type="date"
+        bind:value={fromDateDraft}
+        max={toDateDraft || undefined}
+        disabled={isBusy}
+      />
+    </div>
+
+    <div class="field">
+      <label for="threads-to">To</label>
+      <input
+        id="threads-to"
+        type="date"
+        bind:value={toDateDraft}
+        min={fromDateDraft || undefined}
+        disabled={isBusy}
+      />
+    </div>
+
+    <div class="field">
+      <label for="threads-limit">Limit</label>
+      <select id="threads-limit" bind:value={limitDraft} disabled={isBusy}>
+        {#each limitOptions as option}
+          <option value={option}>{option}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="actions">
+      <button
+        type="button"
+        class="clear-button"
+        class:modified={hasModifiedFilters}
+        disabled={isBusy}
+        on:click={emitClear}
+        >Clear filters</button
+      >
+    </div>
+  </form>
+</section>
 
 <style>
-  .filters {
+  .filters-card {
     border: 1px solid #d9e2ec;
     border-radius: 0.75rem;
     background: rgba(255, 255, 255, 0.92);
     padding: 0.7rem;
     display: grid;
+    gap: 0.65rem;
+  }
+
+  .filters-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+  }
+
+  .filters-summary {
+    min-width: 0;
+    display: grid;
+    gap: 0.12rem;
+  }
+
+  .filters-summary h2 {
+    margin: 0;
+    color: #102a43;
+    font-size: 0.92rem;
+    line-height: 1.1;
+  }
+
+  .filters-summary p {
+    margin: 0;
+    color: #627d98;
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .filters-toggle {
+    border: 1px solid #cfd8e3;
+    border-radius: 999px;
+    background: #f5f7fa;
+    color: #334e68;
+    font-weight: 700;
+    font-size: 0.8rem;
+    line-height: 1;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .filters-toggle.modified {
+    border-color: #6f9fdd;
+    background: #e8f2ff;
+    color: #0b4ea2;
+  }
+
+  .filters {
+    display: grid;
     grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     gap: 0.65rem;
     align-items: start;
+  }
+
+  .filters[hidden] {
+    display: none;
   }
 
   .field {
@@ -218,6 +309,7 @@
   input,
   select {
     width: 100%;
+    min-width: 0;
     border: 1px solid #c5d0da;
     border-radius: 0.45rem;
     background: #fff;
@@ -325,6 +417,22 @@
   }
 
   @media (max-width: 760px) {
+    .filters-card {
+      padding: 0.65rem;
+    }
+
+    .filters-header {
+      align-items: start;
+    }
+
+    .filters-toggle {
+      flex-shrink: 0;
+    }
+
+    .filters {
+      grid-template-columns: 1fr;
+    }
+
     .search-form {
       grid-template-columns: 1fr;
     }
