@@ -6,8 +6,8 @@ Read-only REST API for the pginbox mailing-list archive. Built with **Elysia** (
 
 ```
 src/server/
-├── app.ts          # Elysia app: onError, route mounting (no .listen here)
-├── index.ts        # Entrypoint: imports app, calls app.listen(3000)
+├── app.ts          # Elysia app: onError, route mounting
+├── index.ts        # Entrypoint: Bun.serve() wrapper around app.handle() with request logging
 ├── db.ts           # Kysely instance (DATABASE_URL)
 ├── errors.ts       # BadRequestError for 400 responses
 ├── serialize.ts    # DB shape → API shape (Date/bigint → string)

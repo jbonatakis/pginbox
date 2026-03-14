@@ -1,7 +1,13 @@
 import { app } from "./app";
+import { handleLoggedRequest, logStartup } from "./logging";
 
-app.listen(3000);
+const server = Bun.serve({
+  fetch(request) {
+    return handleLoggedRequest(app, request);
+  },
+  port: 3000,
+});
 
-console.log(`pginbox API running at http://localhost:${app.server?.port}`);
+logStartup(server.port);
 
 export type { App } from "./app";
