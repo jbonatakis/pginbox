@@ -62,6 +62,7 @@ CHUNK_SIZE = 64 * 1024  # 64 KB
 HTTP_RETRIES = 5
 HTTP_RETRY_BASE_DELAY = 2.0
 MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
+DEFAULT_LIST_NAME = "pgsql-hackers"
 
 
 
@@ -954,6 +955,7 @@ def ingest(
     force_download: bool = False,
     backfill: bool = False,
     derive: bool = True,
+    refresh_analytics: bool = True,
 ):
     print(f"\n=== {list_name}  {year:04d}-{month:02d} {'[backfill]' if backfill else '[live]'} ===")
 
@@ -985,8 +987,9 @@ def ingest(
 
     if backfill and derive:
         derive_threads(conn)
-        refresh_analytics_views(conn)
-    elif not backfill:
+        if refresh_analytics:
+            refresh_analytics_views(conn)
+    elif not backfill and refresh_analytics:
         refresh_analytics_views(conn)
 
     return total
@@ -1004,10 +1007,53 @@ def _parse_year_month(value: str):
         raise argparse.ArgumentTypeError(f"Expected YYYY-MM, got {value!r}")
 
 
+def _load_list_names(args, parser: argparse.ArgumentParser) -> list[str]:
+    list_names: list[str] = []
+
+    for raw in args.list_names:
+        for candidate in raw.replace(",", " ").split():
+            if candidate:
+                list_names.append(candidate)
+
+    if args.lists_file:
+        path = Path(args.lists_file)
+        if not path.exists():
+            parser.error(f"--lists-file not found: {args.lists_file}")
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            candidate = raw_line.split("#", 1)[0].strip()
+            if candidate:
+                list_names.append(candidate)
+
+    if not list_names:
+        env_many = os.environ.get("PGINBOX_LIST_NAMES", "")
+        if env_many:
+            list_names.extend([candidate for candidate in env_many.replace(",", " ").split() if candidate])
+
+    if not list_names:
+        env_one = os.environ.get("PGINBOX_LIST_NAME", "")
+        if env_one:
+            list_names.append(env_one)
+
+    if not list_names:
+        list_names.append(DEFAULT_LIST_NAME)
+
+    # Preserve order while removing duplicates.
+    seen = set()
+    deduped: list[str] = []
+    for name in list_names:
+        if name in seen:
+            continue
+        seen.add(name)
+        deduped.append(name)
+    return deduped
+
+
 def main():
     parser = argparse.ArgumentParser(description="Ingest PostgreSQL mailing list mbox archives")
-    parser.add_argument("--list", default="pgsql-hackers", dest="list_name",
-                        help="List name (default: pgsql-hackers)")
+    parser.add_argument("--list", dest="list_names", action="append", default=[],
+                        help="List name to ingest (repeatable, supports comma-separated values)")
+    parser.add_argument("--lists-file", default="",
+                        help="Path to file with one list name per line (# comments supported)")
     parser.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""),
                         help="Postgres DSN (or set DATABASE_URL)")
     parser.add_argument("--pg-user", default=os.environ.get("PG_LIST_USER", ""),
@@ -1037,6 +1083,7 @@ def main():
                         metavar="YYYY-MM", help="Range end (inclusive, required with --from)")
 
     args = parser.parse_args()
+    list_names = _load_list_names(args, parser)
 
     if not args.derive_only and not args.decode_subjects and args.year is None and args.from_ym is None:
         parser.error("one of --derive-only, --decode-subjects, --year, or --from is required")
@@ -1078,71 +1125,85 @@ def main():
         to_y, to_m = args.to_ym
         months = list(month_range(from_y, from_m, to_y, to_m))
 
-    # Only auth if at least one month needs downloading
-    needs_download = args.force_download or any(
-        not is_cached(y, m, args.list_name) for y, m in months
-    )
-    if needs_download:
+    # Only auth if at least one month needs downloading across any requested list.
+    needs_download_by_list = {
+        list_name: (args.force_download or any(not is_cached(y, m, list_name) for y, m in months))
+        for list_name in list_names
+    }
+    if any(needs_download_by_list.values()):
         if not args.pg_user or not args.pg_pass:
             print("Error: provide --pg-user/--pg-pass or set PG_LIST_USER/PG_LIST_PASS", file=sys.stderr)
             sys.exit(1)
         print("[auth] logging in to postgresql.org...")
         session = make_session(args.pg_user, args.pg_pass)
-        first_download_month = next(
-            (y, m) for y, m in months if args.force_download or not is_cached(y, m, args.list_name)
-        )
-        ensure_archive_access(session, args.list_name, *first_download_month)
+        for list_name in list_names:
+            if not needs_download_by_list[list_name]:
+                continue
+            first_download_month = next(
+                (y, m) for y, m in months if args.force_download or not is_cached(y, m, list_name)
+            )
+            ensure_archive_access(session, list_name, *first_download_month)
     else:
         session = requests.Session()
 
-    use_parallel = (
-        args.parallel > 1
-        and args.backfill
-        and not needs_download
-        and len(months) > 1
-    )
+    grand_total = 0
+    for list_idx, list_name in enumerate(list_names):
+        needs_download = needs_download_by_list[list_name]
+        use_parallel = (
+            args.parallel > 1
+            and args.backfill
+            and not needs_download
+            and len(months) > 1
+        )
 
-    if use_parallel:
-        # Pre-register the list in the main thread so workers don't race on it
-        list_id = ensure_list(conn, session, args.list_name, *months[0])
-        print(f"\n[parallel] {len(months)} months, {args.parallel} workers")
+        list_total = 0
+        if use_parallel:
+            # Pre-register the list in the main thread so workers don't race on it
+            list_id = ensure_list(conn, session, list_name, *months[0])
+            print(f"\n[parallel] {list_name}: {len(months)} months, {args.parallel} workers")
+            with ProcessPoolExecutor(max_workers=args.parallel) as executor:
+                futures = {
+                    executor.submit(_ingest_worker, args.dsn, list_id, y, m, list_name): (y, m)
+                    for y, m in months
+                }
+                for future in as_completed(futures):
+                    list_total += future.result()
 
-        grand_total = 0
-        with ProcessPoolExecutor(max_workers=args.parallel) as executor:
-            futures = {
-                executor.submit(_ingest_worker, args.dsn, list_id, y, m, args.list_name): (y, m)
-                for y, m in months
-            }
-            for future in as_completed(futures):
-                grand_total += future.result()
+            derive_threads(conn)
+        else:
+            for i, (year, month) in enumerate(months):
+                # In range backfill mode, defer derive_threads until the final month.
+                derive = not args.backfill or (i == len(months) - 1)
+                try:
+                    list_total += ingest(
+                        conn, session, year, month,
+                        list_name, args.force_download,
+                        args.backfill, derive, False,
+                    )
+                except ArchiveAuthError:
+                    print("  [auth] archive access failed, re-authenticating and retrying once...")
+                    session = make_session(args.pg_user, args.pg_pass)
+                    ensure_archive_access(session, list_name, year, month)
+                    list_total += ingest(
+                        conn, session, year, month,
+                        list_name, args.force_download,
+                        args.backfill, derive, False,
+                    )
+                if i < len(months) - 1:
+                    time.sleep(args.delay)
 
-        derive_threads(conn)
-        refresh_analytics_views(conn)
-    else:
-        grand_total = 0
-        for i, (year, month) in enumerate(months):
-            # In range backfill mode, defer derive_threads until the final month
-            derive = not args.backfill or (i == len(months) - 1)
-            try:
-                grand_total += ingest(
-                    conn, session, year, month,
-                    args.list_name, args.force_download,
-                    args.backfill, derive,
-                )
-            except ArchiveAuthError:
-                print("  [auth] archive access failed, re-authenticating and retrying once...")
-                session = make_session(args.pg_user, args.pg_pass)
-                ensure_archive_access(session, args.list_name, year, month)
-                grand_total += ingest(
-                    conn, session, year, month,
-                    args.list_name, args.force_download,
-                    args.backfill, derive,
-                )
-            if i < len(months) - 1:
-                time.sleep(args.delay)
+        grand_total += list_total
+        if len(list_names) > 1:
+            print(f"\n=== List total ({list_name}): {list_total:,} messages ===")
+        if list_idx < len(list_names) - 1:
+            time.sleep(args.delay)
 
-    if len(months) > 1:
-        print(f"\n=== Total: {grand_total:,} messages across {len(months)} months ===")
+    if len(months) > 1 or len(list_names) > 1:
+        print(
+            f"\n=== Total: {grand_total:,} messages across "
+            f"{len(list_names)} lists x {len(months)} months ==="
+        )
+    refresh_analytics_views(conn)
 
     conn.close()
 

@@ -1,0 +1,12 @@
+# One mailing list name per line.
+# Lines starting with # are ignored.
+
+# Developers
+pgsql-hackers
+pgsql-bugs
+pgsql-docs
+pgsql-committers
+
+# Users
+pgsql-general
+pgsql-admin
