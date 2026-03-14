@@ -45,11 +45,7 @@
     }
 
     if (route.name === "thread-detail") {
-      return [
-        { label: "View", value: "Thread detail" },
-        { label: "Thread", value: clipped(route.params.threadId, 40) },
-        { label: "Session", value: "Timeline mode" },
-      ];
+      return [];
     }
 
     if (route.name === "people") {
@@ -57,11 +53,7 @@
     }
 
     if (route.name === "person-detail") {
-      return [
-        { label: "View", value: "Person detail" },
-        { label: "Contributor", value: clipped(route.params.id, 30) },
-        { label: "Session", value: "Profile mode" },
-      ];
+      return [];
     }
 
     if (route.name === "analytics") {

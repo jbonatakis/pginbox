@@ -2,16 +2,22 @@
   import { createEventDispatcher } from "svelte";
 
   export let hasActiveCursor = false;
+  export let hasPreviousPage = false;
   export let hasNextPage = false;
   export let isBusy = false;
 
   const dispatch = createEventDispatcher<{
     next: void;
+    previous: void;
     reset: void;
   }>();
 
   const emitNext = (): void => {
     dispatch("next");
+  };
+
+  const emitPrevious = (): void => {
+    dispatch("previous");
   };
 
   const emitReset = (): void => {
@@ -30,6 +36,9 @@
 
   <div class="actions">
     <button type="button" disabled={!hasActiveCursor || isBusy} on:click={emitReset}>First page</button>
+    <button type="button" disabled={!hasPreviousPage || isBusy} on:click={emitPrevious}>
+      Previous page
+    </button>
     <button type="button" disabled={!hasNextPage || isBusy} on:click={emitNext}>Next page</button>
   </div>
 </section>

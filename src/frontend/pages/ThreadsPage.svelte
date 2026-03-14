@@ -35,6 +35,8 @@
   let listsError: ApiErrorShape | null = null;
   let listsStatus: ListsStatus = "idle";
   let nextCursor: string | null = null;
+  let pageCursors: Array<string | undefined> = [undefined];
+  let pageIndex = 0;
   let pendingRestoreScrollY: number | null = null;
   let queryState: ThreadsQueryState = createDefaultThreadsQueryState();
   let requestSequence = 0;
@@ -45,6 +47,7 @@
   $: detailContextSearch = serializeThreadsDetailContext(queryState);
   $: fromDate = toDateInputValue(queryState.from);
   $: hasActiveCursor = typeof queryState.cursor === "string";
+  $: hasPreviousPage = pageIndex > 0;
   $: isBusy = status === "loading" || isRefreshing;
   $: isInitialLoad = status === "idle" || (status === "loading" && threads.length === 0);
   $: listsErrorMessage = listsError?.message ?? null;
@@ -86,6 +89,50 @@
 
     activeThreadsRequestController.abort();
     activeThreadsRequestController = null;
+  };
+
+  const cursorForPage = (index: number): string | undefined => pageCursors[index];
+
+  const normalizeCursor = (value: string | null | undefined): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  const syncCursorTrail = (
+    currentCursor: string | undefined,
+    responseNextCursor: string | null,
+    targetPageIndex?: number
+  ): void => {
+    const nextKnownCursor = normalizeCursor(responseNextCursor);
+
+    if (targetPageIndex !== undefined) {
+      const nextTrail = [...pageCursors.slice(0, targetPageIndex), currentCursor];
+      if (nextKnownCursor !== undefined) {
+        nextTrail.push(nextKnownCursor);
+      }
+      pageCursors = nextTrail;
+      pageIndex = targetPageIndex;
+      return;
+    }
+
+    const knownIndex = pageCursors.findIndex((cursor) => cursor === currentCursor);
+    if (knownIndex !== -1) {
+      const nextTrail = [...pageCursors.slice(0, knownIndex), currentCursor];
+      if (nextKnownCursor !== undefined) {
+        nextTrail.push(nextKnownCursor);
+      }
+      pageCursors = nextTrail;
+      pageIndex = knownIndex;
+      return;
+    }
+
+    const nextTrail = [currentCursor];
+    if (nextKnownCursor !== undefined) {
+      nextTrail.push(nextKnownCursor);
+    }
+    pageCursors = nextTrail;
+    pageIndex = 0;
   };
 
   const formatErrorDetail = (apiError: ApiErrorShape | null, fallbackPath: string): string | null => {
@@ -142,7 +189,11 @@
     }
   };
 
-  const loadThreads = async (state: ThreadsQueryState, mode: LoadMode): Promise<void> => {
+  const loadThreads = async (
+    state: ThreadsQueryState,
+    mode: LoadMode,
+    targetPageIndex?: number
+  ): Promise<void> => {
     clearActiveThreadsRequest();
     const requestController = new AbortController();
     activeThreadsRequestController = requestController;
@@ -179,6 +230,7 @@
 
       threads = response.items;
       nextCursor = response.nextCursor;
+      syncCursorTrail(normalizeCursor(state.cursor), response.nextCursor, targetPageIndex);
       status = response.items.length === 0 ? "empty" : "success";
     } catch (rawError) {
       const apiError = toApiErrorShape(rawError);
@@ -201,7 +253,11 @@
     }
   };
 
-  const commitQueryState = (nextState: ThreadsQueryState, mode: LoadMode = "replace"): void => {
+  const commitQueryState = (
+    nextState: ThreadsQueryState,
+    mode: LoadMode = "replace",
+    targetPageIndex?: number
+  ): void => {
     const currentSearch = serializeThreadsQuery(queryState);
     const nextSearch = serializeThreadsQuery(nextState);
 
@@ -213,7 +269,7 @@
       navigate(withSearch(threadsPath, nextSearch));
     }
 
-    void loadThreads(nextState, mode);
+    void loadThreads(nextState, mode, targetPageIndex);
   };
 
   const applyFilterPatch = (patch: ThreadsQueryPatch): void => {
@@ -225,14 +281,23 @@
     if (!nextCursor || isBusy) return;
 
     const nextState = updateThreadsQueryState(queryState, { cursor: nextCursor });
-    commitQueryState(nextState, "replace");
+    commitQueryState(nextState, "replace", pageIndex + 1);
+  };
+
+  const loadPreviousPage = (): void => {
+    if (!hasPreviousPage || isBusy) return;
+
+    const targetPageIndex = pageIndex - 1;
+    const previousCursor = cursorForPage(targetPageIndex);
+    const nextState = updateThreadsQueryState(queryState, { cursor: previousCursor ?? null });
+    commitQueryState(nextState, "replace", targetPageIndex);
   };
 
   const resetCursor = (): void => {
     if (!hasActiveCursor) return;
 
     const nextState = updateThreadsQueryState(queryState, { cursor: null });
-    commitQueryState(nextState, "replace");
+    commitQueryState(nextState, "replace", 0);
   };
 
   const clearFilters = (): void => {
@@ -343,9 +408,11 @@
   {:else}
     <ThreadsCursorControls
       hasActiveCursor={hasActiveCursor}
+      {hasPreviousPage}
       hasNextPage={nextCursor !== null}
       isBusy={isBusy}
       on:next={loadNextPage}
+      on:previous={loadPreviousPage}
       on:reset={resetCursor}
     />
 

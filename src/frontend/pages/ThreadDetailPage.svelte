@@ -156,11 +156,6 @@
     }
   };
 
-  const refresh = (): void => {
-    if (!hasThreadId || isBusy) return;
-    void loadThread(threadId, thread === null ? "replace" : "refresh", thread?.messagePagination.page);
-  };
-
   const retry = (): void => {
     if (!hasThreadId) return;
     if (thread === null) {
@@ -263,7 +258,6 @@
     hasThreadId &&
     status === "error" &&
     (error?.status === 400 || error?.status === 422 || error?.code === "BAD_REQUEST");
-  $: refreshButtonLabel = isRefreshing ? "Refreshing..." : isNavigatingPage ? "Working..." : "Refresh";
 
   onDestroy(() => {
     requestSequence += 1;
@@ -272,20 +266,7 @@
 </script>
 
 <section class="page">
-  <header class="page-header">
-    <div class="header-copy">
-      <h1 class="page-title" data-route-heading tabindex="-1">Thread Detail</h1>
-      {#if thread}
-        <p>Thread ID <code>{thread.thread_id}</code></p>
-      {:else}
-        <p>Thread ID <code>{threadId}</code></p>
-      {/if}
-    </div>
-
-    <button class="refresh-button" type="button" disabled={!hasThreadId || isBusy} on:click={refresh}
-      >{refreshButtonLabel}</button
-    >
-  </header>
+  <h1 class="sr-only" data-route-heading tabindex="-1">Thread Detail</h1>
 
   {#if !hasThreadId}
     <ErrorState
@@ -410,38 +391,6 @@
     min-width: 0;
   }
 
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.8rem;
-    flex-wrap: wrap;
-  }
-
-  .header-copy {
-    display: grid;
-    gap: 0.2rem;
-    min-width: 0;
-  }
-
-  .page-title {
-    margin: 0;
-    font-size: 1.2rem;
-    color: #102a43;
-  }
-
-  p {
-    margin: 0;
-    color: #486581;
-    line-height: 1.4;
-    min-width: 0;
-  }
-
-  code {
-    overflow-wrap: anywhere;
-  }
-
-  .refresh-button,
   .retry-button {
     border: 1px solid #6f9fdd;
     border-radius: 0.55rem;
@@ -455,7 +404,6 @@
     white-space: nowrap;
   }
 
-  .refresh-button:disabled,
   .retry-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
@@ -469,6 +417,7 @@
   }
 
   .inline-status {
+    margin: 0;
     font-size: 0.84rem;
     color: #486581;
   }
@@ -528,15 +477,25 @@
     overflow-wrap: anywhere;
   }
 
+  .route-link {
+    margin: 0;
+  }
+
   .route-link a {
     color: #0b4ea2;
     font-weight: 600;
     text-decoration-thickness: 1px;
   }
 
-  @media (max-width: 640px) {
-    .refresh-button {
-      width: 100%;
-    }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>
