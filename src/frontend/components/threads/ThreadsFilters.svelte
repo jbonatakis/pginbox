@@ -221,7 +221,6 @@
     border: 1px solid #d9e2ec;
     border-radius: 0.75rem;
     background: rgba(255, 255, 255, 0.92);
-    overflow: hidden;
     padding: 0.7rem;
     display: grid;
     gap: 0.65rem;
@@ -334,7 +333,6 @@
     min-inline-size: 0;
     max-width: 100%;
     min-width: 0;
-    overflow: hidden;
   }
 
   input[type="date"]::-webkit-date-and-time-value {
@@ -450,6 +448,21 @@
 
     input[type="date"] {
       width: 100%;
+      font-size: 0.8rem;
+      padding-right: 0.3rem;
+    }
+
+    input[type="date"]::-webkit-datetime-edit {
+      padding: 0;
+    }
+
+    input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+      padding: 0;
+    }
+
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      margin: 0;
+      padding: 0;
     }
 
     .search-form {
