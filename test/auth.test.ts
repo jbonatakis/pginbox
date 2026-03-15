@@ -5,7 +5,6 @@ import {
   hashOpaqueToken,
   verifyPassword,
 } from "../src/server/auth";
-import { db } from "../src/server/db";
 import {
   createDevelopmentAuthEmailSender,
   type AuthEmailSender,
@@ -14,12 +13,14 @@ import {
 } from "../src/server/email";
 import { createAuthRoutes } from "../src/server/routes/auth";
 import { createAuthService } from "../src/server/services/auth.service";
+import { getTestDatabaseContext } from "./test-db";
 
 const apiBaseUrl = "http://localhost";
 const frontendOrigin = "http://localhost:5173";
 const initialPassword = "correct horse battery staple";
 const replacementPassword = "an even better battery staple";
 const resetPasswordValue = "reset to another long passphrase";
+const testDatabaseContext = getTestDatabaseContext();
 
 class CapturingAuthMailer implements AuthEmailSender {
   readonly passwordResetUrls: string[] = [];
@@ -51,9 +52,10 @@ function createTestApp(options: {
   mailer?: AuthEmailSender;
   now?: () => Date;
 } = {}) {
+  const authDb = getAuthDb();
   const authService = createAuthService({
     appBaseUrl: frontendOrigin,
-    db,
+    db: authDb,
     mailer: options.mailer,
     now: options.now,
   });
@@ -62,25 +64,42 @@ function createTestApp(options: {
     authRoutesPlugin: createAuthRoutes({
       appBaseUrl: frontendOrigin,
       authService,
+      db: authDb,
       now: options.now,
     }),
   });
 }
 
+function getAuthDb() {
+  if (!testDatabaseContext) {
+    throw new Error("TEST_DATABASE_URL is not configured for auth DB tests");
+  }
+
+  return testDatabaseContext.db;
+}
+
 async function isAuthDbAvailable(): Promise<boolean> {
-  try {
-    await db.selectFrom("users").select("id").limit(1).execute();
-    return true;
-  } catch {
+  if (!testDatabaseContext) {
     return false;
+  }
+
+  try {
+    await getAuthDb().selectFrom("users").select("id").limit(1).execute();
+    return true;
+  } catch (error) {
+    throw new Error(
+      `TEST_DATABASE_URL is configured but auth tables are unavailable in ${testDatabaseContext.databaseName}. Run make migrate-test.`,
+      { cause: error }
+    );
   }
 }
 
 async function clearAuthTables(): Promise<void> {
-  await db.deleteFrom("auth_sessions").execute();
-  await db.deleteFrom("email_verification_tokens").execute();
-  await db.deleteFrom("password_reset_tokens").execute();
-  await db.deleteFrom("users").execute();
+  const authDb = getAuthDb();
+  await authDb.deleteFrom("auth_sessions").execute();
+  await authDb.deleteFrom("email_verification_tokens").execute();
+  await authDb.deleteFrom("password_reset_tokens").execute();
+  await authDb.deleteFrom("users").execute();
 }
 
 async function withNodeEnv<T>(
@@ -251,7 +270,7 @@ async function insertSessionForUser(
   const now = new Date();
   const createdAt = new Date(now.getTime() - 60_000);
 
-  await db
+  await getAuthDb()
     .insertInto("auth_sessions")
     .values({
       created_at: createdAt,
@@ -280,7 +299,7 @@ describeAuth("auth lifecycle coverage", () => {
       password: initialPassword,
     });
 
-    const firstUser = await db
+    const firstUser = await getAuthDb()
       .selectFrom("users")
       .select(["id", "display_name", "password_hash", "status"])
       .where("email", "=", email)
@@ -290,7 +309,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(firstUser.status).toBe("pending_verification");
     expect(await verifyPassword(initialPassword, firstUser.password_hash)).toBe(true);
 
-    const firstTokenRow = await db
+    const firstTokenRow = await getAuthDb()
       .selectFrom("email_verification_tokens")
       .select(["token_hash", "consumed_at"])
       .where("user_id", "=", firstUser.id)
@@ -319,7 +338,7 @@ describeAuth("auth lifecycle coverage", () => {
     const secondToken = extractToken(mailer.verificationUrls.at(-1)!);
     expect(secondToken).not.toBe(firstToken);
 
-    const updatedUser = await db
+    const updatedUser = await getAuthDb()
       .selectFrom("users")
       .select(["id", "display_name", "password_hash", "status"])
       .where("email", "=", email)
@@ -331,7 +350,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(await verifyPassword(initialPassword, updatedUser.password_hash)).toBe(false);
     expect(await verifyPassword(replacementPassword, updatedUser.password_hash)).toBe(true);
 
-    const tokenRows = await db
+    const tokenRows = await getAuthDb()
       .selectFrom("email_verification_tokens")
       .select(["token_hash", "consumed_at"])
       .where("user_id", "=", firstUser.id)
@@ -494,7 +513,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(activeLogout.status).toBe(204);
     expect(activeLogout.headers.get("set-cookie")).toContain("Max-Age=0");
 
-    const loggedOutSession = await db
+    const loggedOutSession = await getAuthDb()
       .selectFrom("auth_sessions")
       .select("revoked_at")
       .where("token_hash", "=", hashOpaqueToken(activeUser.cookie.split("=")[1]!))
@@ -512,7 +531,7 @@ describeAuth("auth lifecycle coverage", () => {
 
     const pendingEmail = "pending-session@example.com";
     await registerPendingUser(app, mailer, { email: pendingEmail });
-    const pendingUser = await db
+    const pendingUser = await getAuthDb()
       .selectFrom("users")
       .select("id")
       .where("email", "=", pendingEmail)
@@ -530,7 +549,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(await parseJson(pendingResponse)).toEqual({ user: null });
     expect(pendingResponse.headers.get("set-cookie")).toContain("Max-Age=0");
 
-    const revokedPendingSession = await db
+    const revokedPendingSession = await getAuthDb()
       .selectFrom("auth_sessions")
       .select("revoked_at")
       .where("token_hash", "=", hashOpaqueToken(pendingToken))
@@ -539,7 +558,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(revokedPendingSession.revoked_at).not.toBeNull();
 
     const disabledUser = await createActiveUser(app, mailer, "disabled-session@example.com");
-    await db
+    await getAuthDb()
       .updateTable("users")
       .set({
         disable_reason: "disabled in test",
@@ -559,7 +578,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(await parseJson(disabledResponse)).toEqual({ user: null });
     expect(disabledResponse.headers.get("set-cookie")).toContain("Max-Age=0");
 
-    const disabledSessionRows = await db
+    const disabledSessionRows = await getAuthDb()
       .selectFrom("auth_sessions")
       .select("revoked_at")
       .innerJoin("users", "users.id", "auth_sessions.user_id")
@@ -569,7 +588,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(disabledSessionRows.every((row) => row.revoked_at !== null)).toBe(true);
 
     const expiredUser = await createActiveUser(app, mailer, "expired-session@example.com");
-    await db
+    await getAuthDb()
       .updateTable("auth_sessions")
       .set({
         created_at: new Date("2026-03-14T10:00:00.000Z"),
@@ -589,7 +608,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(await parseJson(expiredResponse)).toEqual({ user: null });
     expect(expiredResponse.headers.get("set-cookie")).toContain("Max-Age=0");
 
-    const expiredSession = await db
+    const expiredSession = await getAuthDb()
       .selectFrom("auth_sessions")
       .select("revoked_at")
       .where("token_hash", "=", hashOpaqueToken(expiredUser.cookie.split("=")[1]!))
@@ -598,7 +617,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(expiredSession.revoked_at).not.toBeNull();
 
     const revokedUser = await createActiveUser(app, mailer, "revoked-session@example.com");
-    await db
+    await getAuthDb()
       .updateTable("auth_sessions")
       .set({
         revoked_at: new Date(),
@@ -690,7 +709,7 @@ describeAuth("auth lifecycle coverage", () => {
         message: "Invalid email or password",
       });
 
-      await db
+      await getAuthDb()
         .updateTable("users")
         .set({
           disable_reason: "disabled in test",
@@ -733,7 +752,7 @@ describeAuth("auth lifecycle coverage", () => {
 
       const expiredEmail = "expired-verify@example.com";
       const expiredToken = await registerPendingUser(app, mailer, { email: expiredEmail });
-      await db
+      await getAuthDb()
         .updateTable("email_verification_tokens")
         .set({
           created_at: new Date("2026-03-10T10:00:00.000Z"),
@@ -761,7 +780,7 @@ describeAuth("auth lifecycle coverage", () => {
         email: disabledVerifyEmail,
       });
 
-      await db
+      await getAuthDb()
         .updateTable("users")
         .set({
           disable_reason: "disabled in test",
@@ -832,7 +851,7 @@ describeAuth("auth lifecycle coverage", () => {
 
       expect(extraLogin.status).toBe(200);
 
-      const passwordBeforeReset = await db
+      const passwordBeforeReset = await getAuthDb()
         .selectFrom("users")
         .select(["id", "password_hash"])
         .where("email", "=", email)
@@ -876,7 +895,7 @@ describeAuth("auth lifecycle coverage", () => {
       expect(resetSetCookie).toContain("HttpOnly");
       expect(resetSetCookie).toContain("SameSite=Lax");
 
-      const passwordAfterReset = await db
+      const passwordAfterReset = await getAuthDb()
         .selectFrom("users")
         .select("password_hash")
         .where("email", "=", email)
@@ -886,7 +905,7 @@ describeAuth("auth lifecycle coverage", () => {
       expect(await verifyPassword(initialPassword, passwordAfterReset.password_hash)).toBe(false);
       expect(await verifyPassword(resetPasswordValue, passwordAfterReset.password_hash)).toBe(true);
 
-      const resetTokenRow = await db
+      const resetTokenRow = await getAuthDb()
         .selectFrom("password_reset_tokens")
         .select("consumed_at")
         .where("token_hash", "=", hashOpaqueToken(resetToken))
@@ -894,7 +913,7 @@ describeAuth("auth lifecycle coverage", () => {
 
       expect(resetTokenRow.consumed_at).not.toBeNull();
 
-      const sessionRows = await db
+      const sessionRows = await getAuthDb()
         .selectFrom("auth_sessions")
         .select(["token_hash", "revoked_at"])
         .where("user_id", "=", passwordBeforeReset.id)

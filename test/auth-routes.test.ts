@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createApp } from "../src/server/app";
-import { db } from "../src/server/db";
 import type {
   AuthEmailSender,
   PasswordResetEmailDelivery,
@@ -12,10 +11,12 @@ import {
   type AuthRateLimitConfig,
 } from "../src/server/routes/auth";
 import { createAuthService } from "../src/server/services/auth.service";
+import { getTestDatabaseContext } from "./test-db";
 
 const apiBaseUrl = "http://localhost";
 const frontendOrigin = "http://localhost:5173";
 const validPassword = "correct horse battery staple";
+const testDatabaseContext = getTestDatabaseContext();
 
 class CapturingAuthMailer implements AuthEmailSender {
   readonly passwordResetUrls: string[] = [];
@@ -34,12 +35,14 @@ function createTestApp(
   options: {
     emailMode?: "dev-auto-verify" | "log";
     rateLimits?: AuthRateLimitConfig;
+    useTestDb?: boolean;
   } = {}
 ) {
+  const authDb = options.useTestDb === false ? undefined : getAuthDb();
   const mailer = new CapturingAuthMailer();
   const authService = createAuthService({
     appBaseUrl: frontendOrigin,
-    db,
+    db: authDb,
     emailRuntimeConfig: { mode: options.emailMode ?? "log" },
     mailer,
   });
@@ -47,6 +50,7 @@ function createTestApp(
     authRoutesPlugin: createAuthRoutes({
       appBaseUrl: frontendOrigin,
       authService,
+      db: authDb,
       rateLimits: options.rateLimits ?? DEFAULT_AUTH_RATE_LIMITS,
     }),
   });
@@ -54,20 +58,36 @@ function createTestApp(
   return { app, authService, mailer };
 }
 
+function getAuthDb() {
+  if (!testDatabaseContext) {
+    throw new Error("TEST_DATABASE_URL is not configured for auth DB tests");
+  }
+
+  return testDatabaseContext.db;
+}
+
 async function isAuthDbAvailable(): Promise<boolean> {
-  try {
-    await db.selectFrom("users").select("id").limit(1).execute();
-    return true;
-  } catch {
+  if (!testDatabaseContext) {
     return false;
+  }
+
+  try {
+    await getAuthDb().selectFrom("users").select("id").limit(1).execute();
+    return true;
+  } catch (error) {
+    throw new Error(
+      `TEST_DATABASE_URL is configured but auth tables are unavailable in ${testDatabaseContext.databaseName}. Run make migrate-test.`,
+      { cause: error }
+    );
   }
 }
 
 async function clearAuthTables(): Promise<void> {
-  await db.deleteFrom("auth_sessions").execute();
-  await db.deleteFrom("email_verification_tokens").execute();
-  await db.deleteFrom("password_reset_tokens").execute();
-  await db.deleteFrom("users").execute();
+  const authDb = getAuthDb();
+  await authDb.deleteFrom("auth_sessions").execute();
+  await authDb.deleteFrom("email_verification_tokens").execute();
+  await authDb.deleteFrom("password_reset_tokens").execute();
+  await authDb.deleteFrom("users").execute();
 }
 
 function extractToken(deliveryUrl: string): string {
@@ -187,7 +207,7 @@ const describeAuthRoutes = (await isAuthDbAvailable()) ? describe : describe.ski
 
 describe("auth routes without a database", () => {
   it("returns an anonymous me response when no session cookie is present", async () => {
-    const { app } = createTestApp();
+    const { app } = createTestApp({ useTestDb: false });
     const response = await send(app, "/auth/me");
 
     expect(response.status).toBe(200);
@@ -195,7 +215,7 @@ describe("auth routes without a database", () => {
   });
 
   it("rejects cross-origin login attempts before auth state is mutated", async () => {
-    const { app } = createTestApp();
+    const { app } = createTestApp({ useTestDb: false });
     const response = await send(app, "/auth/login", {
       body: {
         email: "user@example.com",
@@ -239,7 +259,7 @@ describeAuthRoutes("auth routes", () => {
 
     const token = await registerPendingUser(app, mailer, email);
 
-    const pendingUser = await db
+    const pendingUser = await getAuthDb()
       .selectFrom("users")
       .select(["email", "status"])
       .where("email", "=", email)
@@ -389,7 +409,7 @@ describeAuthRoutes("auth routes", () => {
 
     const activeEmail = "disabled-login@example.com";
     await createActiveUser(app, mailer, activeEmail);
-    await db
+    await getAuthDb()
       .updateTable("users")
       .set({
         disable_reason: "test",

@@ -1,28 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { hashOpaqueToken, hashPassword } from "../src/server/auth";
-import { db } from "../src/server/db";
 import { runAuthCleanup } from "../src/server/services/auth-maintenance.service";
+import { getTestDatabaseContext } from "./test-db";
+
+const testDatabaseContext = getTestDatabaseContext();
+
+function getAuthDb() {
+  if (!testDatabaseContext) {
+    throw new Error("TEST_DATABASE_URL is not configured for auth DB tests");
+  }
+
+  return testDatabaseContext.db;
+}
 
 async function isAuthDbAvailable(): Promise<boolean> {
-  try {
-    await db.selectFrom("users").select("id").limit(1).execute();
-    return true;
-  } catch {
+  if (!testDatabaseContext) {
     return false;
+  }
+
+  try {
+    await getAuthDb().selectFrom("users").select("id").limit(1).execute();
+    return true;
+  } catch (error) {
+    throw new Error(
+      `TEST_DATABASE_URL is configured but auth tables are unavailable in ${testDatabaseContext.databaseName}. Run make migrate-test.`,
+      { cause: error }
+    );
   }
 }
 
 async function clearAuthTables(): Promise<void> {
-  await db.deleteFrom("auth_sessions").execute();
-  await db.deleteFrom("email_verification_tokens").execute();
-  await db.deleteFrom("password_reset_tokens").execute();
-  await db.deleteFrom("users").execute();
+  const authDb = getAuthDb();
+  await authDb.deleteFrom("auth_sessions").execute();
+  await authDb.deleteFrom("email_verification_tokens").execute();
+  await authDb.deleteFrom("password_reset_tokens").execute();
+  await authDb.deleteFrom("users").execute();
 }
 
 async function tableRowCount(
   table: "auth_sessions" | "email_verification_tokens" | "password_reset_tokens",
 ): Promise<number> {
-  const row = await db
+  const row = await getAuthDb()
     .selectFrom(table)
     .select(({ fn }) => fn.countAll().as("count"))
     .executeTakeFirstOrThrow();
@@ -39,7 +57,7 @@ describeAuthMaintenance("auth cleanup maintenance", () => {
   it("deletes expired sessions and expired or consumed tokens", async () => {
     const now = new Date("2026-03-15T12:00:00.000Z");
     const passwordHash = await hashPassword("correct horse battery staple");
-    const primaryUser = await db
+    const primaryUser = await getAuthDb()
       .insertInto("users")
       .values({
         email: "cleanup@example.com",
@@ -49,7 +67,7 @@ describeAuthMaintenance("auth cleanup maintenance", () => {
       })
       .returning("id")
       .executeTakeFirstOrThrow();
-    const secondaryUser = await db
+    const secondaryUser = await getAuthDb()
       .insertInto("users")
       .values({
         email: "cleanup-expired@example.com",
@@ -60,7 +78,7 @@ describeAuthMaintenance("auth cleanup maintenance", () => {
       .returning("id")
       .executeTakeFirstOrThrow();
 
-    await db
+    await getAuthDb()
       .insertInto("auth_sessions")
       .values([
         {
@@ -80,7 +98,7 @@ describeAuthMaintenance("auth cleanup maintenance", () => {
       ])
       .execute();
 
-    await db
+    await getAuthDb()
       .insertInto("email_verification_tokens")
       .values([
         {
@@ -108,7 +126,7 @@ describeAuthMaintenance("auth cleanup maintenance", () => {
       ])
       .execute();
 
-    await db
+    await getAuthDb()
       .insertInto("password_reset_tokens")
       .values([
         {
@@ -133,7 +151,7 @@ describeAuthMaintenance("auth cleanup maintenance", () => {
       ])
       .execute();
 
-    const result = await runAuthCleanup({ db, now });
+    const result = await runAuthCleanup({ db: getAuthDb(), now });
 
     expect(result).toMatchObject({
       expiredSessionsDeleted: 1,

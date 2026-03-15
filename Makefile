@@ -6,7 +6,7 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new install dev api auth-cleanup codegen test install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
+.PHONY: up down reset psql logs ingest backfill backfill-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup codegen test test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
 
 up:
 	docker compose up -d
@@ -31,6 +31,10 @@ logs:
 
 migrate:
 	dbmate up
+
+migrate-test:
+	@test -n "$(TEST_DATABASE_URL)" || (echo "set TEST_DATABASE_URL" && exit 1)
+	DATABASE_URL="$(TEST_DATABASE_URL)" dbmate up
 
 migrate-down:
 	dbmate down
@@ -92,6 +96,10 @@ codegen:
 
 test:
 	bun test test
+
+test-db:
+	@test -n "$(TEST_DATABASE_URL)" || (echo "set TEST_DATABASE_URL" && exit 1)
+	bun test test/auth.test.ts test/auth-routes.test.ts test/auth-maintenance.test.ts
 
 install-web:
 	cd src/frontend && npm install

@@ -1,3 +1,4 @@
+import type { Kysely } from "kysely";
 import type {
   AuthForgotPasswordResponse,
   AuthLoginResponse,
@@ -27,6 +28,7 @@ import {
   authService as defaultAuthService,
   type AuthService,
 } from "../services/auth.service";
+import type { DB } from "../types/db.d.ts";
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -135,6 +137,7 @@ class MemoryAuthRateLimiter implements AuthRateLimiter {
 interface AuthRouteDependencies {
   appBaseUrl?: string;
   authService?: AuthService;
+  db?: Kysely<DB>;
   now?: () => Date;
   rateLimiter?: AuthRateLimiter;
   rateLimits?: AuthRateLimitConfig;
@@ -215,6 +218,7 @@ function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTar
 
 export function createAuthRoutes(dependencies: AuthRouteDependencies = {}) {
   const authService = dependencies.authService ?? defaultAuthService;
+  const authDb = dependencies.db;
   const configuredOrigin = resolveConfiguredOrigin(
     dependencies.appBaseUrl ?? resolveAuthAppBaseUrl()
   );
@@ -225,6 +229,7 @@ export function createAuthRoutes(dependencies: AuthRouteDependencies = {}) {
   return new Elysia({ prefix: "/auth" })
     .get("/me", async ({ request, set }): Promise<AuthMeResponse> => {
       const currentSession = await resolveCurrentSession({
+        db: authDb,
         request,
         set: toResponseCookieTarget(set),
       });
@@ -351,6 +356,7 @@ export function createAuthRoutes(dependencies: AuthRouteDependencies = {}) {
       assertSameOrigin(request, configuredOrigin);
 
       const currentSession = await resolveCurrentSession({
+        db: authDb,
         request,
         set: toResponseCookieTarget(set),
       });
