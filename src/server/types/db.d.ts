@@ -13,6 +13,18 @@ export type Int8 = ColumnType<string, bigint | number | string, bigint | number 
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface AuthSessions {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<Int8>;
+  ip_address: string | null;
+  last_seen_at: Generated<Timestamp>;
+  revoked_at: Timestamp | null;
+  token_hash: string;
+  user_agent: string | null;
+  user_id: Int8;
+}
+
 export interface Attachments {
   content: string | null;
   content_type: string | null;
@@ -20,6 +32,16 @@ export interface Attachments {
   id: Generated<Int8>;
   message_id: Int8;
   size_bytes: number | null;
+}
+
+export interface EmailVerificationTokens {
+  consumed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  email: string;
+  expires_at: Timestamp;
+  id: Generated<Int8>;
+  token_hash: string;
+  user_id: Int8;
 }
 
 export interface Lists {
@@ -40,6 +62,15 @@ export interface Messages {
   sent_at_approx: Generated<boolean>;
   subject: string | null;
   thread_id: string;
+}
+
+export interface PasswordResetTokens {
+  consumed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  id: Generated<Int8>;
+  token_hash: string;
+  user_id: Int8;
 }
 
 export interface People {
@@ -67,12 +98,29 @@ export interface Threads {
   thread_id: string;
 }
 
+export interface Users {
+  created_at: Generated<Timestamp>;
+  disable_reason: string | null;
+  disabled_at: Timestamp | null;
+  display_name: string | null;
+  email: string;
+  email_verified_at: Timestamp | null;
+  id: Generated<Int8>;
+  last_login_at: Timestamp | null;
+  password_hash: string;
+  status: string;
+}
+
 export interface DB {
+  auth_sessions: AuthSessions;
   attachments: Attachments;
+  email_verification_tokens: EmailVerificationTokens;
   lists: Lists;
   messages: Messages;
+  password_reset_tokens: PasswordResetTokens;
   people: People;
   people_emails: PeopleEmails;
   schema_migrations: SchemaMigrations;
   threads: Threads;
+  users: Users;
 }

@@ -1,8 +1,10 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { AuthError } from "./auth";
 import { BadRequestError } from "./errors";
 import { analyticsRoutes } from "./routes/analytics";
 import { attachmentsRoutes } from "./routes/attachments";
+import { authRoutes, type AuthRoutesPlugin, RateLimitError } from "./routes/auth";
 import { listsRoutes } from "./routes/lists";
 import { messagesRoutes } from "./routes/messages";
 import { peopleRoutes } from "./routes/people";
@@ -13,7 +15,11 @@ function errorJson(message: string, code?: string) {
   return { message, ...(code && { code }) };
 }
 
-export function createApp() {
+interface CreateAppOptions {
+  authRoutesPlugin?: AuthRoutesPlugin;
+}
+
+export function createApp(options: CreateAppOptions = {}) {
   return new Elysia()
     .use(
       cors({
@@ -27,6 +33,13 @@ export function createApp() {
       if (error instanceof BadRequestError) {
         statusCode = 400;
         response = errorJson(error.message, "BAD_REQUEST");
+      } else if (error instanceof RateLimitError) {
+        statusCode = error.status;
+        response = errorJson(error.message, error.code);
+        set.headers["retry-after"] = String(error.retryAfterSeconds);
+      } else if (error instanceof AuthError) {
+        statusCode = error.status;
+        response = errorJson(error.message, error.code);
       } else if (code === "VALIDATION") {
         statusCode = 422;
         response = errorJson("Validation failed", "VALIDATION");
@@ -36,9 +49,10 @@ export function createApp() {
       }
 
       set.status = statusCode;
-      logError(request, statusCode, code, error);
+      logError(request, statusCode, typeof code === "string" ? code : String(code), error);
       return response;
     })
+    .use(options.authRoutesPlugin ?? authRoutes)
     .use(attachmentsRoutes)
     .use(analyticsRoutes)
     .use(listsRoutes)

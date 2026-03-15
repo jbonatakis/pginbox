@@ -11,7 +11,7 @@ export default defineConfig({
   root: __dirname,
   resolve: {
     alias: {
-      shared: resolve(__dirname, "../../shared"),
+      shared: resolve(__dirname, "../shared"),
     },
   },
   server: {

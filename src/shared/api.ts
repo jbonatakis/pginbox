@@ -87,6 +87,70 @@ export interface Person {
   topThreads: PersonTopThread[];
 }
 
+// ---- Auth ----
+export type AuthUserStatus = "pending_verification" | "active" | "disabled";
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  displayName: string | null;
+  status: AuthUserStatus;
+  emailVerifiedAt: string | null;
+  createdAt: string;
+}
+
+export interface AuthEmailRequest {
+  email: string;
+}
+
+export interface AuthLoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface AuthRegisterRequest extends AuthLoginRequest {
+  displayName?: string | null;
+}
+
+export interface AuthVerifyEmailRequest {
+  token: string;
+}
+
+export interface AuthResetPasswordRequest {
+  token: string;
+  newPassword: string;
+}
+
+export type AuthResendVerificationRequest = AuthEmailRequest;
+export type AuthForgotPasswordRequest = AuthEmailRequest;
+
+export interface AuthMessageResponse {
+  message: string;
+}
+
+export interface AuthMeResponse {
+  user: AuthUser | null;
+}
+
+export interface AuthUserResponse {
+  user: AuthUser;
+}
+
+export type AuthRegisterResponse = AuthMessageResponse;
+export type AuthResendVerificationResponse = AuthMessageResponse;
+export type AuthVerifyEmailResponse = AuthUserResponse;
+export type AuthLoginResponse = AuthUserResponse;
+export type AuthLogoutResponse = void;
+export type AuthForgotPasswordResponse = AuthMessageResponse;
+export type AuthResetPasswordResponse = AuthUserResponse;
+
+export type AuthVerifyEmailErrorCode = "TOKEN_INVALID" | "TOKEN_EXPIRED";
+export type AuthLoginErrorCode =
+  | "INVALID_CREDENTIALS"
+  | "EMAIL_NOT_VERIFIED"
+  | "ACCOUNT_DISABLED";
+export type AuthRequiredErrorCode = "AUTH_REQUIRED";
+
 // ---- Analytics ----
 export interface AnalyticsSummary {
   totalMessages: number;

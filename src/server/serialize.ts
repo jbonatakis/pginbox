@@ -1,18 +1,21 @@
 import type {
   AttachmentDetail,
   AttachmentSummary,
+  AuthMeResponse,
+  AuthMessageResponse,
+  AuthUser,
+  AuthUserResponse,
   List,
   Message,
   MessageWithAttachments,
   Person,
-  PersonTopThread,
   ThreadDetail,
   ThreadMessagePagination,
   Thread,
   ThreadWithMessages,
 } from "shared/api";
 
-function dateToIso(d: Date | null | undefined): string | null {
+function dateToIso(d: Date | string | null | undefined): string | null {
   return d == null ? null : (d instanceof Date ? d : new Date(d)).toISOString();
 }
 
@@ -23,6 +26,43 @@ function bigintToString(v: bigint | number | string): string {
 // Lists: already API-shaped (id number, name string)
 export function toList(row: { id: number; name: string }): List {
   return { id: row.id, name: row.name };
+}
+
+// Auth user: bigint id -> string, timestamps -> ISO, internal fields omitted.
+type AuthUserRow = {
+  id: bigint | number | string;
+  email: string;
+  display_name: string | null;
+  status: AuthUser["status"];
+  email_verified_at: Date | string | null;
+  created_at: Date | string;
+};
+
+export function toAuthUser(row: AuthUserRow): AuthUser {
+  return {
+    id: bigintToString(row.id),
+    email: row.email,
+    displayName: row.display_name,
+    status: row.status,
+    emailVerifiedAt: dateToIso(row.email_verified_at),
+    createdAt: dateToIso(row.created_at)!,
+  };
+}
+
+export function toAuthMeResponse(user: AuthUserRow | null | undefined): AuthMeResponse {
+  return {
+    user: user == null ? null : toAuthUser(user),
+  };
+}
+
+export function toAuthUserResponse(user: AuthUserRow): AuthUserResponse {
+  return {
+    user: toAuthUser(user),
+  };
+}
+
+export function toAuthMessageResponse(message: string): AuthMessageResponse {
+  return { message };
 }
 
 // Thread (list item): dates -> ISO strings

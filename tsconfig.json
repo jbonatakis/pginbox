@@ -9,8 +9,8 @@
     "outDir": "dist",
     "rootDir": "src",
     "baseUrl": ".",
-    "paths": { "shared/*": ["shared/*"] }
+    "paths": { "shared/*": ["src/shared/*"] }
   },
-  "include": ["src/**/*.ts", "shared/**/*.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

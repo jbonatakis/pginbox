@@ -4,6 +4,11 @@ export const homePath = "/";
 export const threadsPath = "/threads";
 export const peoplePath = "/people";
 export const analyticsPath = "/analytics";
+export const loginPath = "/login";
+export const registerPath = "/register";
+export const verifyEmailPath = "/verify-email";
+export const forgotPasswordPath = "/forgot-password";
+export const resetPasswordPath = "/reset-password";
 
 export type AppRoute =
   | {
@@ -31,6 +36,26 @@ export type AppRoute =
   | {
       name: "analytics";
       pathname: typeof analyticsPath;
+    }
+  | {
+      name: "login";
+      pathname: typeof loginPath;
+    }
+  | {
+      name: "register";
+      pathname: typeof registerPath;
+    }
+  | {
+      name: "verify-email";
+      pathname: typeof verifyEmailPath;
+    }
+  | {
+      name: "forgot-password";
+      pathname: typeof forgotPasswordPath;
+    }
+  | {
+      name: "reset-password";
+      pathname: typeof resetPasswordPath;
     }
   | {
       name: "not-found";
@@ -158,6 +183,26 @@ function matchRoute(pathname: string): AppRoute {
 
   if (pathname === analyticsPath) {
     return { name: "analytics", pathname: analyticsPath };
+  }
+
+  if (pathname === loginPath) {
+    return { name: "login", pathname: loginPath };
+  }
+
+  if (pathname === registerPath) {
+    return { name: "register", pathname: registerPath };
+  }
+
+  if (pathname === verifyEmailPath) {
+    return { name: "verify-email", pathname: verifyEmailPath };
+  }
+
+  if (pathname === forgotPasswordPath) {
+    return { name: "forgot-password", pathname: forgotPasswordPath };
+  }
+
+  if (pathname === resetPasswordPath) {
+    return { name: "reset-password", pathname: resetPasswordPath };
   }
 
   return { name: "not-found", pathname };

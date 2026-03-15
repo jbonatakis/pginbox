@@ -99,7 +99,7 @@ Page-to-endpoint mapping:
 - `/analytics` -> `GET /analytics/summary`, `GET /analytics/by-month`, `GET /analytics/top-senders`, `GET /analytics/by-hour`, `GET /analytics/by-dow`
 - `/messages/:id` (deferred page) -> `GET /messages/:id`
 
-Shared contract types should come from `shared/api.ts`.
+Shared contract types should come from `src/shared/api.ts`.
 
 ## Semantic search strategy (post-v1, long-term-safe)
 
@@ -183,7 +183,7 @@ Suggested structure:
 - `components/*`
 - `pages/*`
 
-Shared API contracts come from `shared/api.ts`.
+Shared API contracts come from `src/shared/api.ts`.
 
 ## Suggested build order
 
@@ -211,4 +211,3 @@ To keep initial implementation tight:
 - no saved searches or search history UX
 - no cross-list comparative analytics dashboard
 - no standalone message page in first pass (API exists; UI can come later)
-
