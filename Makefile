@@ -120,3 +120,6 @@ prod-reload-caddy:
 	docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
 
 deploy: build-all prod-up-no-build
+
+watch-logs:
+    docker compose -f docker-compose.prod.yml logs -f api frontend
