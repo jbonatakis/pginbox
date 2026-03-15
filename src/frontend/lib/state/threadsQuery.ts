@@ -2,6 +2,7 @@ export const THREADS_QUERY_DEFAULT_LIMIT = 25;
 export const THREADS_QUERY_MIN_LIMIT = 1;
 export const THREADS_QUERY_MAX_LIMIT = 100;
 export const THREADS_RESTORE_SCROLL_PARAM = "_scrollY";
+export const THREAD_DETAIL_PAGE_PARAM = "page";
 const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const FILTER_PATCH_KEYS: Array<keyof ThreadsQueryPatch> = ["from", "limit", "list", "q", "to"];
@@ -135,6 +136,28 @@ export function serializeThreadsDetailContext(
   return withThreadsRestoreScroll(querySearch, restoreScrollY);
 }
 
+export function parseThreadDetailPage(search: string | URLSearchParams): number | undefined {
+  const params = toSearchParams(search);
+  return normalizeThreadDetailPage(params.get(THREAD_DETAIL_PAGE_PARAM));
+}
+
+export function withThreadDetailPage(
+  search: string | URLSearchParams,
+  page?: number | null
+): string {
+  const params = toSearchParams(search);
+  const normalizedPage = normalizeThreadDetailPage(page);
+
+  if (normalizedPage === undefined) {
+    params.delete(THREAD_DETAIL_PAGE_PARAM);
+  } else {
+    params.set(THREAD_DETAIL_PAGE_PARAM, String(normalizedPage));
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 export function withThreadsRestoreScroll(
   search: string | URLSearchParams,
   restoreScrollY?: number | null
@@ -235,6 +258,28 @@ function normalizeRestoreScroll(value: unknown): number | undefined {
   if (!Number.isFinite(parsed)) return undefined;
 
   return Math.max(0, Math.trunc(parsed));
+}
+
+function normalizeThreadDetailPage(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return undefined;
+
+    const normalized = Math.trunc(value);
+    return normalized >= 1 ? normalized : undefined;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return undefined;
+
+  const normalized = Math.trunc(parsed);
+  return normalized >= 1 ? normalized : undefined;
 }
 
 function parseOptionalNumber(value: string | null): number | null {

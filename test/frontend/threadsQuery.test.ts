@@ -2,12 +2,14 @@ import { describe, expect, it } from "bun:test";
 import {
   THREADS_QUERY_DEFAULT_LIMIT,
   applyThreadsFilterPatch,
+  parseThreadDetailPage,
   parseThreadsQuery,
   parseThreadsDetailContext,
   serializeThreadsDetailContext,
   serializeThreadsQuery,
   updateThreadsQueryState,
   updateThreadsSearch,
+  withThreadDetailPage,
   withThreadsRestoreScroll,
 } from "../../src/frontend/lib/state/threadsQuery";
 
@@ -134,6 +136,21 @@ describe("threads query state", () => {
     );
     expect(withThreadsRestoreScroll("?list=pgsql-hackers&_scrollY=120", null)).toBe(
       "?list=pgsql-hackers"
+    );
+  });
+
+  it("parses a thread detail page from query params", () => {
+    expect(parseThreadDetailPage("?page=3&list=pgsql-hackers")).toBe(3);
+    expect(parseThreadDetailPage("?page=0")).toBeUndefined();
+    expect(parseThreadDetailPage("?page=not-a-number")).toBeUndefined();
+  });
+
+  it("adds and removes thread detail page metadata without disturbing thread filters", () => {
+    expect(withThreadDetailPage("?list=pgsql-hackers&_scrollY=120", 2)).toBe(
+      "?list=pgsql-hackers&_scrollY=120&page=2"
+    );
+    expect(withThreadDetailPage("?list=pgsql-hackers&_scrollY=120&page=2", null)).toBe(
+      "?list=pgsql-hackers&_scrollY=120"
     );
   });
 });

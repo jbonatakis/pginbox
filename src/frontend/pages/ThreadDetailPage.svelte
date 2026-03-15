@@ -7,8 +7,10 @@
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
   import {
+    parseThreadDetailPage,
     parseThreadsDetailContext,
     serializeThreadsDetailContext,
+    withThreadDetailPage,
   } from "../lib/state/threadsQuery";
   import { onLinkClick, threadsPath } from "../router";
 
@@ -93,6 +95,25 @@
     activeRequestController = null;
   };
 
+  const locationPage = (): number | undefined => {
+    if (typeof window === "undefined") return undefined;
+    return parseThreadDetailPage(window.location.search);
+  };
+
+  const syncLocationPage = (page: number, totalPages: number): void => {
+    if (typeof window === "undefined") return;
+
+    const nextSearch = withThreadDetailPage(
+      window.location.search,
+      page < totalPages ? page : null
+    );
+
+    if (nextSearch === window.location.search) return;
+
+    const nextUrl = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", nextUrl);
+  };
+
   const loadThread = async (
     targetThreadId: string,
     mode: LoadMode,
@@ -133,6 +154,7 @@
 
       thread = response;
       status = "success";
+      syncLocationPage(response.messagePagination.page, response.messagePagination.totalPages);
     } catch (rawError) {
       const apiError = toApiErrorShape(rawError);
       if (apiError.code === "ABORTED" || requestId !== requestSequence) return;
@@ -159,7 +181,7 @@
   const retry = (): void => {
     if (!hasThreadId) return;
     if (thread === null) {
-      void loadThread(threadId, "replace");
+      void loadThread(threadId, "replace", locationPage());
       return;
     }
     if (errorMode === "navigate" && errorPage !== null) {
@@ -248,7 +270,7 @@
     status = "error";
   } else if (threadId !== lastLoadedThreadId) {
     lastLoadedThreadId = threadId;
-    void loadThread(threadId, "replace");
+    void loadThread(threadId, "replace", locationPage());
   }
 
   $: isBusy = status === "loading" || isNavigatingPage || isRefreshing;
