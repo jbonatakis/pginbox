@@ -1,7 +1,11 @@
 # Reverse proxy: / -> frontend, /api/* -> API (prefix stripped)
-# Hardcoded production domain.
+# Canonical host is the bare domain.
 
-pginbox.dev, www.pginbox.dev {
+www.pginbox.dev {
+    redir https://pginbox.dev{uri} permanent
+}
+
+pginbox.dev {
     handle_path /api/* {
         reverse_proxy api:3000
     }
