@@ -468,6 +468,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         displayName: result.user.display_name,
         email: result.user.email,
         expiresAt: result.verification.expiresAt,
+        userId: result.user.id,
         verificationUrl,
       });
 
@@ -505,6 +506,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         displayName: authUser.display_name,
         email: authUser.email,
         expiresAt: verification.expiresAt,
+        userId: authUser.id,
         verificationUrl,
       });
 
@@ -649,6 +651,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         email: authUser.email,
         expiresAt: resetToken.expiresAt,
         resetUrl: buildFrontendUrl(appBaseUrl, "/reset-password", resetToken.token),
+        userId: authUser.id,
       });
 
       return {

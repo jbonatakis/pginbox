@@ -48,6 +48,7 @@ describe("auth email sender", () => {
       displayName: "Test User",
       email: "user@example.com",
       expiresAt: new Date("2026-03-16T12:00:00.000Z"),
+      userId: 42,
       verificationUrl: "http://localhost:5173/verify-email?token=verify-token",
     });
     await sender.sendPasswordResetEmail({
@@ -55,11 +56,12 @@ describe("auth email sender", () => {
       email: "user@example.com",
       expiresAt: new Date("2026-03-15T13:00:00.000Z"),
       resetUrl: "http://localhost:5173/reset-password?token=reset-token",
+      userId: 42,
     });
 
     expect(logger.messages).toEqual([
-      "[auth:dev-mail] verification email for user@example.com (2026-03-16T12:00:00.000Z): http://localhost:5173/verify-email?token=verify-token",
-      "[auth:dev-mail] password reset email for user@example.com (2026-03-15T13:00:00.000Z): http://localhost:5173/reset-password?token=reset-token",
+      "[auth:dev-mail] verification email for user_id=42 (2026-03-16T12:00:00.000Z): http://localhost:5173/verify-email?token=verify-token",
+      "[auth:dev-mail] password reset email for user_id=42 (2026-03-15T13:00:00.000Z): http://localhost:5173/reset-password?token=reset-token",
     ]);
   });
 
@@ -71,6 +73,7 @@ describe("auth email sender", () => {
       displayName: null,
       email: "user@example.com",
       expiresAt: new Date("2026-03-16T12:00:00.000Z"),
+      userId: 42,
       verificationUrl: "http://localhost:5173/verify-email?token=verify-token",
     });
 
@@ -114,6 +117,7 @@ describe("auth email sender", () => {
       displayName: "<Test User>",
       email: "user@example.com",
       expiresAt: new Date("2026-03-16T12:00:00.000Z"),
+      userId: 42,
       verificationUrl: "http://localhost:5173/verify-email?token=verify-token",
     });
 

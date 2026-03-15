@@ -9,6 +9,7 @@ export interface VerificationEmailDelivery {
   displayName: string | null;
   email: string;
   expiresAt: Date;
+  userId: bigint | number | string;
   verificationUrl: string;
 }
 
@@ -17,6 +18,7 @@ export interface PasswordResetEmailDelivery {
   email: string;
   expiresAt: Date;
   resetUrl: string;
+  userId: bigint | number | string;
 }
 
 export interface AuthEmailSender {
@@ -147,13 +149,13 @@ export function createDevelopmentAuthEmailSender(logger: InfoLogger = console): 
   return {
     async sendVerificationEmail(payload) {
       logger.info(
-        `[auth:dev-mail] verification email for ${payload.email} (${payload.expiresAt.toISOString()}): ${payload.verificationUrl}`
+        `[auth:dev-mail] verification email for user_id=${payload.userId} (${payload.expiresAt.toISOString()}): ${payload.verificationUrl}`
       );
     },
 
     async sendPasswordResetEmail(payload) {
       logger.info(
-        `[auth:dev-mail] password reset email for ${payload.email} (${payload.expiresAt.toISOString()}): ${payload.resetUrl}`
+        `[auth:dev-mail] password reset email for user_id=${payload.userId} (${payload.expiresAt.toISOString()}): ${payload.resetUrl}`
       );
     },
   };
@@ -184,7 +186,7 @@ export function createSmtpAuthEmailSender(
         to: formatRecipient(payload.displayName, payload.email),
       });
 
-      logger.info(`[auth:smtp-mail] verification email sent to ${payload.email}`);
+      logger.info(`[auth:smtp-mail] verification email sent for user_id=${payload.userId}`);
     },
 
     async sendPasswordResetEmail(payload) {
@@ -198,7 +200,7 @@ export function createSmtpAuthEmailSender(
         to: formatRecipient(payload.displayName, payload.email),
       });
 
-      logger.info(`[auth:smtp-mail] password reset email sent to ${payload.email}`);
+      logger.info(`[auth:smtp-mail] password reset email sent for user_id=${payload.userId}`);
     },
   };
 }
