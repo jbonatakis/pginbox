@@ -40,8 +40,19 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+          node-version: 22
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install frontend dependencies for root typecheck
+        working-directory: src/frontend
+        run: npm ci
 
       - name: Install dbmate
         run: |
