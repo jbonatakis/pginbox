@@ -176,8 +176,16 @@ CREATE TABLE public.attachments (
     filename text,
     content_type text,
     size_bytes integer,
-    content text
+    content text,
+    part_index integer NOT NULL
 );
+
+
+--
+-- Name: COLUMN attachments.part_index; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.attachments.part_index IS 'Zero-based position of the extracted attachment within a message MIME part walk.';
 
 
 --
@@ -472,6 +480,13 @@ CREATE INDEX idx_attachments_message_id ON public.attachments USING btree (messa
 
 
 --
+-- Name: idx_attachments_message_part_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_attachments_message_part_index ON public.attachments USING btree (message_id, part_index);
+
+
+--
 -- Name: idx_messages_from_email; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -584,4 +599,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260301000004'),
     ('20260312000005'),
     ('20260312000006'),
-    ('20260312000007');
+    ('20260312000007'),
+    ('20260314000008');

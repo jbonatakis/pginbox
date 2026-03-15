@@ -620,8 +620,9 @@ INSERT_MESSAGE_SQL = f"""
 INSERT_MESSAGE_TEMPLATE = f"({', '.join(['%s'] * len(INSERT_MESSAGE_COLUMNS))})"
 
 INSERT_ATTACHMENT_SQL = """
-    INSERT INTO attachments (message_id, filename, content_type, size_bytes, content)
-    VALUES (%(message_id)s, %(filename)s, %(content_type)s, %(size_bytes)s, %(content)s)
+    INSERT INTO attachments (message_id, part_index, filename, content_type, size_bytes, content)
+    VALUES (%(message_id)s, %(part_index)s, %(filename)s, %(content_type)s, %(size_bytes)s, %(content)s)
+    ON CONFLICT (message_id, part_index) DO NOTHING
 """
 
 UPDATE_MESSAGE_THREAD_SQL = """
@@ -831,8 +832,8 @@ def _insert_attachments(cur, batch: list, inserted_message_ids: dict[str, int] |
         db_id = id_map.get(record["message_id"])
         if db_id is None:
             continue
-        for att in record.get("_attachments", []):
-            att_rows.append({**att, "message_id": db_id})
+        for part_index, att in enumerate(record.get("_attachments", [])):
+            att_rows.append({**att, "message_id": db_id, "part_index": part_index})
 
     if att_rows:
         execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)

@@ -322,6 +322,7 @@ def test_insert_attachments_only_uses_newly_inserted_message_ids(monkeypatch):
         "rows": [
             {
                 "message_id": 101,
+                "part_index": 0,
                 "filename": "new.patch",
                 "content_type": "text/x-diff",
                 "size_bytes": 12,

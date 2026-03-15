@@ -122,4 +122,4 @@ prod-reload-caddy:
 deploy: build-all prod-up-no-build
 
 watch-logs:
-    docker compose -f docker-compose.prod.yml logs -f api frontend
+	docker compose -f docker-compose.prod.yml logs -f api frontend
