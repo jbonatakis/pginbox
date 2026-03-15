@@ -247,17 +247,22 @@ def test_store_batch_live_refreshes_threads_after_message_insert(monkeypatch):
     def fake_resolve_batch_thread_ids(conn, pending_batch):
         events.append(("resolve", [record["message_id"] for record in pending_batch]))
 
-    def fake_execute_batch(cur, sql, rows, page_size=500):
-        events.append(("execute_batch", sql, [row["message_id"] for row in rows], page_size))
+    def fake_insert_messages(cur, pending_batch):
+        events.append(("insert_messages", [record["message_id"] for record in pending_batch]))
+        return {"<message@example.com>": 101}
 
     def fake_refresh_threads_for_message_ids(cur, list_id, message_ids):
         events.append(("refresh_threads", list_id, message_ids))
 
-    def fake_insert_attachments(cur, pending_batch):
-        events.append(("insert_attachments", [record["message_id"] for record in pending_batch]))
+    def fake_insert_attachments(cur, pending_batch, inserted_message_ids=None):
+        events.append((
+            "insert_attachments",
+            [record["message_id"] for record in pending_batch],
+            inserted_message_ids,
+        ))
 
     monkeypatch.setattr(ingest, "_resolve_batch_thread_ids", fake_resolve_batch_thread_ids)
-    monkeypatch.setattr(ingest, "execute_batch", fake_execute_batch)
+    monkeypatch.setattr(ingest, "_insert_messages", fake_insert_messages)
     monkeypatch.setattr(ingest, "_refresh_threads_for_message_ids", fake_refresh_threads_for_message_ids)
     monkeypatch.setattr(ingest, "_insert_attachments", fake_insert_attachments)
 
@@ -265,8 +270,63 @@ def test_store_batch_live_refreshes_threads_after_message_insert(monkeypatch):
 
     assert events == [
         ("resolve", ["<message@example.com>"]),
-        ("execute_batch", ingest.INSERT_MESSAGE_SQL, ["<message@example.com>"], 500),
+        ("insert_messages", ["<message@example.com>"]),
         ("refresh_threads", 23, ["<message@example.com>"]),
-        ("insert_attachments", ["<message@example.com>"]),
+        ("insert_attachments", ["<message@example.com>"], {"<message@example.com>": 101}),
         ("commit",),
     ]
+
+
+def test_insert_attachments_only_uses_newly_inserted_message_ids(monkeypatch):
+    inserted = {}
+
+    class FakeCursor:
+        pass
+
+    batch = [
+        {
+            "message_id": "<new@example.com>",
+            "_attachments": [
+                {
+                    "filename": "new.patch",
+                    "content_type": "text/x-diff",
+                    "size_bytes": 12,
+                    "content": "patch",
+                }
+            ],
+        },
+        {
+            "message_id": "<existing@example.com>",
+            "_attachments": [
+                {
+                    "filename": "existing.patch",
+                    "content_type": "text/x-diff",
+                    "size_bytes": 18,
+                    "content": "existing",
+                }
+            ],
+        },
+    ]
+
+    def fake_execute_batch(cur, sql, rows, page_size=500):
+        inserted["sql"] = sql
+        inserted["rows"] = rows
+        inserted["page_size"] = page_size
+
+    monkeypatch.setattr(ingest, "execute_batch", fake_execute_batch)
+
+    ingest._insert_attachments(FakeCursor(), batch, {"<new@example.com>": 101})
+
+    assert inserted == {
+        "sql": ingest.INSERT_ATTACHMENT_SQL,
+        "rows": [
+            {
+                "message_id": 101,
+                "filename": "new.patch",
+                "content_type": "text/x-diff",
+                "size_bytes": 12,
+                "content": "patch",
+            }
+        ],
+        "page_size": 500,
+    }

@@ -24,7 +24,7 @@ reset:
 	@echo "Reset complete"
 
 pgcli:
-	pgcli $(DSN)
+	env -u DSN pgcli "$(DSN)"
 
 logs:
 	docker compose logs -f db

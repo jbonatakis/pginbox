@@ -36,7 +36,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import psycopg2
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_batch, execute_values
 import requests
 from dotenv import load_dotenv
 
@@ -595,15 +595,29 @@ UPSERT_TOUCHED_THREADS_SQL = """
         message_count    = EXCLUDED.message_count
 """
 
-INSERT_MESSAGE_SQL = """
+INSERT_MESSAGE_COLUMNS = (
+    "message_id",
+    "thread_id",
+    "list_id",
+    "sent_at",
+    "sent_at_approx",
+    "from_name",
+    "from_email",
+    "subject",
+    "in_reply_to",
+    "refs",
+    "body",
+)
+
+INSERT_MESSAGE_SQL = f"""
     INSERT INTO messages
-        (message_id, thread_id, list_id, sent_at, sent_at_approx, from_name, from_email,
-         subject, in_reply_to, refs, body)
-    VALUES
-        (%(message_id)s, %(thread_id)s, %(list_id)s, %(sent_at)s, %(sent_at_approx)s,
-         %(from_name)s, %(from_email)s, %(subject)s, %(in_reply_to)s, %(refs)s, %(body)s)
+        ({", ".join(INSERT_MESSAGE_COLUMNS)})
+    VALUES %s
     ON CONFLICT (message_id) DO NOTHING
+    RETURNING id, message_id
 """
+
+INSERT_MESSAGE_TEMPLATE = f"({', '.join(['%s'] * len(INSERT_MESSAGE_COLUMNS))})"
 
 INSERT_ATTACHMENT_SQL = """
     INSERT INTO attachments (message_id, filename, content_type, size_bytes, content)
@@ -786,11 +800,31 @@ def _canonical_thread_ids_for_list(records: dict[str, dict]) -> dict[str, str]:
     return canonical
 
 
-def _insert_attachments(cur, batch: list):
-    """Insert attachments for a batch of message records, keyed by DB message id."""
-    msg_ids = [r["message_id"] for r in batch]
-    cur.execute("SELECT id, message_id FROM messages WHERE message_id = ANY(%s)", (msg_ids,))
-    id_map = {row[1]: row[0] for row in cur.fetchall()}
+def _insert_messages(cur, batch: list) -> dict[str, int]:
+    """Insert a batch of messages and return DB ids for rows inserted in this batch."""
+    if not batch:
+        return {}
+
+    rows = [tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch]
+    inserted_rows = execute_values(
+        cur,
+        INSERT_MESSAGE_SQL,
+        rows,
+        template=INSERT_MESSAGE_TEMPLATE,
+        page_size=500,
+        fetch=True,
+    )
+    return {message_id: db_id for db_id, message_id in inserted_rows}
+
+
+def _insert_attachments(cur, batch: list, inserted_message_ids: dict[str, int] | None = None):
+    """Insert attachments only for messages inserted in the current batch."""
+    if inserted_message_ids is None:
+        msg_ids = [r["message_id"] for r in batch]
+        cur.execute("SELECT id, message_id FROM messages WHERE message_id = ANY(%s)", (msg_ids,))
+        id_map = {row[1]: row[0] for row in cur.fetchall()}
+    else:
+        id_map = inserted_message_ids
 
     att_rows = []
     for record in batch:
@@ -820,9 +854,9 @@ def store_batch_live(conn, batch: list):
     list_id = batch[0]["list_id"]
     message_ids = [record["message_id"] for record in batch]
     with conn.cursor() as cur:
-        execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
+        inserted_message_ids = _insert_messages(cur, batch)
         _refresh_threads_for_message_ids(cur, list_id, message_ids)
-        _insert_attachments(cur, batch)
+        _insert_attachments(cur, batch, inserted_message_ids)
     conn.commit()
 
 
@@ -830,8 +864,8 @@ def store_batch_backfill(conn, batch: list):
     """Insert messages only; threads derived separately at the end."""
     _resolve_batch_thread_ids(conn, batch)
     with conn.cursor() as cur:
-        execute_batch(cur, INSERT_MESSAGE_SQL, batch, page_size=500)
-        _insert_attachments(cur, batch)
+        inserted_message_ids = _insert_messages(cur, batch)
+        _insert_attachments(cur, batch, inserted_message_ids)
     conn.commit()
 
 
