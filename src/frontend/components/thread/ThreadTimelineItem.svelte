@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { MessageWithAttachments } from "shared/api";
-  import { linkifyPlainText, type LinkifiedTextPart } from "../../lib/linkify";
+  import { parseMessageBody, type MessageBodyBlock } from "../../lib/messageBody";
   import ThreadMessageAttachments from "./ThreadMessageAttachments.svelte";
 
   export let message: MessageWithAttachments;
@@ -11,7 +11,7 @@
   let subject: string | null = null;
   let validTimestamp = false;
   let sentAtLabel = "Unknown time";
-  let bodyParts: LinkifiedTextPart[] = [];
+  let bodyBlocks: MessageBodyBlock[] = [];
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
@@ -52,7 +52,7 @@
   $: subject = normalizedSubject(message.subject);
   $: validTimestamp = isValidTimestamp(message.sent_at);
   $: sentAtLabel = timestampLabel(message.sent_at);
-  $: bodyParts = linkifyPlainText(message.body);
+  $: bodyBlocks = parseMessageBody(message.body);
 </script>
 
 <article class="timeline-item" id={anchorId} aria-labelledby={`${anchorId}-heading`}>
@@ -78,15 +78,25 @@
     {/if}
   </header>
 
-  <p class="body">
-    {#each bodyParts as part}
-      {#if part.type === "link"}
-        <a class="body-link" href={part.href} target="_blank" rel="noopener noreferrer">{part.value}</a>
-      {:else}
-        {part.value}
-      {/if}
+  <div class="body" aria-label="Message body">
+    {#each bodyBlocks as block}
+      <div
+        class:body-block={true}
+        class:body-block--quote={block.type === "quote"}
+        style={block.type === "quote" ? `--quote-depth: ${block.depth};` : undefined}
+      >
+        {#each block.parts as part}
+          {#if part.type === "link"}
+            <a class="body-link" href={part.href} target="_blank" rel="noopener noreferrer"
+              >{part.value}</a
+            >
+          {:else}
+            {part.value}
+          {/if}
+        {/each}
+      </div>
     {/each}
-  </p>
+  </div>
 
   <ThreadMessageAttachments attachments={message.attachments} />
 </article>
@@ -162,13 +172,34 @@
   }
 
   .body {
-    margin: 0;
+    display: grid;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .body-block {
     font-size: 0.9rem;
     line-height: 1.45;
     color: #102a43;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
+    min-width: 0;
+  }
+
+  .body-block--quote {
+    --quote-step: 0.9rem;
+    color: #486581;
+    padding-left: calc(0.7rem + (var(--quote-depth, 1) * var(--quote-step)));
+    background-image: repeating-linear-gradient(
+      to right,
+      #9fb3c8 0,
+      #9fb3c8 0.18rem,
+      transparent 0.18rem,
+      transparent var(--quote-step)
+    );
+    background-repeat: no-repeat;
+    background-size: calc(var(--quote-depth, 1) * var(--quote-step)) 100%;
   }
 
   .body-link {
