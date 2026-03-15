@@ -4,6 +4,7 @@ export const homePath = "/";
 export const threadsPath = "/threads";
 export const peoplePath = "/people";
 export const analyticsPath = "/analytics";
+export const accountPath = "/account";
 export const loginPath = "/login";
 export const registerPath = "/register";
 export const verifyEmailPath = "/verify-email";
@@ -36,6 +37,10 @@ export type AppRoute =
   | {
       name: "analytics";
       pathname: typeof analyticsPath;
+    }
+  | {
+      name: "account";
+      pathname: typeof accountPath;
     }
   | {
       name: "login";
@@ -183,6 +188,10 @@ function matchRoute(pathname: string): AppRoute {
 
   if (pathname === analyticsPath) {
     return { name: "analytics", pathname: analyticsPath };
+  }
+
+  if (pathname === accountPath) {
+    return { name: "account", pathname: accountPath };
   }
 
   if (pathname === loginPath) {
