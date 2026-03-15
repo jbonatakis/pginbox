@@ -1,4 +1,3 @@
-import type { Paginated, Person, PersonListItem } from "shared/api";
 import { Elysia, t } from "elysia";
 import { toPerson } from "../serialize";
 import { listPeople, getPerson } from "../services/people.service";
@@ -19,7 +18,7 @@ function parseLimit(value: string | undefined, defaultVal: number): number | nul
 export const peopleRoutes = new Elysia({ prefix: "/people" })
   .get(
     "/",
-    async ({ query, status }): Promise<Paginated<PersonListItem> | ReturnType<typeof status>> => {
+    async ({ query, status }) => {
       const limit = parseLimit(query.limit, 25);
       if (limit === null) return status(400, { message: "limit must be an integer between 1 and 100" });
       return listPeople({ cursor: query.cursor, limit });
@@ -33,7 +32,7 @@ export const peopleRoutes = new Elysia({ prefix: "/people" })
   )
   .get(
     "/:id",
-    async ({ params, status }): Promise<Person | ReturnType<typeof status>> => {
+    async ({ params, status }) => {
       const id = parsePersonId(params.id);
       if (id === null) return status(400, { message: "Invalid person id" });
       const raw = await getPerson(id);

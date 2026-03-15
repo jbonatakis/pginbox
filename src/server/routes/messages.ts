@@ -1,4 +1,3 @@
-import type { MessageWithAttachments } from "shared/api";
 import { Elysia, t } from "elysia";
 import { toMessageWithAttachments } from "../serialize";
 import { getMessage } from "../services/messages.service";
@@ -14,7 +13,7 @@ function parseMessageId(id: string): bigint | null {
 
 export const messagesRoutes = new Elysia({ prefix: "/messages" }).get(
   "/:id",
-  async ({ params, status }): Promise<MessageWithAttachments | ReturnType<typeof status>> => {
+  async ({ params, status }) => {
     const id = parseMessageId(params.id);
     if (id === null) return status(400, { message: "Invalid message id" });
     const raw = await getMessage(id);

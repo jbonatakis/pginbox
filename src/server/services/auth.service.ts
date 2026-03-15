@@ -27,6 +27,7 @@ import {
   type SessionRequestMetadata,
 } from "../auth";
 import { resolveAuthAppBaseUrl, resolveAuthEmailRuntimeConfig, type AuthEmailRuntimeConfig } from "../config";
+import { toDbInt8 } from "../db-ids";
 import { db as defaultDb } from "../db";
 import { createAuthEmailSender, type AuthEmailSender } from "../email";
 import type { DB } from "../types/db.d.ts";
@@ -204,7 +205,7 @@ async function rotateVerificationToken(
   await authDb
     .updateTable("email_verification_tokens")
     .set({ consumed_at: now })
-    .where("user_id", "=", user.id)
+    .where("user_id", "=", toDbInt8(user.id))
     .where("consumed_at", "is", null)
     .execute();
 
@@ -215,7 +216,7 @@ async function rotateVerificationToken(
       email: user.email,
       expires_at: expiresAt,
       token_hash: hashOpaqueToken(token),
-      user_id: user.id,
+      user_id: toDbInt8(user.id),
     })
     .execute();
 
@@ -233,7 +234,7 @@ async function rotatePasswordResetToken(
   await authDb
     .updateTable("password_reset_tokens")
     .set({ consumed_at: now })
-    .where("user_id", "=", user.id)
+    .where("user_id", "=", toDbInt8(user.id))
     .where("consumed_at", "is", null)
     .execute();
 
@@ -243,7 +244,7 @@ async function rotatePasswordResetToken(
       consumed_at: null,
       expires_at: expiresAt,
       token_hash: hashOpaqueToken(token),
-      user_id: user.id,
+      user_id: toDbInt8(user.id),
     })
     .execute();
 
@@ -258,7 +259,7 @@ async function revokeAllSessionsForUser(
   await authDb
     .updateTable("auth_sessions")
     .set({ revoked_at: now })
-    .where("user_id", "=", userId)
+    .where("user_id", "=", toDbInt8(userId))
     .where("revoked_at", "is", null)
     .execute();
 }
@@ -287,7 +288,7 @@ async function createSessionForUser(
       revoked_at: null,
       token_hash: hashOpaqueToken(sessionToken),
       user_agent: metadata?.userAgent ?? null,
-      user_id: user.id,
+      user_id: toDbInt8(user.id),
     })
     .returning([
       "id",
@@ -440,7 +441,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
             display_name: hasDisplayNameOverride(input) ? displayName : pendingUser.display_name,
             password_hash: passwordHash,
           })
-          .where("id", "=", pendingUser.id)
+          .where("id", "=", toDbInt8(pendingUser.id))
           .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
           .executeTakeFirstOrThrow();
 
@@ -546,7 +547,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         await trx
           .updateTable("email_verification_tokens")
           .set({ consumed_at: currentTime })
-          .where("user_id", "=", tokenRecord.user_id)
+          .where("user_id", "=", toDbInt8(tokenRecord.user_id))
           .where("consumed_at", "is", null)
           .execute();
 
@@ -557,7 +558,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
               tokenRecord.user_email_verified_at ?? currentTime,
             status: "active",
           })
-          .where("id", "=", tokenRecord.user_id)
+          .where("id", "=", toDbInt8(tokenRecord.user_id))
           .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
           .executeTakeFirstOrThrow();
 
@@ -604,7 +605,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         await trx
           .updateTable("users")
           .set({ last_login_at: currentTime })
-          .where("id", "=", user.id)
+          .where("id", "=", toDbInt8(user.id))
           .execute();
 
         return {
@@ -624,7 +625,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const result = await authDb
         .updateTable("auth_sessions")
         .set({ revoked_at: currentTime })
-        .where("id", "=", sessionId)
+        .where("id", "=", toDbInt8(sessionId))
         .where("revoked_at", "is", null)
         .executeTakeFirst();
 
@@ -705,14 +706,14 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         await trx
           .updateTable("password_reset_tokens")
           .set({ consumed_at: currentTime })
-          .where("user_id", "=", tokenRecord.user_id)
+          .where("user_id", "=", toDbInt8(tokenRecord.user_id))
           .where("consumed_at", "is", null)
           .execute();
 
         const updatedUser = await trx
           .updateTable("users")
           .set({ password_hash: nextPasswordHash })
-          .where("id", "=", tokenRecord.user_id)
+          .where("id", "=", toDbInt8(tokenRecord.user_id))
           .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
           .executeTakeFirstOrThrow();
 

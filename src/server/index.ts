@@ -8,6 +8,6 @@ const server = Bun.serve({
   port: 3000,
 });
 
-logStartup(server.port);
+logStartup(server.port ?? 3000);
 
 export type { App } from "./app";

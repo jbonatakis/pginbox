@@ -1,4 +1,3 @@
-import type { Paginated, Thread, ThreadDetail } from "shared/api";
 import { Elysia, t } from "elysia";
 import { toThread, toThreadDetail } from "../serialize";
 import { listThreads, getThread } from "../services/threads.service";
@@ -71,7 +70,7 @@ export function parseThreadsToDate(value: string | undefined): Date | null {
 export const threadsRoutes = new Elysia({ prefix: "/threads" })
   .get(
     "/",
-    async ({ query, status }): Promise<Paginated<Thread> | ReturnType<typeof status>> => {
+    async ({ query, status }) => {
       const limit = parseLimit(query.limit, 25);
       if (limit === null) return status(400, { message: "limit must be an integer between 1 and 100" });
       const from = parseThreadsFromDate(query.from);
@@ -101,7 +100,7 @@ export const threadsRoutes = new Elysia({ prefix: "/threads" })
   )
   .get(
     "/:threadId",
-    async ({ params, query, status }): Promise<ThreadDetail | ReturnType<typeof status>> => {
+    async ({ params, query, status }) => {
       const limit = parseLimit(query.limit, 50);
       if (limit === null) return status(400, { message: "limit must be an integer between 1 and 100" });
       const page = parsePage(query.page);

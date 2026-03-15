@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { toDbInt8, toDbInt8List, type DbInt8Value } from "../db-ids";
 import { db } from "../db";
 
 export interface AttachmentSummaryRow {
@@ -47,7 +48,7 @@ export function dedupeAttachmentRows<T extends AttachmentSummaryRow>(rows: T[]):
   return deduped;
 }
 
-export async function getAttachmentsForMessage(messageId: bigint) {
+export async function getAttachmentsForMessage(messageId: DbInt8Value) {
   const rows = await db
     .selectFrom("attachments")
     .select([
@@ -57,14 +58,14 @@ export async function getAttachmentsForMessage(messageId: bigint) {
       "attachments.size_bytes",
       sql<boolean>`attachments.content is not null`.as("has_content"),
     ])
-    .where("attachments.message_id", "=", messageId)
+    .where("attachments.message_id", "=", toDbInt8(messageId))
     .orderBy("attachments.id", "asc")
     .execute();
 
   return dedupeAttachmentRows(rows);
 }
 
-export async function getAttachment(id: bigint) {
+export async function getAttachment(id: DbInt8Value) {
   const row = await db
     .selectFrom("attachments")
     .select([
@@ -75,13 +76,13 @@ export async function getAttachment(id: bigint) {
       sql<boolean>`attachments.content is not null`.as("has_content"),
       "attachments.content",
     ])
-    .where("attachments.id", "=", id)
+    .where("attachments.id", "=", toDbInt8(id))
     .executeTakeFirst();
 
   return row ?? null;
 }
 
-export async function getAttachmentsByMessageIds(messageIds: Array<bigint | number | string>) {
+export async function getAttachmentsByMessageIds(messageIds: readonly DbInt8Value[]) {
   if (messageIds.length === 0) return new Map<string, AttachmentSummaryRow[]>();
 
   const rows = await db
@@ -94,7 +95,7 @@ export async function getAttachmentsByMessageIds(messageIds: Array<bigint | numb
       "attachments.size_bytes",
       sql<boolean>`attachments.content is not null`.as("has_content"),
     ])
-    .where("attachments.message_id", "in", messageIds)
+    .where("attachments.message_id", "in", toDbInt8List(messageIds))
     .orderBy("attachments.message_id", "asc")
     .orderBy("attachments.id", "asc")
     .execute();

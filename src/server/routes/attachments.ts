@@ -1,4 +1,3 @@
-import type { AttachmentDetail } from "shared/api";
 import { Elysia, t } from "elysia";
 import { toAttachmentDetail } from "../serialize";
 import { getAttachment } from "../services/attachments.service";
@@ -27,7 +26,7 @@ function downloadContentType(contentType: string | null): string {
 export const attachmentsRoutes = new Elysia({ prefix: "/attachments" })
   .get(
     "/:id",
-    async ({ params, status }): Promise<AttachmentDetail | ReturnType<typeof status>> => {
+    async ({ params, status }) => {
       const id = parseAttachmentId(params.id);
       if (id === null) return status(400, { message: "Invalid attachment id" });
       const raw = await getAttachment(id);
@@ -38,7 +37,7 @@ export const attachmentsRoutes = new Elysia({ prefix: "/attachments" })
   )
   .get(
     "/:id/download",
-    async ({ params, status, set }): Promise<string | ReturnType<typeof status>> => {
+    async ({ params, status, set }) => {
       const id = parseAttachmentId(params.id);
       if (id === null) return status(400, { message: "Invalid attachment id" });
       const raw = await getAttachment(id);

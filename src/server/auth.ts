@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Kysely } from "kysely";
 import type { AuthUser } from "shared/api";
+import { toDbInt8 } from "./db-ids";
 import { db as defaultDb } from "./db";
 import { BadRequestError } from "./errors";
 import type { DB } from "./types/db.d.ts";
@@ -191,7 +192,7 @@ async function revokeSessionById(
   await authDb
     .updateTable("auth_sessions")
     .set({ revoked_at: now })
-    .where("id", "=", sessionId)
+    .where("id", "=", toDbInt8(sessionId))
     .where("revoked_at", "is", null)
     .execute();
 }
@@ -204,7 +205,7 @@ async function revokeSessionsForUser(
   await authDb
     .updateTable("auth_sessions")
     .set({ revoked_at: now })
-    .where("user_id", "=", userId)
+    .where("user_id", "=", toDbInt8(userId))
     .where("revoked_at", "is", null)
     .execute();
 }
@@ -406,7 +407,7 @@ export async function resolveCurrentSession(
     await authDb
       .updateTable("auth_sessions")
       .set({ last_seen_at: now })
-      .where("id", "=", lookupRow.id)
+      .where("id", "=", toDbInt8(lookupRow.id))
       .where("revoked_at", "is", null)
       .execute();
 
