@@ -155,7 +155,7 @@
 <AuthPageLayout
   eyebrow="Account access"
   title="Log in"
-  intro="Sign in when you need account features or to return cleanly after auth flows. Archive browsing stays open either way."
+  intro="Sign in to use account-only features and manage your pginbox session. Archive browsing remains public."
 >
   {#if $authStore.isAuthenticated}
     <SuccessState
