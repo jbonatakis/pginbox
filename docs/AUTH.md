@@ -7,15 +7,15 @@ This document describes the auth implementation that exists in the repo today an
 - Auth routes live under `src/server/routes/auth.ts`.
 - Session and token helpers live in `src/server/auth.ts`.
 - Auth persistence and email issuance live in `src/server/services/auth.service.ts`.
-- Verification and password reset delivery currently use the development mail stub in `src/server/email.ts`.
+- Verification and password reset delivery are handled by `src/server/email.ts`.
 - Auth maintenance cleanup runs from `src/server/jobs/auth-cleanup.ts`.
 
 The current implementation is intentionally limited to first-party email/password auth, server-side sessions, email verification, password reset, and basic moderation state.
 
 ## What is intentionally deferred
 
-- Real SMTP provider wiring is not part of this task. `SMTP_*` env vars are not required for local development and are not consumed by the current mailer.
-- Provider-specific setup work such as Mailtrap, Postmark, Resend, or SES integration is deferred follow-up work.
+- Provider-specific SDK work is intentionally avoided. Production email delivery should go through a standard SMTP relay.
+- Mailtrap is the initial expected provider, but the app stays provider-agnostic because it only depends on SMTP settings.
 - Caddy host canonicalization is also deferred. No `docker/Caddyfile` host redirect changes are included here.
 
 ## Required local configuration
@@ -26,6 +26,13 @@ Local auth only needs the same core database and frontend-origin settings the ap
 DATABASE_URL=postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 APP_BASE_URL=http://localhost:5173
 AUTH_EMAIL_MODE=log
+SMTP_HOST=
+SMTP_PORT=
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM_EMAIL=
+SMTP_FROM_NAME=
 ```
 
 Notes:
@@ -35,10 +42,15 @@ Notes:
 - `AUTH_EMAIL_MODE` controls local verification behavior:
   - `log` logs verification and reset links.
   - `dev-auto-verify` still logs the verification link, but `register` and `resend-verification` also return a dev-only verification URL so the frontend can route through the normal `/verify-email` page and hit the real `/auth/verify-email` endpoint automatically.
+- `AUTH_EMAIL_MODE=smtp` enables real email delivery through a standard SMTP relay.
+- `APP_BASE_URL` is required when `AUTH_EMAIL_MODE=smtp`, because those email links must point at the real frontend origin.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM_EMAIL` are required when `AUTH_EMAIL_MODE=smtp`.
+- `SMTP_FROM_NAME` is optional.
+- `SMTP_SECURE` defaults to `false`; set it to `true` when your provider expects implicit TLS.
 - `APP_BASE_URL` defaults to `http://localhost:5173/` if unset.
 - `DATABASE_URL` defaults to `postgresql://pginbox:pginbox@localhost:5499/pginbox` if unset.
 - `NODE_ENV=production` only affects whether the session cookie is marked `Secure`.
-- No `SMTP_*` variables are required in v1 development because auth email delivery is still dev-only.
+- No `SMTP_*` variables are required for `log` or `dev-auto-verify`.
 
 `.env.template` includes the minimal local auth configuration.
 
@@ -82,7 +94,7 @@ The frontend already bootstraps auth state with `GET /api/auth/me` and includes 
 
 ## Development mail stub
 
-Verification and reset emails are not sent to a real SMTP server in local development. The server logs the generated links instead.
+When `AUTH_EMAIL_MODE=log` or `AUTH_EMAIL_MODE=dev-auto-verify`, verification and reset emails are not sent to a real SMTP server. The server logs the generated links instead.
 
 Look for log lines like:
 
@@ -94,6 +106,20 @@ Look for log lines like:
 Those URLs are still useful for direct API testing. Extract the `token` query param and send it to the API endpoints shown below.
 
 If `AUTH_EMAIL_MODE=dev-auto-verify`, registration and resend flows also include `developmentVerificationUrl` in the JSON response. The frontend uses that URL to navigate through `/verify-email?token=...`, which then calls the normal `POST /auth/verify-email` endpoint and establishes the session cookie.
+
+## SMTP delivery
+
+When `AUTH_EMAIL_MODE=smtp`, auth mail is sent through a standard SMTP relay. The code does not use a provider-specific API, so switching away from Mailtrap later only requires different `SMTP_*` values.
+
+Recommended initial production setup:
+
+- `AUTH_EMAIL_MODE=smtp`
+- `APP_BASE_URL=https://pginbox.dev` (or your real frontend origin)
+- Mailtrap SMTP credentials in `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`
+- a verified sender in `SMTP_FROM_EMAIL`
+- optional display name in `SMTP_FROM_NAME`
+
+The app sends multipart text+HTML verification and password-reset emails with the existing frontend URLs, so there is no provider-side template requirement.
 
 ## Verifying auth locally
 

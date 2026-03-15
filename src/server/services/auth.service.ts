@@ -114,13 +114,20 @@ function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
-function resolveAppBaseUrl(appBaseUrl?: string): string {
+function resolveAppBaseUrl(
+  appBaseUrl: string | undefined,
+  emailRuntimeConfig: AuthEmailRuntimeConfig,
+): string {
   if (appBaseUrl) {
     try {
       return new URL(appBaseUrl).toString();
     } catch {
-      return resolveAuthAppBaseUrl();
+      throw new Error("APP_BASE_URL must be a valid absolute URL");
     }
+  }
+
+  if (emailRuntimeConfig.mode === "smtp") {
+    throw new Error("AUTH_EMAIL_MODE=smtp requires APP_BASE_URL");
   }
 
   return resolveAuthAppBaseUrl();
@@ -376,7 +383,10 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
     dependencies.emailRuntimeConfig ?? resolveAuthEmailRuntimeConfig();
   const mailer = dependencies.mailer ?? createAuthEmailSender(console, emailRuntimeConfig);
   const now = dependencies.now ?? (() => new Date());
-  const appBaseUrl = resolveAppBaseUrl(dependencies.appBaseUrl ?? process.env.APP_BASE_URL);
+  const appBaseUrl = resolveAppBaseUrl(
+    dependencies.appBaseUrl ?? process.env.APP_BASE_URL,
+    emailRuntimeConfig,
+  );
 
   return {
     async register(input: AuthRegisterRequest): Promise<RegisterResult> {

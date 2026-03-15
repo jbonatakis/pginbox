@@ -137,7 +137,9 @@ In `test/api.test.ts`, add a test that hits the new URL and asserts status and r
 ## Auth runtime
 
 - Local auth uses `DATABASE_URL` plus `APP_BASE_URL`. `APP_BASE_URL` defaults to `http://localhost:5173/`.
-- Auth email delivery is currently the development mail stub, so local auth does not require any `SMTP_*` env vars.
+- Auth email delivery supports `AUTH_EMAIL_MODE=log`, `AUTH_EMAIL_MODE=dev-auto-verify`, and `AUTH_EMAIL_MODE=smtp`.
+- `AUTH_EMAIL_MODE=smtp` also requires an explicit `APP_BASE_URL` so auth emails point at the real frontend origin.
+- `AUTH_EMAIL_MODE=smtp` requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM_EMAIL`.
 - State-changing auth routes validate `Origin` against `APP_BASE_URL`, so direct API requests need a matching `Origin` header.
 - Run auth row cleanup with `make auth-cleanup` or `bun run auth:cleanup`. This is intended for a daily scheduler, not normal API startup.
 
