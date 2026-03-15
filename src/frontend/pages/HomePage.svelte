@@ -18,7 +18,7 @@
 
 <section class="home-page">
   <div class="search-stage">
-    <h1 class="page-title" data-route-heading tabindex="-1">Search PostgreSQL mailing list history</h1>
+    <h1 class="page-title" data-route-heading tabindex="-1">Search the PostgreSQL mailing lists</h1>
 
     <form
       class="search-shell"
