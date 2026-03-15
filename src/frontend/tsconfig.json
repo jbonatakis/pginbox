@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "baseUrl": ".",
-    "paths": { "shared/*": ["../../shared/*"] }
+    "paths": { "shared/*": ["../shared/*"] }
   },
   "include": ["**/*.ts", "**/*.svelte"],
   "exclude": ["node_modules"]

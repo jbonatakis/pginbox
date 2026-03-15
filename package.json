@@ -3,6 +3,7 @@
   "module": "src/server/index.ts",
   "type": "module",
   "scripts": {
+    "auth:cleanup": "bun src/server/jobs/auth-cleanup.ts",
     "dev": "bun --watch src/server/index.ts",
     "start": "bun src/server/index.ts",
     "test": "bun test test",
@@ -13,6 +14,7 @@
     "@elysiajs/eden": "latest",
     "elysia": "latest",
     "kysely": "latest",
+    "nodemailer": "^8.0.2",
     "pg": "latest"
   },
   "devDependencies": {

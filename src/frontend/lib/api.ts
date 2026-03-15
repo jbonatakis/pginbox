@@ -1,6 +1,22 @@
 import type {
   AttachmentDetail,
   AnalyticsSummary,
+  AuthForgotPasswordRequest,
+  AuthForgotPasswordResponse,
+  AuthLoginErrorCode,
+  AuthLoginRequest,
+  AuthLoginResponse,
+  AuthMeResponse,
+  AuthRegisterRequest,
+  AuthRegisterResponse,
+  AuthRequiredErrorCode,
+  AuthResendVerificationRequest,
+  AuthResendVerificationResponse,
+  AuthResetPasswordRequest,
+  AuthResetPasswordResponse,
+  AuthVerifyEmailErrorCode,
+  AuthVerifyEmailRequest,
+  AuthVerifyEmailResponse,
   ByDow,
   ByHour,
   ByMonth,
@@ -14,17 +30,32 @@ import type {
 } from "shared/api";
 
 const API_BASE_PATH = "/api";
+export const AUTH_REQUEST_CREDENTIALS: RequestCredentials = "same-origin";
 const DEFAULT_PAGINATION_LIMIT = 25;
 const DEFAULT_THREAD_MESSAGES_LIMIT = 50;
 const MIN_PAGINATION_LIMIT = 1;
 const MAX_PAGINATION_LIMIT = 100;
 
+export const AUTH_API_ERROR_CODES = [
+  "AUTH_REQUIRED",
+  "ACCOUNT_DISABLED",
+  "EMAIL_NOT_VERIFIED",
+  "INVALID_CREDENTIALS",
+  "TOKEN_EXPIRED",
+  "TOKEN_INVALID",
+] as const satisfies ReadonlyArray<
+  AuthRequiredErrorCode | AuthLoginErrorCode | AuthVerifyEmailErrorCode
+>;
+
 type QueryPrimitive = string | number | boolean | Date;
 type QueryValue = QueryPrimitive | QueryPrimitive[] | null | undefined;
 type QueryParams = Record<string, QueryValue>;
 
-interface RequestOptions {
+export type AuthApiErrorCode = (typeof AUTH_API_ERROR_CODES)[number];
+
+export interface RequestOptions {
   body?: BodyInit | null;
+  credentials?: RequestCredentials;
   headers?: HeadersInit;
   method?: string;
   signal?: AbortSignal;
@@ -197,6 +228,19 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   return text;
 }
 
+function withJsonBody(body: unknown, options: RequestOptions = {}): RequestOptions {
+  const headers = new Headers(options.headers);
+  if (!headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+
+  return {
+    ...options,
+    body: JSON.stringify(body),
+    headers,
+  };
+}
+
 export async function requestJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers = new Headers(options.headers);
@@ -207,6 +251,7 @@ export async function requestJson<T>(path: string, options: RequestOptions = {})
   try {
     const response = await fetch(path, {
       body: options.body,
+      credentials: options.credentials,
       headers,
       method,
       signal: options.signal,
@@ -227,6 +272,13 @@ export async function requestJson<T>(path: string, options: RequestOptions = {})
 
 export function isApiClientError(error: unknown): error is ApiClientError {
   return error instanceof ApiClientError;
+}
+
+export function isAuthApiErrorCode(code: string | null | undefined): code is AuthApiErrorCode {
+  return (
+    typeof code === "string" &&
+    AUTH_API_ERROR_CODES.includes(code as AuthApiErrorCode)
+  );
 }
 
 export function toApiErrorShape(error: unknown): ApiErrorShape {
@@ -251,6 +303,97 @@ export function toApiErrorShape(error: unknown): ApiErrorShape {
     path: "",
     status: 0,
   };
+}
+
+export function getAuthApiErrorCode(error: unknown): AuthApiErrorCode | null {
+  const code = toApiErrorShape(error).code;
+  return isAuthApiErrorCode(code) ? code : null;
+}
+
+function requestAuthJson<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  return requestJson<T>(path, {
+    ...options,
+    credentials: AUTH_REQUEST_CREDENTIALS,
+  });
+}
+
+function postAuthJson<TResponse>(
+  path: string,
+  body: unknown,
+  options: RequestOptions = {}
+): Promise<TResponse> {
+  return requestAuthJson<TResponse>(
+    path,
+    withJsonBody(body, {
+      ...options,
+      method: "POST",
+    })
+  );
+}
+
+export async function getAuthMe(options: RequestOptions = {}): Promise<AuthMeResponse> {
+  return requestAuthJson<AuthMeResponse>(withApiBase("/auth/me"), options);
+}
+
+export async function register(
+  input: AuthRegisterRequest,
+  options: RequestOptions = {}
+): Promise<AuthRegisterResponse> {
+  return postAuthJson<AuthRegisterResponse>(withApiBase("/auth/register"), input, options);
+}
+
+export async function resendVerification(
+  input: AuthResendVerificationRequest,
+  options: RequestOptions = {}
+): Promise<AuthResendVerificationResponse> {
+  return postAuthJson<AuthResendVerificationResponse>(
+    withApiBase("/auth/resend-verification"),
+    input,
+    options
+  );
+}
+
+export async function verifyEmail(
+  input: AuthVerifyEmailRequest,
+  options: RequestOptions = {}
+): Promise<AuthVerifyEmailResponse> {
+  return postAuthJson<AuthVerifyEmailResponse>(withApiBase("/auth/verify-email"), input, options);
+}
+
+export async function login(
+  input: AuthLoginRequest,
+  options: RequestOptions = {}
+): Promise<AuthLoginResponse> {
+  return postAuthJson<AuthLoginResponse>(withApiBase("/auth/login"), input, options);
+}
+
+export async function logout(options: RequestOptions = {}): Promise<void> {
+  return requestAuthJson<void>(withApiBase("/auth/logout"), {
+    ...options,
+    method: "POST",
+  });
+}
+
+export async function forgotPassword(
+  input: AuthForgotPasswordRequest,
+  options: RequestOptions = {}
+): Promise<AuthForgotPasswordResponse> {
+  return postAuthJson<AuthForgotPasswordResponse>(
+    withApiBase("/auth/forgot-password"),
+    input,
+    options
+  );
+}
+
+export async function resetPassword(
+  input: AuthResetPasswordRequest,
+  options: RequestOptions = {}
+): Promise<AuthResetPasswordResponse> {
+  return postAuthJson<AuthResetPasswordResponse>(
+    withApiBase("/auth/reset-password"),
+    input,
+    options
+  );
 }
 
 export async function listThreads(
@@ -343,6 +486,16 @@ export const api = {
     getByMonth: getAnalyticsByMonth,
     getSummary: getAnalyticsSummary,
     getTopSenders: getAnalyticsTopSenders,
+  },
+  auth: {
+    forgotPassword,
+    getMe: getAuthMe,
+    login,
+    logout,
+    register,
+    resendVerification,
+    resetPassword,
+    verifyEmail,
   },
   lists: {
     list: listLists,

@@ -1,16 +1,26 @@
 <script lang="ts">
   import { tick } from "svelte";
   import AnalyticsPage from "./pages/AnalyticsPage.svelte";
+  import ForgotPasswordPage from "./pages/ForgotPasswordPage.svelte";
   import HomePage from "./pages/HomePage.svelte";
+  import LoginPage from "./pages/LoginPage.svelte";
   import NotFoundPage from "./pages/NotFoundPage.svelte";
   import PeoplePage from "./pages/PeoplePage.svelte";
   import PersonDetailPage from "./pages/PersonDetailPage.svelte";
+  import RegisterPage from "./pages/RegisterPage.svelte";
+  import ResetPasswordPage from "./pages/ResetPasswordPage.svelte";
   import ThreadDetailPage from "./pages/ThreadDetailPage.svelte";
   import ThreadsPage from "./pages/ThreadsPage.svelte";
+  import VerifyEmailPage from "./pages/VerifyEmailPage.svelte";
+  import { buildAuthPath, getCurrentLocationRedirect } from "./lib/authRedirect";
+  import { toApiErrorShape } from "./lib/api";
+  import { authStore } from "./lib/state/auth";
   import {
     analyticsPath,
     currentRoute,
     homePath,
+    loginPath,
+    navigate,
     onLinkClick,
     peoplePath,
     threadsPath,
@@ -36,6 +46,14 @@
   const isActiveNavItem = (item: (typeof navItems)[number], routeName: AppRoute["name"]): boolean =>
     item.activeWhen.includes(routeName);
 
+  const authRouteNames = new Set<AppRoute["name"]>([
+    "login",
+    "register",
+    "verify-email",
+    "forgot-password",
+    "reset-password",
+  ]);
+
   const clipped = (value: string, maxLength: number): string =>
     value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
 
@@ -60,6 +78,10 @@
       return [];
     }
 
+    if (authRouteNames.has(route.name)) {
+      return [];
+    }
+
     return [
       { label: "View", value: "Unknown route" },
       { label: "Path", value: clipped(route.pathname, 40) },
@@ -68,8 +90,12 @@
   };
 
   let contentElement: HTMLElement | null = null;
+  let accountMenuElement: HTMLElement | null = null;
+  let accountMenuOpen = false;
   let handledRoutePathname: string | null =
     typeof window !== "undefined" ? window.location.pathname : null;
+  let loginLink = loginPath;
+  let logoutError: string | null = null;
   let mobileNavOpen = false;
   let routeContextChips: ContextChip[] = [];
 
@@ -80,6 +106,11 @@
     if (route.name === "people") return "People | pginbox";
     if (route.name === "person-detail") return `Person ${clipped(route.params.id, 40)} | pginbox`;
     if (route.name === "analytics") return "Analytics | pginbox";
+    if (route.name === "login") return "Log in | pginbox";
+    if (route.name === "register") return "Register | pginbox";
+    if (route.name === "verify-email") return "Verify email | pginbox";
+    if (route.name === "forgot-password") return "Forgot password | pginbox";
+    if (route.name === "reset-password") return "Reset password | pginbox";
     return "Not Found | pginbox";
   };
 
@@ -97,25 +128,88 @@
 
   const toggleMobileNav = (): void => {
     mobileNavOpen = !mobileNavOpen;
+    accountMenuOpen = false;
   };
 
   const closeMobileNav = (): void => {
     mobileNavOpen = false;
+    accountMenuOpen = false;
+  };
+
+  const syncAccountLinks = (route: AppRoute): void => {
+    const nextRedirect = authRouteNames.has(route.name)
+      ? homePath
+      : getCurrentLocationRedirect(homePath);
+
+    loginLink = buildAuthPath(loginPath, nextRedirect);
+  };
+
+  const isNode = (value: EventTarget | null): value is Node =>
+    typeof Node !== "undefined" && value instanceof Node;
+
+  const toggleAccountMenu = (): void => {
+    accountMenuOpen = !accountMenuOpen;
+  };
+
+  const closeAccountMenu = (): void => {
+    accountMenuOpen = false;
+  };
+
+  const handleWindowClick = (event: MouseEvent): void => {
+    if (!accountMenuOpen || !accountMenuElement) return;
+    if (isNode(event.target) && accountMenuElement.contains(event.target)) return;
+    closeAccountMenu();
+  };
+
+  const handleWindowKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape") return;
+
+    if (accountMenuOpen) {
+      closeAccountMenu();
+    }
+
+    if (mobileNavOpen) {
+      closeMobileNav();
+    }
+  };
+
+  const handleLogout = async (): Promise<void> => {
+    logoutError = null;
+
+    try {
+      await authStore.logout();
+      closeAccountMenu();
+
+      if (authRouteNames.has($currentRoute.name)) {
+        navigate(homePath, { replace: true });
+      }
+    } catch (error) {
+      logoutError = toApiErrorShape(error).message;
+    }
   };
 
   $: if (typeof document !== "undefined") {
     const route = $currentRoute;
     document.title = documentTitleForRoute(route);
+    syncAccountLinks(route);
 
     if (route.pathname !== handledRoutePathname) {
       mobileNavOpen = false;
+      accountMenuOpen = false;
+      logoutError = null;
       handledRoutePathname = route.pathname;
       void focusRouteHeading();
     }
   }
 
+  $: authNavActive = (!$authStore.isAuthenticated && authRouteNames.has($currentRoute.name)) || accountMenuOpen;
+  $: accountLabel = $authStore.user?.displayName?.trim() || $authStore.user?.email || "Account";
+  $: authNavLabel = $authStore.isAuthenticated ? "My Account" : "Sign In";
+  $: isLoggingOut = $authStore.currentAction === "logout";
   $: routeContextChips = contextChipsForRoute($currentRoute);
 </script>
+
+<svelte:window on:click={handleWindowClick} on:keydown={handleWindowKeydown} />
 
 <div class="shell">
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -129,40 +223,96 @@
         <p>Searchable PostgreSQL mailing list history</p>
       </div>
 
-      <div class="nav-popover">
-        <button
-          type="button"
-          class="nav-toggle"
-          aria-controls="primary-navigation"
-          aria-expanded={mobileNavOpen}
-          aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
-          on:click={toggleMobileNav}
-        >
-          <span class="nav-toggle-text">Menu</span>
-          <span class="nav-toggle-icon" aria-hidden="true">
-            <span class:open={mobileNavOpen}></span>
-            <span class:open={mobileNavOpen}></span>
-            <span class:open={mobileNavOpen}></span>
-          </span>
-        </button>
+      <div class="header-tools">
+        <div class="nav-popover">
+          <button
+            type="button"
+            class="nav-toggle"
+            aria-controls="primary-navigation"
+            aria-expanded={mobileNavOpen}
+            aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"}
+            on:click={toggleMobileNav}
+          >
+            <span class="nav-toggle-text">Menu</span>
+            <span class="nav-toggle-icon" aria-hidden="true">
+              <span class:open={mobileNavOpen}></span>
+              <span class:open={mobileNavOpen}></span>
+              <span class:open={mobileNavOpen}></span>
+            </span>
+          </button>
 
-        <nav
-          id="primary-navigation"
-          class:mobile-open={mobileNavOpen}
-          aria-label="Primary navigation"
-        >
-          {#each navItems as item}
-            <a
-              href={item.path}
-              class:active={isActiveNavItem(item, $currentRoute.name)}
-              aria-current={isActiveNavItem(item, $currentRoute.name) ? "page" : undefined}
-              on:click={(event) => {
-                closeMobileNav();
-                onLinkClick(event, item.path);
-              }}>{item.label}</a
-            >
-          {/each}
-        </nav>
+          <nav
+            id="primary-navigation"
+            class:mobile-open={mobileNavOpen}
+            aria-label="Primary navigation"
+          >
+            {#each navItems as item}
+              <a
+                href={item.path}
+                class:active={isActiveNavItem(item, $currentRoute.name)}
+                aria-current={isActiveNavItem(item, $currentRoute.name) ? "page" : undefined}
+                on:click={(event) => {
+                  closeMobileNav();
+                  onLinkClick(event, item.path);
+                }}>{item.label}</a
+              >
+            {/each}
+
+            {#if $authStore.isAuthenticated}
+              <div class="account-nav-item" bind:this={accountMenuElement}>
+                <button
+                  type="button"
+                  class="account-trigger"
+                  class:active={authNavActive}
+                  aria-controls="account-menu"
+                  aria-expanded={accountMenuOpen}
+                  on:click={toggleAccountMenu}>{authNavLabel}</button
+                >
+
+                {#if accountMenuOpen}
+                  <section id="account-menu" class="account-menu" aria-label="Account menu">
+                    <p class="account-menu-label">Account</p>
+                    <p class="account-menu-summary">
+                      Signed in as <strong>{accountLabel}</strong>
+                    </p>
+
+                    {#if $authStore.user?.email && $authStore.user?.displayName?.trim()}
+                      <p class="account-menu-secondary">{$authStore.user.email}</p>
+                    {/if}
+
+                    <div class="account-actions">
+                      {#if $authStore.user?.status === "pending_verification"}
+                        <span class="account-badge">Email pending</span>
+                      {/if}
+
+                      <button
+                        type="button"
+                        class="account-button"
+                        disabled={isLoggingOut}
+                        on:click={handleLogout}
+                      >
+                        {isLoggingOut ? "Logging out..." : "Log out"}
+                      </button>
+                    </div>
+
+                    {#if logoutError}
+                      <p class="account-note error">{logoutError}</p>
+                    {/if}
+                  </section>
+                {/if}
+              </div>
+            {:else}
+              <a
+                href={loginLink}
+                class:active={authNavActive}
+                on:click={(event) => {
+                  closeMobileNav();
+                  onLinkClick(event, loginLink);
+                }}>{authNavLabel}</a
+              >
+            {/if}
+          </nav>
+        </div>
       </div>
     </div>
   </header>
@@ -191,6 +341,16 @@
       <PersonDetailPage id={$currentRoute.params.id} />
     {:else if $currentRoute.name === "analytics"}
       <AnalyticsPage />
+    {:else if $currentRoute.name === "login"}
+      <LoginPage />
+    {:else if $currentRoute.name === "register"}
+      <RegisterPage />
+    {:else if $currentRoute.name === "verify-email"}
+      <VerifyEmailPage />
+    {:else if $currentRoute.name === "forgot-password"}
+      <ForgotPasswordPage />
+    {:else if $currentRoute.name === "reset-password"}
+      <ResetPasswordPage />
     {:else}
       <NotFoundPage pathname={$currentRoute.pathname} />
     {/if}
@@ -279,9 +439,16 @@
 
   .header-bar {
     display: flex;
-    align-items: end;
+    align-items: start;
     justify-content: space-between;
     gap: 0.9rem;
+    min-width: 0;
+  }
+
+  .header-tools {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
     min-width: 0;
   }
 
@@ -290,12 +457,12 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    margin-left: auto;
   }
 
   .brand-block {
     display: grid;
     gap: 0.2rem;
+    min-width: 0;
   }
 
   .brand-link {
@@ -311,6 +478,144 @@
     margin: 0;
     color: #486581;
     font-size: 0.92rem;
+  }
+
+  .account-menu-label {
+    margin: 0;
+    color: #627d98;
+    font-size: 0.72rem;
+    line-height: 1.1;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .account-menu-summary {
+    margin: 0;
+    color: #102a43;
+    font-size: 0.92rem;
+    line-height: 1.4;
+  }
+
+  .account-menu-summary strong {
+    font-weight: 700;
+  }
+
+  .account-menu-secondary {
+    margin: -0.15rem 0 0;
+    color: #627d98;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+
+  .account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+  }
+
+  .account-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.1rem;
+    padding: 0.38rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid #6f9fdd;
+    background: #e8f2ff;
+    color: #0b4ea2;
+    font-size: 0.87rem;
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .account-button:hover {
+    background: #dcebff;
+  }
+
+  .account-nav-item {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+  }
+
+  .account-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.1rem;
+    padding: 0.42rem 0.72rem;
+    border-radius: 999px;
+    border: 1px solid #d9e2ec;
+    background: rgba(255, 255, 255, 0.82);
+    color: #334e68;
+    font-size: 0.94rem;
+    font-weight: 600;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+    cursor: pointer;
+  }
+
+  .account-trigger:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .account-trigger.active {
+    color: #0b4ea2;
+    border-color: #6f9fdd;
+    background: #e8f2ff;
+  }
+
+  .account-menu {
+    position: absolute;
+    top: calc(100% + 0.45rem);
+    right: 0;
+    width: min(18rem, calc(100vw - 2.5rem));
+    display: grid;
+    gap: 0.42rem;
+    padding: 0.75rem 0.82rem;
+    border: 1px solid #cdd7e1;
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow:
+      0 20px 45px -28px rgba(16, 42, 67, 0.45),
+      0 8px 18px -16px rgba(16, 42, 67, 0.35);
+    z-index: 35;
+  }
+
+  .account-button:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+
+  .account-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.1rem;
+    padding: 0.38rem 0.72rem;
+    border-radius: 999px;
+    border: 1px solid #f2d58a;
+    background: #fff7df;
+    color: #8b6200;
+    font-size: 0.82rem;
+    font-weight: 700;
+  }
+
+  .account-note {
+    margin: 0;
+    color: #486581;
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+
+  .account-note.error {
+    color: #8a1c1c;
   }
 
   .nav-toggle {
@@ -356,9 +661,11 @@
     display: flex;
     gap: 0.55rem;
     flex-wrap: nowrap;
+    align-items: center;
   }
 
-  nav a {
+  nav a,
+  .account-trigger {
     color: #334e68;
     text-decoration: none;
     padding: 0.42rem 0.72rem;
@@ -373,13 +680,15 @@
       color 120ms ease;
   }
 
-  nav a:hover {
+  nav a:hover,
+  .account-trigger:hover {
     background: #f0f7ff;
     border-color: #9fb3c8;
     color: #243b53;
   }
 
-  nav a.active {
+  nav a.active,
+  .account-trigger.active {
     color: #0b4ea2;
     border-color: #6f9fdd;
     background: #e8f2ff;
@@ -444,13 +753,22 @@
     }
 
     .header-bar {
-      align-items: start;
+      flex-direction: row;
+      align-items: flex-start;
+    }
+
+    .header-tools {
+      width: auto;
+      flex-shrink: 0;
+    }
+
+    .brand-block {
+      flex: 1 1 auto;
     }
 
     .nav-toggle {
       display: inline-flex;
       flex-shrink: 0;
-      margin-left: auto;
     }
 
     .nav-toggle-icon span.open:nth-child(1) {
@@ -487,11 +805,45 @@
       display: grid;
     }
 
+    .nav-popover {
+      justify-content: flex-end;
+    }
+
     nav a {
       width: 100%;
       text-align: left;
       padding: 0.7rem 0.85rem;
       border-radius: 0.8rem;
+    }
+
+    .account-nav-item {
+      display: grid;
+      width: 100%;
+    }
+
+    .account-trigger {
+      width: 100%;
+      text-align: left;
+      justify-content: flex-start;
+      padding: 0.7rem 0.85rem;
+      border-radius: 0.8rem;
+    }
+
+    .account-menu {
+      position: static;
+      width: 100%;
+      margin-top: 0.45rem;
+      border-radius: 0.8rem;
+      box-shadow: none;
+    }
+
+    .account-actions {
+      align-items: stretch;
+    }
+
+    .account-button,
+    .account-badge {
+      width: 100%;
     }
 
     .context-strip {

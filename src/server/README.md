@@ -16,7 +16,7 @@ src/server/
 └── types/          # db.d.ts (Kysely codegen), not API contract types
 ```
 
-API **contract** types live in **`shared/api.ts`** at repo root. Both backend and frontend import from there so the wire format stays in sync.
+API **contract** types live in **`src/shared/api.ts`**. Both backend and frontend import from there so the wire format stays in sync.
 
 ## Request flow
 
@@ -25,13 +25,13 @@ API **contract** types live in **`shared/api.ts`** at repo root. Both backend an
 3. **Serialize** – Map to shared types (dates → ISO strings, bigint → string).
 4. **Return** – Handler return type is the shared type; Elysia sends JSON.
 
-Validation and not-found live in the route layer; business logic and SQL live in services; wire shape is defined in `shared/api.ts` and enforced in `serialize.ts`.
+Validation and not-found live in the route layer; business logic and SQL live in services; wire shape is defined in `src/shared/api.ts` and enforced in `serialize.ts`.
 
 ## Adding a new endpoint
 
 Example: **GET /people/:id/threads** – paginated list of threads a person participated in.
 
-### 1. Define the contract in `shared/api.ts`
+### 1. Define the contract in `src/shared/api.ts`
 
 ```ts
 // e.g. next to Person, PersonListItem
@@ -133,3 +133,14 @@ In `test/api.test.ts`, add a test that hits the new URL and asserts status and r
 
 - **Start API:** `make api` or `bun src/server/index.ts` (expects Postgres on `DATABASE_URL`, default port 5499).
 - **Tests:** `make test` – uses `app.handle()` in-process (no server); requires DB for list/detail/analytics tests.
+
+## Auth runtime
+
+- Local auth uses `DATABASE_URL` plus `APP_BASE_URL`. `APP_BASE_URL` defaults to `http://localhost:5173/`.
+- Auth email delivery supports `AUTH_EMAIL_MODE=log`, `AUTH_EMAIL_MODE=dev-auto-verify`, and `AUTH_EMAIL_MODE=smtp`.
+- `AUTH_EMAIL_MODE=smtp` also requires an explicit `APP_BASE_URL` so auth emails point at the real frontend origin.
+- `AUTH_EMAIL_MODE=smtp` requires `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM_EMAIL`.
+- State-changing auth routes validate `Origin` against `APP_BASE_URL`, so direct API requests need a matching `Origin` header.
+- Run auth row cleanup with `make auth-cleanup` or `bun run auth:cleanup`. This is intended for a daily scheduler, not normal API startup.
+
+See [`docs/AUTH.md`](../../docs/AUTH.md) for the full local runbook and verification steps.
