@@ -12,3 +12,4 @@ dist/
 .blackbird/
 blackbird.plan.json
 .pytest_cache/
+locustfile.py

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { MessageWithAttachments } from "shared/api";
+  import { linkifyPlainText, type LinkifiedTextPart } from "../../lib/linkify";
   import ThreadMessageAttachments from "./ThreadMessageAttachments.svelte";
 
   export let message: MessageWithAttachments;
@@ -10,6 +11,7 @@
   let subject: string | null = null;
   let validTimestamp = false;
   let sentAtLabel = "Unknown time";
+  let bodyParts: LinkifiedTextPart[] = [];
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
@@ -46,15 +48,11 @@
     return dateFormatter.format(parsed);
   };
 
-  const bodyText = (value: string | null): string => {
-    if (value === null || value === "") return "No message body available.";
-    return value;
-  };
-
   $: sender = senderLabel(message.from_name, message.from_email);
   $: subject = normalizedSubject(message.subject);
   $: validTimestamp = isValidTimestamp(message.sent_at);
   $: sentAtLabel = timestampLabel(message.sent_at);
+  $: bodyParts = linkifyPlainText(message.body);
 </script>
 
 <article class="timeline-item" id={anchorId} aria-labelledby={`${anchorId}-heading`}>
@@ -80,7 +78,15 @@
     {/if}
   </header>
 
-  <p class="body">{bodyText(message.body)}</p>
+  <p class="body">
+    {#each bodyParts as part}
+      {#if part.type === "link"}
+        <a class="body-link" href={part.href} target="_blank" rel="noopener noreferrer">{part.value}</a>
+      {:else}
+        {part.value}
+      {/if}
+    {/each}
+  </p>
 
   <ThreadMessageAttachments attachments={message.attachments} />
 </article>
@@ -163,5 +169,15 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
+  }
+
+  .body-link {
+    color: #0b4ea2;
+    text-decoration-thickness: 1px;
+  }
+
+  .body-link:focus-visible {
+    outline: 2px solid #0b4ea2;
+    outline-offset: 2px;
   }
 </style>
