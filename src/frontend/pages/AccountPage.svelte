@@ -63,6 +63,11 @@
     return `${error.method} ${error.path || "/api"} -> ${error.code ?? "NETWORK_ERROR"}`;
   };
 
+  const formatVerificationTooltip = (value: string | null | undefined): string | null => {
+    if (!value) return null;
+    return `Verified since ${formatDateTime(value)}`;
+  };
+
   const handleLogout = async (): Promise<void> => {
     logoutError = null;
 
@@ -126,6 +131,7 @@
   $: statusDescriptor = currentUser ? describeStatus(currentUser.status) : null;
   $: currentUserLabel = currentUser?.displayName?.trim() || currentUser?.email || "Account";
   $: currentUserDisplayName = currentUser?.displayName?.trim() || "";
+  $: verificationTooltip = formatVerificationTooltip(currentUser?.emailVerifiedAt);
   $: if (currentUser && syncedDisplayName !== currentUserDisplayName && !isUpdatingProfile) {
     profileDisplayName = currentUserDisplayName;
     syncedDisplayName = currentUserDisplayName;
@@ -169,19 +175,60 @@
         <dl class="facts">
           <div>
             <dt>Email</dt>
-            <dd>{currentUser.email}</dd>
+            <dd class="email-row">
+              <span>{currentUser.email}</span>
+              {#if verificationTooltip}
+                <button
+                  type="button"
+                  class="verification-indicator"
+                  title={verificationTooltip}
+                  aria-label={verificationTooltip}
+                >
+                  <span class="verification-dot" aria-hidden="true"></span>
+                  Verified
+                </button>
+              {/if}
+            </dd>
           </div>
 
           <div>
             <dt>Member since</dt>
             <dd>{formatDateTime(currentUser.createdAt)}</dd>
           </div>
-
-          <div>
-            <dt>Email verified</dt>
-            <dd>{currentUser.emailVerifiedAt ? formatDateTime(currentUser.emailVerifiedAt) : "Not yet verified"}</dd>
-          </div>
         </dl>
+
+        {#if currentUser.status === "pending_verification"}
+          <p class="inline-status warning" role="status">
+            This account is still waiting on email verification.
+          </p>
+
+          <div class="actions">
+            <button
+              type="button"
+              class="primary-button"
+              disabled={isResending}
+              on:click={handleResendVerification}
+            >
+              {isResending ? "Sending..." : "Resend verification email"}
+            </button>
+          </div>
+
+          {#if resendError}
+            <ErrorState
+              title="Unable to resend verification"
+              message={resendError.message}
+              detail={formatErrorDetail(resendError)}
+            />
+          {/if}
+
+          {#if resendMessage}
+            <SuccessState
+              title="Verification email queued"
+              message={resendMessage}
+              detail={currentUser.email}
+            />
+          {/if}
+        {/if}
       </article>
 
       <article class="account-card">
@@ -264,57 +311,6 @@
             Reset password
           </a>
         </div>
-      </article>
-
-      <article class="account-card">
-        <header class="card-header stacked">
-          <div>
-            <p class="eyebrow">Verification</p>
-            <h2>Email status</h2>
-          </div>
-          <p class="support-copy">
-            Verified email is the baseline for future account-only features and account recovery.
-          </p>
-        </header>
-
-        {#if currentUser.status === "pending_verification"}
-          <p class="inline-status warning" role="status">
-            This account is still waiting on email verification.
-          </p>
-
-          <div class="actions">
-            <button
-              type="button"
-              class="primary-button"
-              disabled={isResending}
-              on:click={handleResendVerification}
-            >
-              {isResending ? "Sending..." : "Resend verification email"}
-            </button>
-          </div>
-        {:else}
-          <SuccessState
-            title="Email verified"
-            message="Your account is active and ready for future protected features."
-            detail={currentUser.email}
-          />
-        {/if}
-
-        {#if resendError}
-          <ErrorState
-            title="Unable to resend verification"
-            message={resendError.message}
-            detail={formatErrorDetail(resendError)}
-          />
-        {/if}
-
-        {#if resendMessage}
-          <SuccessState
-            title="Verification email queued"
-            message={resendMessage}
-            detail={currentUser.email}
-          />
-        {/if}
       </article>
 
       <article class="account-card">
@@ -433,6 +429,39 @@
     font-size: 0.95rem;
     line-height: 1.4;
     word-break: break-word;
+  }
+
+  .email-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+  }
+
+  .verification-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+    min-height: 1.75rem;
+    padding: 0.18rem 0.55rem;
+    border: 1px solid #9fd5b3;
+    border-radius: 999px;
+    background: #eefbf1;
+    color: #1f6f43;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+    white-space: nowrap;
+    font: inherit;
+  }
+
+  .verification-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: currentColor;
+    flex: 0 0 auto;
   }
 
   .status-pill {
