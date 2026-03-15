@@ -395,3 +395,111 @@ def test_insert_attachments_only_uses_newly_inserted_message_ids(monkeypatch):
         ],
         "page_size": 500,
     }
+
+
+def test_replace_attachments_repairs_existing_messages(monkeypatch):
+    recorded = {"executions": []}
+
+    class FakeCursor:
+        def __init__(self):
+            self.rowcount = 0
+
+        def execute(self, sql, params):
+            recorded["executions"].append((sql.strip(), params))
+            if "FROM messages" in sql:
+                self._rows = [
+                    (101, "<new-attachments@example.com>"),
+                    (102, "<existing-attachments@example.com>"),
+                    (103, "<untouched@example.com>"),
+                ]
+            elif sql.strip() == ingest.DELETE_ATTACHMENTS_SQL.strip():
+                self._rows = []
+                self.rowcount = 5
+            elif "FROM attachments" in sql:
+                self._rows = [(102,)]
+            else:
+                self._rows = []
+
+        def fetchall(self):
+            return self._rows
+
+    batch = [
+        {
+            "list_id": 1,
+            "message_id": "<new-attachments@example.com>",
+            "_attachments": [
+                {
+                    "filename": "new.patch",
+                    "content_type": "text/x-diff",
+                    "size_bytes": 12,
+                    "content": "new",
+                }
+            ],
+        },
+        {
+            "list_id": 1,
+            "message_id": "<existing-attachments@example.com>",
+            "_attachments": [
+                {
+                    "filename": "existing-1.patch",
+                    "content_type": "text/x-diff",
+                    "size_bytes": 18,
+                    "content": "existing-1",
+                },
+                {
+                    "filename": "existing-2.patch",
+                    "content_type": "text/x-diff",
+                    "size_bytes": 22,
+                    "content": "existing-2",
+                },
+            ],
+        },
+        {
+            "list_id": 1,
+            "message_id": "<untouched@example.com>",
+            "_attachments": [],
+        },
+    ]
+
+    def fake_execute_batch(cur, sql, rows, page_size=500):
+        recorded["insert_sql"] = sql
+        recorded["rows"] = rows
+        recorded["page_size"] = page_size
+
+    monkeypatch.setattr(ingest, "execute_batch", fake_execute_batch)
+
+    stats = ingest._replace_attachments(FakeCursor(), batch)
+
+    assert stats == {
+        "attachments_deleted": 5,
+        "attachments_inserted": 3,
+        "messages_repaired": 2,
+    }
+    assert recorded["insert_sql"] == ingest.INSERT_ATTACHMENT_SQL
+    assert recorded["rows"] == [
+        {
+            "message_id": 101,
+            "part_index": 0,
+            "filename": "new.patch",
+            "content_type": "text/x-diff",
+            "size_bytes": 12,
+            "content": "new",
+        },
+        {
+            "message_id": 102,
+            "part_index": 0,
+            "filename": "existing-1.patch",
+            "content_type": "text/x-diff",
+            "size_bytes": 18,
+            "content": "existing-1",
+        },
+        {
+            "message_id": 102,
+            "part_index": 1,
+            "filename": "existing-2.patch",
+            "content_type": "text/x-diff",
+            "size_bytes": 22,
+            "content": "existing-2",
+        },
+    ]
+    assert recorded["page_size"] == 500

@@ -657,6 +657,11 @@ INSERT_ATTACHMENT_SQL = """
     ON CONFLICT (message_id, part_index) DO NOTHING
 """
 
+DELETE_ATTACHMENTS_SQL = """
+    DELETE FROM attachments
+    WHERE message_id = ANY(%s)
+"""
+
 UPDATE_MESSAGE_THREAD_SQL = """
     UPDATE messages
     SET thread_id = %(thread_id)s
@@ -850,25 +855,91 @@ def _insert_messages(cur, batch: list) -> dict[str, int]:
     return {message_id: db_id for db_id, message_id in inserted_rows}
 
 
-def _insert_attachments(cur, batch: list, inserted_message_ids: dict[str, int] | None = None):
-    """Insert attachments only for messages inserted in the current batch."""
-    if inserted_message_ids is None:
-        msg_ids = [r["message_id"] for r in batch]
-        cur.execute("SELECT id, message_id FROM messages WHERE message_id = ANY(%s)", (msg_ids,))
-        id_map = {row[1]: row[0] for row in cur.fetchall()}
-    else:
-        id_map = inserted_message_ids
+def _fetch_existing_message_ids(cur, batch: list) -> dict[str, int]:
+    if not batch:
+        return {}
 
+    msg_ids = [record["message_id"] for record in batch]
+    list_id = batch[0]["list_id"]
+    cur.execute(
+        "SELECT id, message_id FROM messages WHERE list_id = %s AND message_id = ANY(%s)",
+        (list_id, msg_ids),
+    )
+    return {message_id: db_id for db_id, message_id in cur.fetchall()}
+
+
+def _attachment_rows_for_batch(
+    batch: list,
+    id_map: dict[str, int],
+    allowed_db_ids: set[int] | None = None,
+) -> list[dict]:
     att_rows = []
     for record in batch:
         db_id = id_map.get(record["message_id"])
         if db_id is None:
             continue
+        if allowed_db_ids is not None and db_id not in allowed_db_ids:
+            continue
         for part_index, att in enumerate(record.get("_attachments", [])):
             att_rows.append({**att, "message_id": db_id, "part_index": part_index})
+    return att_rows
 
+
+def _insert_attachments(cur, batch: list, inserted_message_ids: dict[str, int] | None = None):
+    """Insert attachments only for messages inserted in the current batch."""
+    if inserted_message_ids is None:
+        id_map = _fetch_existing_message_ids(cur, batch)
+    else:
+        id_map = inserted_message_ids
+
+    att_rows = _attachment_rows_for_batch(batch, id_map)
     if att_rows:
         execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)
+
+
+def _replace_attachments(cur, batch: list) -> dict[str, int]:
+    """Replace attachments for existing messages represented in the current batch."""
+    id_map = _fetch_existing_message_ids(cur, batch)
+    if not id_map:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    db_ids = sorted(set(id_map.values()))
+    cur.execute(
+        "SELECT DISTINCT message_id FROM attachments WHERE message_id = ANY(%s)",
+        (db_ids,),
+    )
+    existing_attachment_ids = {message_id for (message_id,) in cur.fetchall()}
+
+    target_db_ids = {
+        db_id
+        for record in batch
+        if (db_id := id_map.get(record["message_id"])) is not None
+        and (record.get("_attachments") or db_id in existing_attachment_ids)
+    }
+    if not target_db_ids:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    ordered_target_ids = sorted(target_db_ids)
+    cur.execute(DELETE_ATTACHMENTS_SQL, (ordered_target_ids,))
+    deleted_rows = cur.rowcount
+
+    att_rows = _attachment_rows_for_batch(batch, id_map, target_db_ids)
+    if att_rows:
+        execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)
+
+    return {
+        "attachments_deleted": deleted_rows,
+        "attachments_inserted": len(att_rows),
+        "messages_repaired": len(target_db_ids),
+    }
 
 
 def _refresh_threads_for_message_ids(cur, list_id: int, message_ids: list[str]):
@@ -900,6 +971,21 @@ def store_batch_backfill(conn, batch: list):
         inserted_message_ids = _insert_messages(cur, batch)
         _insert_attachments(cur, batch, inserted_message_ids)
     conn.commit()
+
+
+def repair_batch_attachments(conn, batch: list) -> dict[str, int]:
+    """Replace attachments for existing messages in a parsed batch."""
+    if not batch:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    with conn.cursor() as cur:
+        stats = _replace_attachments(cur, batch)
+    conn.commit()
+    return stats
 
 
 def rethread_messages(conn):
@@ -1062,6 +1148,65 @@ def ingest(
     return total
 
 
+def repair_attachments(
+    conn,
+    session: requests.Session,
+    year: int,
+    month: int,
+    list_name: str = "pgsql-hackers",
+    force_download: bool = False,
+):
+    print(f"\n=== {list_name}  {year:04d}-{month:02d} [repair attachments] ===")
+
+    list_id = ensure_list(conn, session, year=year, month=month, list_name=list_name)
+    try:
+        path = download_mbox(session, year, month, list_name, force=force_download)
+    except MonthNotFound as e:
+        print(f"  [skip] {e}")
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+            "messages_scanned": 0,
+        }
+
+    print(f"  [parse+repair] {path.name}")
+    batch: list = []
+    stats = {
+        "attachments_deleted": 0,
+        "attachments_inserted": 0,
+        "messages_repaired": 0,
+        "messages_scanned": 0,
+    }
+
+    for record in parse_mbox(path, list_id):
+        batch.append(record)
+        if len(batch) >= 500:
+            batch_stats = repair_batch_attachments(conn, batch)
+            stats["attachments_deleted"] += batch_stats["attachments_deleted"]
+            stats["attachments_inserted"] += batch_stats["attachments_inserted"]
+            stats["messages_repaired"] += batch_stats["messages_repaired"]
+            stats["messages_scanned"] += len(batch)
+            print(f"    ...{stats['messages_scanned']} messages scanned", end="\r", flush=True)
+            batch = []
+
+    if batch:
+        batch_stats = repair_batch_attachments(conn, batch)
+        stats["attachments_deleted"] += batch_stats["attachments_deleted"]
+        stats["attachments_inserted"] += batch_stats["attachments_inserted"]
+        stats["messages_repaired"] += batch_stats["messages_repaired"]
+        stats["messages_scanned"] += len(batch)
+
+    print(
+        "  [done] "
+        f"{stats['messages_scanned']} messages scanned; "
+        f"{stats['messages_repaired']} existing messages repaired; "
+        f"{stats['attachments_deleted']} old attachments removed; "
+        f"{stats['attachments_inserted']} attachments written"
+    )
+    return stats
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1131,6 +1276,8 @@ def main():
                         help="Re-download even if cached")
     parser.add_argument("--backfill", action="store_true",
                         help="Bulk insert messages, derive threads at end (faster for historical data)")
+    parser.add_argument("--repair-attachments", action="store_true",
+                        help="Reparse archives and replace attachments for existing messages")
     parser.add_argument("--delay", type=float, default=2.0,
                         help="Seconds to wait between downloads in range mode (default: 2)")
     parser.add_argument("--parallel", type=int, default=1, metavar="N",
@@ -1166,6 +1313,10 @@ def main():
         parser.error("--derive-only cannot be combined with --year/--month/--from/--to")
     if args.decode_subjects and any(value is not None for value in (args.year, args.month, args.from_ym, args.to_ym)):
         parser.error("--decode-subjects cannot be combined with --year/--month/--from/--to")
+    if args.repair_attachments and args.backfill:
+        parser.error("--repair-attachments cannot be combined with --backfill")
+    if args.repair_attachments and args.parallel != 1:
+        parser.error("--repair-attachments cannot be combined with --parallel")
 
     if not args.dsn:
         print("Error: provide --dsn or set DATABASE_URL", file=sys.stderr)
@@ -1214,17 +1365,67 @@ def main():
         session = requests.Session()
 
     grand_total = 0
+    grand_attachment_stats = {
+        "attachments_deleted": 0,
+        "attachments_inserted": 0,
+        "messages_repaired": 0,
+        "messages_scanned": 0,
+    }
     for list_idx, list_name in enumerate(list_names):
         needs_download = needs_download_by_list[list_name]
         use_parallel = (
             args.parallel > 1
             and args.backfill
+            and not args.repair_attachments
             and not needs_download
             and len(months) > 1
         )
 
         list_total = 0
-        if use_parallel:
+        if args.repair_attachments:
+            list_stats = {
+                "attachments_deleted": 0,
+                "attachments_inserted": 0,
+                "messages_repaired": 0,
+                "messages_scanned": 0,
+            }
+            for i, (year, month) in enumerate(months):
+                try:
+                    month_stats = repair_attachments(
+                        conn,
+                        session,
+                        year,
+                        month,
+                        list_name,
+                        args.force_download,
+                    )
+                except ArchiveAuthError:
+                    print("  [auth] archive access failed, re-authenticating and retrying once...")
+                    session = make_session(args.pg_user, args.pg_pass)
+                    ensure_archive_access(session, list_name, year, month)
+                    month_stats = repair_attachments(
+                        conn,
+                        session,
+                        year,
+                        month,
+                        list_name,
+                        args.force_download,
+                    )
+                for key in list_stats:
+                    list_stats[key] += month_stats[key]
+                if i < len(months) - 1:
+                    time.sleep(args.delay)
+
+            grand_total += list_stats["messages_repaired"]
+            for key in grand_attachment_stats:
+                grand_attachment_stats[key] += list_stats[key]
+            if len(list_names) > 1:
+                print(
+                    f"\n=== List total ({list_name}): "
+                    f"{list_stats['messages_repaired']} messages repaired, "
+                    f"{list_stats['attachments_inserted']} attachments written ==="
+                )
+        elif use_parallel:
             # Pre-register the list in the main thread so workers don't race on it
             list_id = ensure_list(conn, session, list_name, *months[0])
             print(f"\n[parallel] {list_name}: {len(months)} months, {args.parallel} workers")
@@ -1260,17 +1461,24 @@ def main():
                     time.sleep(args.delay)
 
         grand_total += list_total
-        if len(list_names) > 1:
+        if not args.repair_attachments and len(list_names) > 1:
             print(f"\n=== List total ({list_name}): {list_total:,} messages ===")
         if list_idx < len(list_names) - 1:
             time.sleep(args.delay)
 
-    if len(months) > 1 or len(list_names) > 1:
+    if args.repair_attachments:
+        print(
+            f"\n=== Total: {grand_attachment_stats['messages_repaired']:,} messages repaired across "
+            f"{len(list_names)} lists x {len(months)} months; "
+            f"{grand_attachment_stats['attachments_inserted']:,} attachments written ==="
+        )
+    elif len(months) > 1 or len(list_names) > 1:
         print(
             f"\n=== Total: {grand_total:,} messages across "
             f"{len(list_names)} lists x {len(months)} months ==="
         )
-    refresh_analytics_views(conn)
+    if not args.repair_attachments:
+        refresh_analytics_views(conn)
 
     conn.close()
 
