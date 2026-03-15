@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
   import type { MessageWithAttachments } from "shared/api";
   import { parseMessageBody, type MessageBodyBlock } from "../../lib/messageBody";
   import ThreadMessageAttachments from "./ThreadMessageAttachments.svelte";
@@ -6,12 +7,14 @@
   export let message: MessageWithAttachments;
   export let index: number;
   export let anchorId: string;
+  export let isCollapsed = false;
 
   let sender = "Unknown sender";
   let subject: string | null = null;
   let validTimestamp = false;
   let sentAtLabel = "Unknown time";
   let bodyBlocks: MessageBodyBlock[] = [];
+  const dispatch = createEventDispatcher<{ toggle: void }>();
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
@@ -48,6 +51,9 @@
     return dateFormatter.format(parsed);
   };
 
+  const collapseToggleLabel = (collapsed: boolean, messageIndex: number): string =>
+    collapsed ? `Expand message ${messageIndex + 1}` : `Collapse message ${messageIndex + 1}`;
+
   $: sender = senderLabel(message.from_name, message.from_email);
   $: subject = normalizedSubject(message.subject);
   $: validTimestamp = isValidTimestamp(message.sent_at);
@@ -57,9 +63,37 @@
 
 <article class="timeline-item" id={anchorId} aria-labelledby={`${anchorId}-heading`}>
   <header class="timeline-item-header">
-    <h4 id={`${anchorId}-heading`}>
-      <a class="anchor-link" href={`#${anchorId}`}>Message {index + 1}</a>
-    </h4>
+    <div class="title-row">
+      <h4 id={`${anchorId}-heading`}>
+        <a class="anchor-link" href={`#${anchorId}`}>#{index + 1}</a>
+      </h4>
+
+      <button
+        class="collapse-toggle"
+        type="button"
+        aria-controls={`${anchorId}-content`}
+        aria-expanded={!isCollapsed}
+        aria-label={collapseToggleLabel(isCollapsed, index)}
+        title={collapseToggleLabel(isCollapsed, index)}
+        on:click={() => dispatch("toggle")}
+      >
+        <svg
+          class:collapse-icon={true}
+          class:collapse-icon--expanded={!isCollapsed}
+          viewBox="0 0 20 20"
+          aria-hidden="true"
+        >
+          <path
+            d="M7 4l6 6-6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
+    </div>
 
     <p class="meta">
       <span class="sender">{sender}</span>
@@ -78,27 +112,29 @@
     {/if}
   </header>
 
-  <div class="body" aria-label="Message body">
-    {#each bodyBlocks as block}
-      <div
-        class:body-block={true}
-        class:body-block--quote={block.type === "quote"}
-        style={block.type === "quote" ? `--quote-depth: ${block.depth};` : undefined}
-      >
-        {#each block.parts as part}
-          {#if part.type === "link"}
-            <a class="body-link" href={part.href} target="_blank" rel="noopener noreferrer"
-              >{part.value}</a
-            >
-          {:else}
-            {part.value}
-          {/if}
-        {/each}
-      </div>
-    {/each}
-  </div>
+  <div class="message-content" id={`${anchorId}-content`} hidden={isCollapsed}>
+    <div class="body" aria-label="Message body">
+      {#each bodyBlocks as block}
+        <div
+          class:body-block={true}
+          class:body-block--quote={block.type === "quote"}
+          style={block.type === "quote" ? `--quote-depth: ${block.depth};` : undefined}
+        >
+          {#each block.parts as part}
+            {#if part.type === "link"}
+              <a class="body-link" href={part.href} target="_blank" rel="noopener noreferrer"
+                >{part.value}</a
+              >
+            {:else}
+              {part.value}
+            {/if}
+          {/each}
+        </div>
+      {/each}
+    </div>
 
-  <ThreadMessageAttachments attachments={message.attachments} />
+    <ThreadMessageAttachments attachments={message.attachments} />
+  </div>
 </article>
 
 <style>
@@ -119,6 +155,14 @@
     min-width: 0;
   }
 
+  .title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
   h4 {
     margin: 0;
     font-size: 0.92rem;
@@ -135,6 +179,45 @@
   .anchor-link:focus-visible {
     outline: 2px solid #0b4ea2;
     outline-offset: 2px;
+  }
+
+  .collapse-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    flex: 0 0 auto;
+    border: 1px solid #bcccdc;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #486581;
+    cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      color 120ms ease,
+      background-color 120ms ease;
+  }
+
+  .collapse-toggle:hover {
+    border-color: #9fb3c8;
+    background: #f0f7ff;
+    color: #102a43;
+  }
+
+  .collapse-toggle:focus-visible {
+    outline: 2px solid #0b4ea2;
+    outline-offset: 2px;
+  }
+
+  .collapse-icon {
+    width: 0.95rem;
+    height: 0.95rem;
+    transition: transform 160ms ease;
+  }
+
+  .collapse-icon--expanded {
+    transform: rotate(90deg);
   }
 
   .meta {
@@ -169,6 +252,16 @@
 
   .subject span {
     font-weight: 700;
+  }
+
+  .message-content {
+    display: grid;
+    gap: 0.55rem;
+    min-width: 0;
+  }
+
+  .message-content[hidden] {
+    display: none;
   }
 
   .body {

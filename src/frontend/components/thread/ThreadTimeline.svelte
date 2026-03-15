@@ -2,10 +2,19 @@
   import type { MessageWithAttachments } from "shared/api";
   import ThreadTimelineItem from "./ThreadTimelineItem.svelte";
 
+  type TimelineEntry = {
+    key: string;
+    message: MessageWithAttachments;
+    absoluteIndex: number;
+    anchorId: string;
+    isCollapsed: boolean;
+  };
+
   export let messages: MessageWithAttachments[] = [];
   export let startIndex = 0;
   export let totalCount: number | null = null;
   const numberFormatter = new Intl.NumberFormat("en-US");
+  let collapsedMessages: Record<string, boolean> = {};
 
   const messageCountLabel = (count: number): string => {
     if (count === 0) return "No messages are available for this page.";
@@ -34,35 +43,76 @@
     if (token.length > 0) return `message-${token}-${index + 1}`;
     return `message-${index + 1}`;
   };
+
+  const messageEntryKey = (message: MessageWithAttachments, absoluteIndex: number): string =>
+    `${message.id}:${absoluteIndex}`;
+
+  const toggleMessageCollapsed = (entry: TimelineEntry): void => {
+    collapsedMessages = {
+      ...collapsedMessages,
+      [entry.key]: !entry.isCollapsed,
+    };
+  };
+
+  const setAllMessagesCollapsed = (entries: TimelineEntry[], collapsed: boolean): void => {
+    const nextState = { ...collapsedMessages };
+
+    for (const entry of entries) {
+      nextState[entry.key] = collapsed;
+    }
+
+    collapsedMessages = nextState;
+  };
+
+  $: timelineEntries = messages.map((message, index) => {
+    const absoluteIndex = startIndex + index;
+    const key = messageEntryKey(message, absoluteIndex);
+    return {
+      key,
+      message,
+      absoluteIndex,
+      anchorId: messageAnchorId(message, absoluteIndex),
+      isCollapsed: collapsedMessages[key] ?? false,
+    } satisfies TimelineEntry;
+  });
+
+  $: areAllMessagesCollapsed = timelineEntries.length > 0 && timelineEntries.every((entry) => entry.isCollapsed);
+
+  $: collapseAllLabel = areAllMessagesCollapsed ? "Expand all" : "Collapse all";
 </script>
 
 <section class="timeline" aria-label="Thread message timeline">
   <header class="timeline-header">
-    <h3>Messages</h3>
+    <div class="timeline-title-row">
+      <h3>Messages</h3>
+
+      {#if messages.length > 0}
+        <button
+          class="collapse-all-toggle"
+          type="button"
+          on:click={() => setAllMessagesCollapsed(timelineEntries, !areAllMessagesCollapsed)}
+        >
+          {collapseAllLabel}
+        </button>
+      {/if}
+    </div>
+
     <p>{messageCountLabel(messages.length)}</p>
   </header>
 
   {#if messages.length === 0}
     <p class="empty-message">No messages are available for this thread.</p>
   {:else}
-    <nav class="jump-nav" aria-label="Jump to message">
-      <ol>
-        {#each messages as message, index (`${message.id}:${index}`)}
-          {@const absoluteIndex = startIndex + index}
-          {@const anchorId = messageAnchorId(message, absoluteIndex)}
-          <li>
-            <a href={`#${anchorId}`}>#{absoluteIndex + 1}</a>
-          </li>
-        {/each}
-      </ol>
-    </nav>
-
     <ol class="timeline-list">
-      {#each messages as message, index (`${message.id}:${index}`)}
-        {@const absoluteIndex = startIndex + index}
-        {@const anchorId = messageAnchorId(message, absoluteIndex)}
+      {#each timelineEntries as entry (entry.key)}
         <li>
-          <ThreadTimelineItem {message} index={absoluteIndex} {anchorId} />
+          <ThreadTimelineItem
+            message={entry.message}
+            index={entry.absoluteIndex}
+            anchorId={entry.anchorId}
+            isCollapsed={entry.isCollapsed}
+            on:toggle={() => toggleMessageCollapsed(entry)}
+          />
         </li>
       {/each}
     </ol>
@@ -87,6 +137,14 @@
     min-width: 0;
   }
 
+  .timeline-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
   h3 {
     margin: 0;
     font-size: 0.97rem;
@@ -106,44 +164,38 @@
     color: #627d98;
   }
 
-  .jump-nav {
-    min-width: 0;
-  }
-
-  .jump-nav ol {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    min-width: 0;
-  }
-
-  .jump-nav a {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 2.05rem;
-    padding: 0.2rem 0.4rem;
-    border-radius: 999px;
+  .collapse-all-toggle {
     border: 1px solid #bcccdc;
-    text-decoration: none;
-    color: #243b53;
-    font-size: 0.78rem;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #334e68;
+    font-size: 0.8rem;
+    font-weight: 700;
     line-height: 1;
-    background: #f0f7ff;
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      color 120ms ease,
+      background-color 120ms ease;
   }
 
-  .jump-nav a:hover {
+  .collapse-all-toggle:hover {
     border-color: #9fb3c8;
-    background: #e8f2ff;
+    background: #f0f7ff;
     color: #102a43;
   }
 
-  .jump-nav a:focus-visible {
+  .collapse-all-toggle:focus-visible {
     outline: 2px solid #0b4ea2;
     outline-offset: 2px;
+  }
+
+  @media (max-width: 640px) {
+    .timeline-title-row {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
   }
 
   .timeline-list {
