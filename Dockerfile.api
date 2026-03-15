@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Install deps (server + shared types)
 COPY package.json bun.lock* ./
-COPY shared ./shared
+COPY src/shared ./src/shared
 COPY src/server ./src/server
 COPY tsconfig.json ./
 

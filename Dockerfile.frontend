@@ -6,8 +6,8 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-# shared types + frontend app (paths match repo: frontend uses ../../shared)
-COPY shared /app/shared
+# shared types + frontend app
+COPY src/shared /app/src/shared
 COPY src/frontend /app/src/frontend
 
 WORKDIR /app/src/frontend
