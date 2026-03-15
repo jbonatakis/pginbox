@@ -62,6 +62,7 @@ CHUNK_SIZE = 64 * 1024  # 64 KB
 HTTP_RETRIES = 5
 HTTP_RETRY_BASE_DELAY = 2.0
 MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
+GIT_PATCH_FROM_RE = re.compile(br"^From [0-9a-f]{7,64} Mon Sep 17 00:00:00 2001(?: .*)?$")
 DEFAULT_LIST_NAME = "pgsql-hackers"
 
 
@@ -440,8 +441,17 @@ def _strip_nul(s: str) -> str:
     return s.replace('\x00', '') if s else s
 
 
+def _is_git_patch_from_line(raw: bytes) -> bool:
+    return bool(GIT_PATCH_FROM_RE.match(raw.rstrip(b"\r\n")))
+
+
+def _mbox_contains_git_patch_from_lines(path: Path) -> bool:
+    with path.open("rb") as src:
+        return any(_is_git_patch_from_line(raw) for raw in src)
+
+
 def _sanitize_mbox_from_lines(path: Path) -> Path:
-    """Create a temp mbox copy with ASCII-safe Unix From-lines."""
+    """Create a temp mbox copy that escapes embedded git patch From-lines."""
     tmp = tempfile.NamedTemporaryFile(
         mode="wb",
         prefix=f"{path.name}.",
@@ -453,7 +463,9 @@ def _sanitize_mbox_from_lines(path: Path) -> Path:
     try:
         with path.open("rb") as src, tmp:
             for raw in src:
-                if raw.startswith(b"From "):
+                if _is_git_patch_from_line(raw):
+                    raw = b">" + raw
+                elif raw.startswith(b"From "):
                     raw = raw.decode("utf-8", errors="replace").encode("ascii", errors="replace")
                 tmp.write(raw)
         return tmp_path
@@ -463,11 +475,31 @@ def _sanitize_mbox_from_lines(path: Path) -> Path:
 
 
 def _iter_mbox_messages(path: Path):
+    if _mbox_contains_git_patch_from_lines(path):
+        print("  [warn] detected embedded git patch From-lines; retrying with sanitized copy")
+        sanitized_path = _sanitize_mbox_from_lines(path)
+        try:
+            mbox = mailbox.mbox(str(sanitized_path))
+            try:
+                for msg in mbox:
+                    yield msg
+                return
+            finally:
+                mbox.close()
+        finally:
+            sanitized_path.unlink(missing_ok=True)
+
+    buffered = []
     mbox = mailbox.mbox(str(path))
     try:
         for msg in mbox:
-            yield msg
-        return
+            if not msg.keys():
+                print("  [warn] detected header-less mbox fragments; retrying with sanitized copy")
+                break
+            buffered.append(msg)
+        else:
+            yield from buffered
+            return
     except UnicodeDecodeError as e:
         print(f"  [warn] malformed mbox From-line ({e}); retrying with sanitized copy")
     finally:

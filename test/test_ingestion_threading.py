@@ -206,6 +206,70 @@ def test_refresh_threads_for_message_ids_uses_persisted_thread_ids(monkeypatch):
     ]
 
 
+def test_parse_mbox_recovers_attachments_from_embedded_git_patch_from_lines(tmp_path):
+    path = tmp_path / "pgsql-hackers.202409"
+    path.write_text(
+        """From pgsql-hackers-owner+archive@lists.postgresql.org Sun Sep 01 01:33:15 2024
+Date: Sun, 1 Sep 2024 02:27:50 -0400
+From: Andres Freund <andres@anarazel.de>
+To: pgsql-hackers@postgresql.org
+Subject: AIO v2.0
+Message-ID: <root@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary"
+Content-Disposition: inline
+
+--boundary
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+
+Hi,
+
+See attached patches.
+
+--boundary
+Content-Type: text/x-diff; charset=us-ascii
+Content-Disposition: attachment;
+ filename="0001-first.patch"
+
+From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001
+From: Example Author <author@example.com>
+Date: Sun, 1 Sep 2024 02:27:50 -0400
+Subject: [PATCH 1/2] First patch
+
+---
+ file1 | 1 +
+ 1 file changed, 1 insertion(+)
+
+--boundary
+Content-Type: text/x-diff; charset=us-ascii
+Content-Disposition: attachment;
+ filename="0002-second.patch"
+
+From abcdefabcdefabcdefabcdefabcdefabcdefabcd Mon Sep 17 00:00:00 2001
+From: Example Author <author@example.com>
+Date: Sun, 1 Sep 2024 02:27:50 -0400
+Subject: [PATCH 2/2] Second patch
+
+---
+ file2 | 1 +
+ 1 file changed, 1 insertion(+)
+
+--boundary--
+""",
+        encoding="utf-8",
+    )
+
+    records = list(ingest.parse_mbox(path, list_id=1))
+
+    assert len(records) == 1
+    assert records[0]["message_id"] == "<root@example.com>"
+    assert [attachment["filename"] for attachment in records[0]["_attachments"]] == [
+        "0001-first.patch",
+        "0002-second.patch",
+    ]
+
+
 def test_store_batch_live_refreshes_threads_after_message_insert(monkeypatch):
     events = []
 
