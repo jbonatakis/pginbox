@@ -1,5 +1,6 @@
 import type { Kysely } from "kysely";
 import type {
+  AccountProfileUpdateRequest,
   AuthForgotPasswordRequest,
   AuthLoginRequest,
   AuthRegisterRequest,
@@ -727,6 +728,26 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           user,
         };
       });
+    },
+
+    async updateProfile(
+      userId: bigint | number | string,
+      input: AccountProfileUpdateRequest
+    ): Promise<AuthUserRecord> {
+      const displayName = normalizeDisplayName(input.displayName);
+
+      const updatedUser = await authDb
+        .updateTable("users")
+        .set({ display_name: displayName })
+        .where("id", "=", toDbInt8(userId))
+        .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
+        .executeTakeFirst();
+
+      if (!updatedUser) {
+        throw new AuthError(401, "AUTH_REQUIRED", "Authentication required");
+      }
+
+      return toAuthUserRecord(updatedUser);
     },
   };
 }

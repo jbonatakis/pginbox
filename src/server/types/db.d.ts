@@ -109,6 +109,7 @@ export interface Users {
   last_login_at: Timestamp | null;
   password_hash: string;
   status: string;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface DB {

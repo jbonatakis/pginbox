@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { sql } from "kysely";
 import { createApp } from "../src/server/app";
 import type {
   AuthEmailSender,
   PasswordResetEmailDelivery,
   VerificationEmailDelivery,
 } from "../src/server/email";
+import { createAccountRoutes } from "../src/server/routes/account";
 import {
   DEFAULT_AUTH_RATE_LIMITS,
   createAuthRoutes,
@@ -47,6 +49,11 @@ function createTestApp(
     mailer,
   });
   const app = createApp({
+    accountRoutesPlugin: createAccountRoutes({
+      appBaseUrl: frontendOrigin,
+      authService,
+      db: authDb,
+    }),
     authRoutesPlugin: createAuthRoutes({
       appBaseUrl: frontendOrigin,
       authService,
@@ -517,6 +524,104 @@ describeAuthRoutes("auth routes", () => {
     expect(await parseJson(oldPasswordLogin)).toEqual({
       code: "INVALID_CREDENTIALS",
       message: "Invalid email or password",
+    });
+  });
+
+  it("updates the authenticated user's display name through the account profile route", async () => {
+    const { app, mailer } = createTestApp();
+    const email = "profile-update@example.com";
+    const activeUser = await createActiveUser(app, mailer, email);
+    const beforeUpdate = await getAuthDb()
+      .selectFrom("users")
+      .select(["display_name", "updated_at"])
+      .where("email", "=", email)
+      .executeTakeFirstOrThrow();
+
+    const updateResponse = await send(app, "/account/profile", {
+      body: {
+        displayName: "Updated Account Name",
+      },
+      headers: {
+        cookie: activeUser.cookie,
+        origin: frontendOrigin,
+      },
+      method: "PATCH",
+    });
+
+    expect(updateResponse.status).toBe(200);
+    expect(await parseJson(updateResponse)).toMatchObject({
+      user: {
+        displayName: "Updated Account Name",
+        email,
+      },
+    });
+
+    const userRow = await getAuthDb()
+      .selectFrom("users")
+      .select(["email", "display_name", "updated_at"])
+      .where("email", "=", email)
+      .executeTakeFirstOrThrow();
+    const timestampCheck = await getAuthDb()
+      .selectFrom("users")
+      .select(sql<boolean>`updated_at > ${beforeUpdate.updated_at}`.as("updated_after_previous"))
+      .where("email", "=", email)
+      .executeTakeFirstOrThrow();
+
+    expect(userRow.email).toBe(email);
+    expect(userRow.display_name).toBe("Updated Account Name");
+    expect(timestampCheck.updated_after_previous).toBe(true);
+
+    const meResponse = await send(app, "/auth/me", {
+      headers: {
+        cookie: activeUser.cookie,
+      },
+    });
+
+    expect(meResponse.status).toBe(200);
+    expect(await parseJson(meResponse)).toMatchObject({
+      user: {
+        displayName: "Updated Account Name",
+        email,
+      },
+    });
+  });
+
+  it("requires auth and same-origin requests for account profile updates", async () => {
+    const { app, mailer } = createTestApp();
+    const email = "profile-guard@example.com";
+    const activeUser = await createActiveUser(app, mailer, email);
+
+    const unauthenticatedResponse = await send(app, "/account/profile", {
+      body: {
+        displayName: "Nope",
+      },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "PATCH",
+    });
+
+    expect(unauthenticatedResponse.status).toBe(401);
+    expect(await parseJson(unauthenticatedResponse)).toEqual({
+      code: "AUTH_REQUIRED",
+      message: "Authentication required",
+    });
+
+    const wrongOriginResponse = await send(app, "/account/profile", {
+      body: {
+        displayName: "Nope",
+      },
+      headers: {
+        cookie: activeUser.cookie,
+        origin: "https://evil.example",
+      },
+      method: "PATCH",
+    });
+
+    expect(wrongOriginResponse.status).toBe(403);
+    expect(await parseJson(wrongOriginResponse)).toEqual({
+      code: "ORIGIN_NOT_ALLOWED",
+      message: "Origin not allowed",
     });
   });
 
