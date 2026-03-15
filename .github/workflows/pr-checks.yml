@@ -1,0 +1,124 @@
+name: PR Checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bun:
+    name: Bun Typecheck and Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: pginbox
+          POSTGRES_PASSWORD: pginbox
+          POSTGRES_USER: pginbox
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pginbox -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      APP_BASE_URL: http://localhost:5173
+      AUTH_EMAIL_MODE: log
+      DATABASE_URL: postgresql://pginbox:pginbox@localhost:5432/pginbox
+      TEST_DATABASE_URL: postgresql://pginbox:pginbox@localhost:5432/pginbox_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /tmp/dbmate https://github.com/amacneil/dbmate/releases/download/v2.28.0/dbmate-linux-amd64
+          chmod +x /tmp/dbmate
+          sudo mv /tmp/dbmate /usr/local/bin/dbmate
+
+      - name: Run database migrations
+        run: |
+          until PGPASSWORD=pginbox psql -h localhost -U pginbox -d postgres -c 'select 1' >/dev/null 2>&1; do
+            sleep 1
+          done
+          PGPASSWORD=pginbox psql -h localhost -U pginbox -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE pginbox_test'
+          dbmate up
+          DATABASE_URL="$TEST_DATABASE_URL" dbmate up
+
+      - name: Verify schema snapshot is up to date
+        run: git diff --exit-code -- db/schema.sql
+
+      - name: Typecheck
+        run: bun x tsc --noEmit
+
+      - name: Run Bun test suite
+        run: bun test test
+
+  frontend:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: src/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: src/frontend
+        run: npm run build
+
+  python:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Run pytest
+        run: uv run --with pytest pytest test/test_ingestion_threading.py
+
+  docker:
+    name: Docker Builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -f Dockerfile.api -t pginbox-api .
+
+      - name: Build frontend image
+        run: docker build -f Dockerfile.frontend -t pginbox-frontend .
