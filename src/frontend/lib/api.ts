@@ -1,6 +1,8 @@
 import type {
   AttachmentDetail,
   AnalyticsSummary,
+  AccountProfileUpdateRequest,
+  AccountProfileUpdateResponse,
   AuthForgotPasswordRequest,
   AuthForgotPasswordResponse,
   AuthLoginErrorCode,
@@ -331,6 +333,20 @@ function postAuthJson<TResponse>(
   );
 }
 
+function patchAuthJson<TResponse>(
+  path: string,
+  body: unknown,
+  options: RequestOptions = {}
+): Promise<TResponse> {
+  return requestAuthJson<TResponse>(
+    path,
+    withJsonBody(body, {
+      ...options,
+      method: "PATCH",
+    })
+  );
+}
+
 export async function getAuthMe(options: RequestOptions = {}): Promise<AuthMeResponse> {
   return requestAuthJson<AuthMeResponse>(withApiBase("/auth/me"), options);
 }
@@ -391,6 +407,17 @@ export async function resetPassword(
 ): Promise<AuthResetPasswordResponse> {
   return postAuthJson<AuthResetPasswordResponse>(
     withApiBase("/auth/reset-password"),
+    input,
+    options
+  );
+}
+
+export async function updateAccountProfile(
+  input: AccountProfileUpdateRequest,
+  options: RequestOptions = {}
+): Promise<AccountProfileUpdateResponse> {
+  return patchAuthJson<AccountProfileUpdateResponse>(
+    withApiBase("/account/profile"),
     input,
     options
   );
@@ -486,6 +513,9 @@ export const api = {
     getByMonth: getAnalyticsByMonth,
     getSummary: getAnalyticsSummary,
     getTopSenders: getAnalyticsTopSenders,
+  },
+  account: {
+    updateProfile: updateAccountProfile,
   },
   auth: {
     forgotPassword,

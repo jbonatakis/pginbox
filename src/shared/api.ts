@@ -112,6 +112,10 @@ export interface AuthRegisterRequest extends AuthLoginRequest {
   displayName?: string | null;
 }
 
+export interface AccountProfileUpdateRequest {
+  displayName: string | null;
+}
+
 export interface AuthVerifyEmailRequest {
   token: string;
 }
@@ -149,6 +153,7 @@ export type AuthLoginResponse = AuthUserResponse;
 export type AuthLogoutResponse = void;
 export type AuthForgotPasswordResponse = AuthMessageResponse;
 export type AuthResetPasswordResponse = AuthUserResponse;
+export type AccountProfileUpdateResponse = AuthUserResponse;
 
 export type AuthVerifyEmailErrorCode = "TOKEN_INVALID" | "TOKEN_EXPIRED";
 export type AuthLoginErrorCode =

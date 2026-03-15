@@ -1,4 +1,6 @@
 import type {
+  AccountProfileUpdateRequest,
+  AccountProfileUpdateResponse,
   AuthForgotPasswordRequest,
   AuthForgotPasswordResponse,
   AuthLoginRequest,
@@ -24,6 +26,7 @@ import {
   resendVerification as resendVerificationRequest,
   resetPassword as resetPasswordRequest,
   toApiErrorShape,
+  updateAccountProfile as updateAccountProfileRequest,
   verifyEmail as verifyEmailRequest,
   type ApiErrorShape,
 } from "../api";
@@ -36,6 +39,7 @@ export type AuthAction =
   | "register"
   | "resend-verification"
   | "reset-password"
+  | "update-profile"
   | "verify-email";
 
 interface AuthStateShape {
@@ -64,6 +68,7 @@ export interface AuthStore extends Readable<AuthState> {
   ): Promise<AuthResendVerificationResponse>;
   resetPassword(input: AuthResetPasswordRequest): Promise<AuthResetPasswordResponse>;
   setUser(user: AuthUser | null): void;
+  updateProfile(input: AccountProfileUpdateRequest): Promise<AccountProfileUpdateResponse>;
   verifyEmail(input: AuthVerifyEmailRequest): Promise<AuthVerifyEmailResponse>;
 }
 
@@ -127,6 +132,18 @@ export function createAuthStore(): AuthStore {
   };
 
   const completeSessionUpdate = (requestId: number, user: AuthUser | null): void => {
+    if (requestId !== actionRequestId) return;
+    sessionVersion += 1;
+    setState((current) => ({
+      ...current,
+      bootstrapStatus: "ready",
+      currentAction: null,
+      error: null,
+      user,
+    }));
+  };
+
+  const completeUserUpdate = (requestId: number, user: AuthUser): void => {
     if (requestId !== actionRequestId) return;
     sessionVersion += 1;
     setState((current) => ({
@@ -269,6 +286,16 @@ export function createAuthStore(): AuthStore {
       return runAction("reset-password", () => resetPasswordRequest(input), (response, requestId) => {
         completeSessionUpdate(requestId, response.user);
       });
+    },
+
+    async updateProfile(input: AccountProfileUpdateRequest): Promise<AccountProfileUpdateResponse> {
+      return runAction(
+        "update-profile",
+        () => updateAccountProfileRequest(input),
+        (response, requestId) => {
+          completeUserUpdate(requestId, response.user);
+        }
+      );
     },
 
     setUser(user: AuthUser | null): void {

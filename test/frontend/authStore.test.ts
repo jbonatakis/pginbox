@@ -291,4 +291,40 @@ describe("auth store", () => {
 
     observer.unsubscribe();
   });
+
+  it("updates the current user when profile changes succeed", async () => {
+    const updatedUser = {
+      ...activeUser,
+      displayName: "Updated User Name",
+    };
+
+    const fetchStub = installFetchStub(async (_input, init) => {
+      expect(init?.credentials).toBe("same-origin");
+      expect(init?.method).toBe("PATCH");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        displayName: "Updated User Name",
+      });
+      return jsonResponse({ user: updatedUser });
+    });
+    const store = createAuthStore();
+    const observer = observeAuthState(store);
+
+    store.setUser(activeUser);
+
+    const response = await store.updateProfile({
+      displayName: "Updated User Name",
+    });
+
+    expect(fetchStub.calls[0]?.url).toBe("/api/account/profile");
+    expect(response).toEqual({ user: updatedUser });
+    expect(observer.current).toMatchObject({
+      bootstrapStatus: "ready",
+      currentAction: null,
+      error: null,
+      isAuthenticated: true,
+      user: updatedUser,
+    });
+
+    observer.unsubscribe();
+  });
 });

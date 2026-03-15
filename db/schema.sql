@@ -73,6 +73,23 @@ $$;
 
 
 --
+-- Name: _set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW IS DISTINCT FROM OLD THEN
+        NEW.updated_at := now();
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: refresh_analytics_views(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -480,9 +497,11 @@ CREATE TABLE public.users (
     disabled_at timestamp with time zone,
     disable_reason text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT users_email_lowercase_check CHECK ((email = lower(email))),
     CONSTRAINT users_status_check CHECK ((status = ANY (ARRAY['pending_verification'::text, 'active'::text, 'disabled'::text]))),
-    CONSTRAINT users_status_state_check CHECK ((((status = 'pending_verification'::text) AND (email_verified_at IS NULL) AND (disabled_at IS NULL) AND (disable_reason IS NULL)) OR ((status = 'active'::text) AND (email_verified_at IS NOT NULL) AND (disabled_at IS NULL) AND (disable_reason IS NULL)) OR ((status = 'disabled'::text) AND (disabled_at IS NOT NULL))))
+    CONSTRAINT users_status_state_check CHECK ((((status = 'pending_verification'::text) AND (email_verified_at IS NULL) AND (disabled_at IS NULL) AND (disable_reason IS NULL)) OR ((status = 'active'::text) AND (email_verified_at IS NOT NULL) AND (disabled_at IS NULL) AND (disable_reason IS NULL)) OR ((status = 'disabled'::text) AND (disabled_at IS NOT NULL)))),
+    CONSTRAINT users_updated_after_create_check CHECK ((updated_at >= created_at))
 );
 
 
@@ -888,6 +907,13 @@ CREATE TRIGGER trg_users_revoke_sessions_on_disable AFTER UPDATE OF status ON pu
 
 
 --
+-- Name: users trg_users_set_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_users_set_updated_at BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public._set_updated_at();
+
+
+--
 -- Name: attachments attachments_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -963,4 +989,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260312000006'),
     ('20260312000007'),
     ('20260314000008'),
-    ('20260315000009');
+    ('20260315000009'),
+    ('20260315000010');

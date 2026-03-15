@@ -10,7 +10,6 @@ import type {
 } from "shared/api";
 import { Elysia, t } from "elysia";
 import {
-  AuthError,
   clearSessionCookie,
   getSessionRequestMetadata,
   normalizeEmail,
@@ -19,6 +18,7 @@ import {
   type ResponseCookieTarget,
 } from "../auth";
 import { resolveAuthAppBaseUrl } from "../config";
+import { assertSameOrigin, resolveConfiguredOrigin } from "./same-origin";
 import {
   toAuthMeResponse,
   toAuthMessageResponse,
@@ -149,48 +149,16 @@ interface RateLimitDescriptor {
   scope: "email" | "ip";
 }
 
-function resolveConfiguredOrigin(appBaseUrl?: string): string | null {
-  if (!appBaseUrl) return null;
-
-  try {
-    return new URL(appBaseUrl).origin;
-  } catch {
-    return null;
-  }
-}
-
-function requestOrigin(request: Request): string | null {
-  try {
-    return new URL(request.url).origin;
-  } catch {
-    return null;
-  }
-}
-
-function allowedOrigins(request: Request, configuredOrigin: string | null): Set<string> {
-  const origins = new Set<string>();
-  const fallbackOrigin = requestOrigin(request);
-
-  if (configuredOrigin) origins.add(configuredOrigin);
-  if (fallbackOrigin) origins.add(fallbackOrigin);
-
-  return origins;
-}
-
-function assertSameOrigin(request: Request, configuredOrigin: string | null): void {
-  const origin = request.headers.get("origin")?.trim() ?? "";
-
-  if (!origin || !allowedOrigins(request, configuredOrigin).has(origin)) {
-    throw new AuthError(403, "ORIGIN_NOT_ALLOWED", "Origin not allowed");
-  }
-}
-
 function getRateLimitIpIdentifier(request: Request): string {
   const metadata = getSessionRequestMetadata(request);
 
   if (metadata.ipAddress) return metadata.ipAddress;
 
-  return request.headers.get("origin")?.trim() || requestOrigin(request) || "unknown";
+  try {
+    return request.headers.get("origin")?.trim() || new URL(request.url).origin || "unknown";
+  } catch {
+    return request.headers.get("origin")?.trim() || "unknown";
+  }
 }
 
 function consumeRateLimits(

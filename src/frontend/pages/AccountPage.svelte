@@ -14,9 +14,13 @@
   });
 
   let logoutError: ApiErrorShape | null = null;
+  let profileDisplayName = "";
+  let profileError: ApiErrorShape | null = null;
+  let profileMessage: string | null = null;
   let resendError: ApiErrorShape | null = null;
   let resendMessage: string | null = null;
   let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+  let syncedDisplayName: string | null = null;
 
   const forgotPasswordLink = buildAuthPath(forgotPasswordPath, accountPath);
   const loginLink = buildAuthPath(loginPath, accountPath);
@@ -70,6 +74,29 @@
     }
   };
 
+  const handleProfileSubmit = async (): Promise<void> => {
+    profileError = null;
+    profileMessage = null;
+
+    const normalizedDisplayName = profileDisplayName.trim();
+
+    try {
+      const response = await authStore.updateProfile({
+        displayName: normalizedDisplayName || null,
+      });
+
+      const nextDisplayName = response.user.displayName ?? "";
+      profileDisplayName = nextDisplayName;
+      syncedDisplayName = nextDisplayName;
+      profileMessage =
+        nextDisplayName.length > 0
+          ? "Display name updated."
+          : "Display name cleared. Your email will be used when a name is unavailable.";
+    } catch (error) {
+      profileError = toApiErrorShape(error);
+    }
+  };
+
   const handleResendVerification = async (): Promise<void> => {
     const email = $authStore.user?.email?.trim() ?? "";
     if (!email) return;
@@ -94,9 +121,17 @@
 
   $: currentUser = $authStore.user;
   $: isLoggingOut = $authStore.currentAction === "logout";
+  $: isUpdatingProfile = $authStore.currentAction === "update-profile";
   $: isResending = $authStore.currentAction === "resend-verification";
   $: statusDescriptor = currentUser ? describeStatus(currentUser.status) : null;
   $: currentUserLabel = currentUser?.displayName?.trim() || currentUser?.email || "Account";
+  $: currentUserDisplayName = currentUser?.displayName?.trim() || "";
+  $: if (currentUser && syncedDisplayName !== currentUserDisplayName && !isUpdatingProfile) {
+    profileDisplayName = currentUserDisplayName;
+    syncedDisplayName = currentUserDisplayName;
+  }
+  $: normalizedProfileDisplayName = profileDisplayName.trim();
+  $: isProfileDirty = (normalizedProfileDisplayName || null) !== (currentUserDisplayName || null);
 
   onDestroy(() => {
     clearRedirectTimer();
@@ -138,11 +173,6 @@
           </div>
 
           <div>
-            <dt>Display name</dt>
-            <dd>{currentUser.displayName?.trim() || "Not set"}</dd>
-          </div>
-
-          <div>
             <dt>Member since</dt>
             <dd>{formatDateTime(currentUser.createdAt)}</dd>
           </div>
@@ -152,6 +182,60 @@
             <dd>{currentUser.emailVerifiedAt ? formatDateTime(currentUser.emailVerifiedAt) : "Not yet verified"}</dd>
           </div>
         </dl>
+      </article>
+
+      <article class="account-card">
+        <header class="card-header stacked">
+          <div>
+            <p class="eyebrow">Profile</p>
+            <h2>Display name</h2>
+          </div>
+          <p class="support-copy">
+            This name appears anywhere pginbox needs a human-readable label for your account.
+          </p>
+        </header>
+
+        {#if profileError}
+          <ErrorState
+            title="Unable to update profile"
+            message={profileError.message}
+            detail={formatErrorDetail(profileError)}
+          />
+        {/if}
+
+        {#if profileMessage}
+          <SuccessState
+            title="Profile updated"
+            message={profileMessage}
+          />
+        {/if}
+
+        <form class="profile-form" on:submit|preventDefault={handleProfileSubmit}>
+          <label class="field">
+            <span>Display name</span>
+            <input
+              name="displayName"
+              autocomplete="nickname"
+              bind:value={profileDisplayName}
+              maxlength="120"
+              placeholder="Optional display name"
+            />
+          </label>
+
+          <p class="field-hint">
+            Leave it blank to fall back to your email address in account surfaces.
+          </p>
+
+          <div class="actions">
+            <button
+              type="submit"
+              class="primary-button"
+              disabled={isUpdatingProfile || !isProfileDirty}
+            >
+              {isUpdatingProfile ? "Saving..." : "Save display name"}
+            </button>
+          </div>
+        </form>
       </article>
 
       <article class="account-card">
@@ -433,6 +517,45 @@
     gap: 0.38rem;
     font-size: 0.92rem;
     line-height: 1.45;
+  }
+
+  .profile-form {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  .field span {
+    color: #486581;
+    font-size: 0.88rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .field input {
+    min-height: 2.7rem;
+    width: 100%;
+    padding: 0.7rem 0.82rem;
+    border: 1px solid #bcccdc;
+    border-radius: 0.8rem;
+    background: rgba(255, 255, 255, 0.96);
+    color: #102a43;
+    font: inherit;
+  }
+
+  .field input::placeholder {
+    color: #829ab1;
+  }
+
+  .field-hint {
+    margin: 0;
+    color: #627d98;
+    font-size: 0.82rem;
+    line-height: 1.4;
   }
 
   @media (max-width: 640px) {

@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { AuthError } from "./auth";
 import { BadRequestError } from "./errors";
+import { accountRoutes, type AccountRoutesPlugin } from "./routes/account";
 import { analyticsRoutes } from "./routes/analytics";
 import { attachmentsRoutes } from "./routes/attachments";
 import { authRoutes, type AuthRoutesPlugin, RateLimitError } from "./routes/auth";
@@ -16,6 +17,7 @@ function errorJson(message: string, code?: string) {
 }
 
 interface CreateAppOptions {
+  accountRoutesPlugin?: AccountRoutesPlugin;
   authRoutesPlugin?: AuthRoutesPlugin;
 }
 
@@ -53,6 +55,7 @@ export function createApp(options: CreateAppOptions = {}) {
       return response;
     })
     .use(options.authRoutesPlugin ?? authRoutes)
+    .use(options.accountRoutesPlugin ?? accountRoutes)
     .use(attachmentsRoutes)
     .use(analyticsRoutes)
     .use(listsRoutes)
