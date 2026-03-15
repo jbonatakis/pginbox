@@ -13,6 +13,15 @@ describe("server config", () => {
     expect(resolveAuthEmailRuntimeConfig({})).toEqual({ mode: "log" });
   });
 
+  it("supports the dev auto-verify email mode", () => {
+    expect(resolveAuthEmailRuntimeConfig({ AUTH_EMAIL_MODE: "dev-auto-verify" })).toEqual({
+      mode: "dev-auto-verify",
+    });
+    expect(resolveAuthEmailRuntimeConfig({ AUTH_EMAIL_MODE: "something-else" })).toEqual({
+      mode: "log",
+    });
+  });
+
   it("normalizes configured URLs and falls back on invalid values", () => {
     expect(resolveAuthAppBaseUrl({ APP_BASE_URL: "http://localhost:4173/app" })).toBe(
       "http://localhost:4173/app",

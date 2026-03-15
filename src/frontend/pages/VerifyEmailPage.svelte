@@ -142,6 +142,15 @@
 
     try {
       const response = await authStore.resendVerification({ email: resendEmail.trim() });
+
+      if (typeof window !== "undefined" && response.developmentVerificationUrl) {
+        const parsed = new URL(response.developmentVerificationUrl, window.location.origin);
+        navigate(buildAuthPath(`${parsed.pathname}${parsed.search}${parsed.hash}`, nextRedirect), {
+          replace: true,
+        });
+        return;
+      }
+
       resendMessage = response.message;
     } catch (error) {
       resendError = toApiErrorShape(error);

@@ -255,9 +255,11 @@ export function createAuthRoutes(dependencies: AuthRouteDependencies = {}) {
           currentTime
         );
 
-        await authService.register(body);
+        const result = await authService.register(body);
         set.status = 202;
-        return toAuthMessageResponse(REGISTER_RESPONSE_MESSAGE);
+        return toAuthMessageResponse(REGISTER_RESPONSE_MESSAGE, {
+          developmentVerificationUrl: result.developmentVerificationUrl,
+        }) as AuthRegisterResponse;
       },
       {
         body: registerBodySchema,
@@ -287,9 +289,11 @@ export function createAuthRoutes(dependencies: AuthRouteDependencies = {}) {
           currentTime
         );
 
-        await authService.resendVerification(body);
+        const result = await authService.resendVerification(body);
         set.status = 202;
-        return toAuthMessageResponse(RESEND_VERIFICATION_RESPONSE_MESSAGE);
+        return toAuthMessageResponse(RESEND_VERIFICATION_RESPONSE_MESSAGE, {
+          developmentVerificationUrl: result.developmentVerificationUrl,
+        }) as AuthResendVerificationResponse;
       },
       {
         body: emailBodySchema,

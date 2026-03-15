@@ -4,7 +4,7 @@ export const DEFAULT_AUTH_APP_BASE_URL = "http://localhost:5173/";
 type EnvSource = Record<string, string | undefined>;
 
 export interface AuthEmailRuntimeConfig {
-  mode: "log";
+  mode: "dev-auto-verify" | "log";
 }
 
 function readEnv(env: EnvSource, name: string): string | undefined {
@@ -27,7 +27,13 @@ export function resolveAuthAppBaseUrl(env: EnvSource = process.env): string {
 }
 
 export function resolveAuthEmailRuntimeConfig(
-  _env: EnvSource = process.env,
+  env: EnvSource = process.env,
 ): AuthEmailRuntimeConfig {
+  const configuredMode = readEnv(env, "AUTH_EMAIL_MODE");
+
+  if (configuredMode === "dev-auto-verify") {
+    return { mode: "dev-auto-verify" };
+  }
+
   return { mode: "log" };
 }

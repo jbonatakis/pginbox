@@ -30,11 +30,17 @@ class CapturingAuthMailer implements AuthEmailSender {
   }
 }
 
-function createTestApp(options: { rateLimits?: AuthRateLimitConfig } = {}) {
+function createTestApp(
+  options: {
+    emailMode?: "dev-auto-verify" | "log";
+    rateLimits?: AuthRateLimitConfig;
+  } = {}
+) {
   const mailer = new CapturingAuthMailer();
   const authService = createAuthService({
     appBaseUrl: frontendOrigin,
     db,
+    emailRuntimeConfig: { mode: options.emailMode ?? "log" },
     mailer,
   });
   const app = createApp({
@@ -289,6 +295,34 @@ describeAuthRoutes("auth routes", () => {
 
     const publicRouteResponse = await send(app, "/lists");
     expect(publicRouteResponse.status).toBe(200);
+  });
+
+  it("returns a development verification URL when auto-verify mode is enabled", async () => {
+    const { app, mailer } = createTestApp({ emailMode: "dev-auto-verify" });
+    const email = "dev-auto-verify@example.com";
+
+    const response = await send(app, "/auth/register", {
+      body: {
+        email,
+        password: validPassword,
+      },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(response.status).toBe(202);
+    const body = (await parseJson(response)) as {
+      developmentVerificationUrl?: string;
+      message: string;
+    };
+
+    expect(body.message).toBe("If that email can be used, a verification email has been sent.");
+    expect(body.developmentVerificationUrl).toBeString();
+    expect(new URL(body.developmentVerificationUrl!).origin).toBe(frontendOrigin);
+    expect(new URL(body.developmentVerificationUrl!).pathname).toBe("/verify-email");
+    expect(mailer.verificationUrls.at(-1)).toBe(body.developmentVerificationUrl);
   });
 
   it("returns generic resend responses and only sends mail for pending accounts", async () => {

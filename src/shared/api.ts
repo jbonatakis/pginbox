@@ -136,8 +136,14 @@ export interface AuthUserResponse {
   user: AuthUser;
 }
 
-export type AuthRegisterResponse = AuthMessageResponse;
-export type AuthResendVerificationResponse = AuthMessageResponse;
+export interface AuthRegisterResponse extends AuthMessageResponse {
+  developmentVerificationUrl?: string;
+}
+
+export interface AuthResendVerificationResponse extends AuthMessageResponse {
+  developmentVerificationUrl?: string;
+}
+
 export type AuthVerifyEmailResponse = AuthUserResponse;
 export type AuthLoginResponse = AuthUserResponse;
 export type AuthLogoutResponse = void;

@@ -3,6 +3,8 @@ import type {
   AttachmentSummary,
   AuthMeResponse,
   AuthMessageResponse,
+  AuthRegisterResponse,
+  AuthResendVerificationResponse,
   AuthUser,
   AuthUserResponse,
   List,
@@ -61,8 +63,16 @@ export function toAuthUserResponse(user: AuthUserRow): AuthUserResponse {
   };
 }
 
-export function toAuthMessageResponse(message: string): AuthMessageResponse {
-  return { message };
+export function toAuthMessageResponse(
+  message: string,
+  options: { developmentVerificationUrl?: string | null } = {}
+): AuthMessageResponse | AuthRegisterResponse | AuthResendVerificationResponse {
+  return {
+    message,
+    ...(options.developmentVerificationUrl
+      ? { developmentVerificationUrl: options.developmentVerificationUrl }
+      : {}),
+  };
 }
 
 // Thread (list item): dates -> ISO strings

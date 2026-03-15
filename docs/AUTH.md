@@ -25,16 +25,20 @@ Local auth only needs the same core database and frontend-origin settings the ap
 ```dotenv
 DATABASE_URL=postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 APP_BASE_URL=http://localhost:5173
+AUTH_EMAIL_MODE=log
 ```
 
 Notes:
 
 - `DATABASE_URL` points the API and cleanup task at Postgres.
 - `APP_BASE_URL` must match the frontend origin used in development. Mutating auth routes validate `Origin` against this value.
+- `AUTH_EMAIL_MODE` controls local verification behavior:
+  - `log` logs verification and reset links.
+  - `dev-auto-verify` still logs the verification link, but `register` and `resend-verification` also return a dev-only verification URL so the frontend can route through the normal `/verify-email` page and hit the real `/auth/verify-email` endpoint automatically.
 - `APP_BASE_URL` defaults to `http://localhost:5173/` if unset.
 - `DATABASE_URL` defaults to `postgresql://pginbox:pginbox@localhost:5499/pginbox` if unset.
 - `NODE_ENV=production` only affects whether the session cookie is marked `Secure`.
-- No `SMTP_*` variables are required in v1 development because auth email delivery is log-only.
+- No `SMTP_*` variables are required in v1 development because auth email delivery is still dev-only.
 
 `.env.template` includes the minimal local auth configuration.
 
@@ -74,7 +78,7 @@ Local endpoints:
 - API direct: `http://localhost:3000`
 - API via Vite proxy: `http://localhost:5173/api`
 
-The frontend already bootstraps auth state with `GET /api/auth/me`, but dedicated auth pages are not part of this runbook. The easiest way to verify the full flow today is through the API routes and the dev mail stub output.
+The frontend already bootstraps auth state with `GET /api/auth/me` and includes dedicated auth pages. In `AUTH_EMAIL_MODE=dev-auto-verify`, the easiest way to verify the full registration flow is through the browser because the UI automatically continues through the same verification page that real emailed links use.
 
 ## Development mail stub
 
@@ -87,7 +91,9 @@ Look for log lines like:
 [auth:dev-mail] password reset email for user@example.com (2026-03-15T13:00:00.000Z): http://localhost:5173/reset-password?token=...
 ```
 
-Those URLs are still useful even though dedicated frontend pages are deferred. Extract the `token` query param and send it to the API endpoints shown below.
+Those URLs are still useful for direct API testing. Extract the `token` query param and send it to the API endpoints shown below.
+
+If `AUTH_EMAIL_MODE=dev-auto-verify`, registration and resend flows also include `developmentVerificationUrl` in the JSON response. The frontend uses that URL to navigate through `/verify-email?token=...`, which then calls the normal `POST /auth/verify-email` endpoint and establishes the session cookie.
 
 ## Verifying auth locally
 
@@ -112,6 +118,7 @@ Expected result:
 - HTTP `202`
 - response body: `{"message":"If that email can be used, a verification email has been sent."}`
 - API log line with `[auth:dev-mail] verification email ...`
+- if `AUTH_EMAIL_MODE=dev-auto-verify`, the response body also includes `developmentVerificationUrl`
 
 ### Verify email
 

@@ -10,6 +10,7 @@
     currentRoute,
     homePath,
     loginPath,
+    navigate,
     onLinkClick,
   } from "../router";
 
@@ -67,6 +68,14 @@
         email: email.trim(),
         password,
       });
+
+      if (typeof window !== "undefined" && response.developmentVerificationUrl) {
+        const parsed = new URL(response.developmentVerificationUrl, window.location.origin);
+        navigate(buildAuthPath(`${parsed.pathname}${parsed.search}${parsed.hash}`, nextRedirect), {
+          replace: true,
+        });
+        return;
+      }
 
       status = "success";
       successMessage = response.message;

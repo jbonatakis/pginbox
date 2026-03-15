@@ -23,7 +23,6 @@
     navigate,
     onLinkClick,
     peoplePath,
-    registerPath,
     threadsPath,
     type AppRoute,
   } from "./router";
@@ -91,12 +90,13 @@
   };
 
   let contentElement: HTMLElement | null = null;
+  let accountMenuElement: HTMLElement | null = null;
+  let accountMenuOpen = false;
   let handledRoutePathname: string | null =
     typeof window !== "undefined" ? window.location.pathname : null;
   let loginLink = loginPath;
   let logoutError: string | null = null;
   let mobileNavOpen = false;
-  let registerLink = registerPath;
   let routeContextChips: ContextChip[] = [];
 
   const documentTitleForRoute = (route: AppRoute): string => {
@@ -128,10 +128,12 @@
 
   const toggleMobileNav = (): void => {
     mobileNavOpen = !mobileNavOpen;
+    accountMenuOpen = false;
   };
 
   const closeMobileNav = (): void => {
     mobileNavOpen = false;
+    accountMenuOpen = false;
   };
 
   const syncAccountLinks = (route: AppRoute): void => {
@@ -140,7 +142,35 @@
       : getCurrentLocationRedirect(homePath);
 
     loginLink = buildAuthPath(loginPath, nextRedirect);
-    registerLink = buildAuthPath(registerPath, nextRedirect);
+  };
+
+  const isNode = (value: EventTarget | null): value is Node =>
+    typeof Node !== "undefined" && value instanceof Node;
+
+  const toggleAccountMenu = (): void => {
+    accountMenuOpen = !accountMenuOpen;
+  };
+
+  const closeAccountMenu = (): void => {
+    accountMenuOpen = false;
+  };
+
+  const handleWindowClick = (event: MouseEvent): void => {
+    if (!accountMenuOpen || !accountMenuElement) return;
+    if (isNode(event.target) && accountMenuElement.contains(event.target)) return;
+    closeAccountMenu();
+  };
+
+  const handleWindowKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape") return;
+
+    if (accountMenuOpen) {
+      closeAccountMenu();
+    }
+
+    if (mobileNavOpen) {
+      closeMobileNav();
+    }
   };
 
   const handleLogout = async (): Promise<void> => {
@@ -148,6 +178,7 @@
 
     try {
       await authStore.logout();
+      closeAccountMenu();
 
       if (authRouteNames.has($currentRoute.name)) {
         navigate(homePath, { replace: true });
@@ -164,16 +195,21 @@
 
     if (route.pathname !== handledRoutePathname) {
       mobileNavOpen = false;
+      accountMenuOpen = false;
       logoutError = null;
       handledRoutePathname = route.pathname;
       void focusRouteHeading();
     }
   }
 
+  $: authNavActive = (!$authStore.isAuthenticated && authRouteNames.has($currentRoute.name)) || accountMenuOpen;
   $: accountLabel = $authStore.user?.displayName?.trim() || $authStore.user?.email || "Account";
+  $: authNavLabel = $authStore.isAuthenticated ? "My Account" : "Sign In";
   $: isLoggingOut = $authStore.currentAction === "logout";
   $: routeContextChips = contextChipsForRoute($currentRoute);
 </script>
+
+<svelte:window on:click={handleWindowClick} on:keydown={handleWindowKeydown} />
 
 <div class="shell">
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -188,50 +224,6 @@
       </div>
 
       <div class="header-tools">
-        <section class="account-control" aria-label="Account">
-          <p class="account-label">Account</p>
-
-          {#if $authStore.bootstrapStatus === "loading" && !$authStore.isBootstrapped}
-            <p class="account-summary">Checking session...</p>
-          {:else if $authStore.isAuthenticated}
-            <p class="account-summary">
-              Signed in as <strong>{accountLabel}</strong>
-            </p>
-
-            <div class="account-actions">
-              {#if $authStore.user?.status === "pending_verification"}
-                <span class="account-badge">Email pending</span>
-              {/if}
-
-              <button
-                type="button"
-                class="account-button"
-                disabled={isLoggingOut}
-                on:click={handleLogout}>{isLoggingOut ? "Logging out..." : "Log out"}</button
-              >
-            </div>
-          {:else}
-            <p class="account-summary">Browsing anonymously</p>
-
-            <div class="account-actions">
-              <a href={loginLink} class="account-link" on:click={(event) => onLinkClick(event, loginLink)}
-                >Log in</a
-              >
-              <a
-                href={registerLink}
-                class="account-link secondary"
-                on:click={(event) => onLinkClick(event, registerLink)}>Register</a
-              >
-            </div>
-          {/if}
-
-          {#if logoutError}
-            <p class="account-note error">{logoutError}</p>
-          {:else if $authStore.bootstrapStatus === "error" && !$authStore.isAuthenticated}
-            <p class="account-note">Session check failed. Public archive pages still work.</p>
-          {/if}
-        </section>
-
         <div class="nav-popover">
           <button
             type="button"
@@ -265,6 +257,60 @@
                 }}>{item.label}</a
               >
             {/each}
+
+            {#if $authStore.isAuthenticated}
+              <div class="account-nav-item" bind:this={accountMenuElement}>
+                <button
+                  type="button"
+                  class="account-trigger"
+                  class:active={authNavActive}
+                  aria-controls="account-menu"
+                  aria-expanded={accountMenuOpen}
+                  on:click={toggleAccountMenu}>{authNavLabel}</button
+                >
+
+                {#if accountMenuOpen}
+                  <section id="account-menu" class="account-menu" aria-label="Account menu">
+                    <p class="account-menu-label">Account</p>
+                    <p class="account-menu-summary">
+                      Signed in as <strong>{accountLabel}</strong>
+                    </p>
+
+                    {#if $authStore.user?.email && $authStore.user?.displayName?.trim()}
+                      <p class="account-menu-secondary">{$authStore.user.email}</p>
+                    {/if}
+
+                    <div class="account-actions">
+                      {#if $authStore.user?.status === "pending_verification"}
+                        <span class="account-badge">Email pending</span>
+                      {/if}
+
+                      <button
+                        type="button"
+                        class="account-button"
+                        disabled={isLoggingOut}
+                        on:click={handleLogout}
+                      >
+                        {isLoggingOut ? "Logging out..." : "Log out"}
+                      </button>
+                    </div>
+
+                    {#if logoutError}
+                      <p class="account-note error">{logoutError}</p>
+                    {/if}
+                  </section>
+                {/if}
+              </div>
+            {:else}
+              <a
+                href={loginLink}
+                class:active={authNavActive}
+                on:click={(event) => {
+                  closeMobileNav();
+                  onLinkClick(event, loginLink);
+                }}>{authNavLabel}</a
+              >
+            {/if}
           </nav>
         </div>
       </div>
@@ -400,9 +446,9 @@
   }
 
   .header-tools {
-    display: grid;
-    gap: 0.7rem;
-    justify-items: end;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
     min-width: 0;
   }
 
@@ -416,6 +462,7 @@
   .brand-block {
     display: grid;
     gap: 0.2rem;
+    min-width: 0;
   }
 
   .brand-link {
@@ -433,18 +480,7 @@
     font-size: 0.92rem;
   }
 
-  .account-control {
-    min-width: min(100%, 19rem);
-    display: grid;
-    gap: 0.32rem;
-    padding: 0.72rem 0.85rem;
-    border: 1px solid #d9e2ec;
-    border-radius: 0.95rem;
-    background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 12px 30px -28px rgba(16, 42, 67, 0.42);
-  }
-
-  .account-label {
+  .account-menu-label {
     margin: 0;
     color: #627d98;
     font-size: 0.72rem;
@@ -453,15 +489,23 @@
     letter-spacing: 0.04em;
   }
 
-  .account-summary {
+  .account-menu-summary {
     margin: 0;
     color: #102a43;
     font-size: 0.92rem;
     line-height: 1.4;
   }
 
-  .account-summary strong {
+  .account-menu-summary strong {
     font-weight: 700;
+  }
+
+  .account-menu-secondary {
+    margin: -0.15rem 0 0;
+    color: #627d98;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    word-break: break-word;
   }
 
   .account-actions {
@@ -471,7 +515,6 @@
     align-items: center;
   }
 
-  .account-link,
   .account-button {
     display: inline-flex;
     align-items: center;
@@ -488,19 +531,62 @@
     cursor: pointer;
   }
 
-  .account-link.secondary {
-    border-color: #d9e2ec;
-    background: rgba(255, 255, 255, 0.92);
-    color: #243b53;
-  }
-
-  .account-link:hover,
   .account-button:hover {
     background: #dcebff;
   }
 
-  .account-link.secondary:hover {
-    background: #f5f8fb;
+  .account-nav-item {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+  }
+
+  .account-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.1rem;
+    padding: 0.42rem 0.72rem;
+    border-radius: 999px;
+    border: 1px solid #d9e2ec;
+    background: rgba(255, 255, 255, 0.82);
+    color: #334e68;
+    font-size: 0.94rem;
+    font-weight: 600;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+    cursor: pointer;
+  }
+
+  .account-trigger:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .account-trigger.active {
+    color: #0b4ea2;
+    border-color: #6f9fdd;
+    background: #e8f2ff;
+  }
+
+  .account-menu {
+    position: absolute;
+    top: calc(100% + 0.45rem);
+    right: 0;
+    width: min(18rem, calc(100vw - 2.5rem));
+    display: grid;
+    gap: 0.42rem;
+    padding: 0.75rem 0.82rem;
+    border: 1px solid #cdd7e1;
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow:
+      0 20px 45px -28px rgba(16, 42, 67, 0.45),
+      0 8px 18px -16px rgba(16, 42, 67, 0.35);
+    z-index: 35;
   }
 
   .account-button:disabled {
@@ -575,9 +661,11 @@
     display: flex;
     gap: 0.55rem;
     flex-wrap: nowrap;
+    align-items: center;
   }
 
-  nav a {
+  nav a,
+  .account-trigger {
     color: #334e68;
     text-decoration: none;
     padding: 0.42rem 0.72rem;
@@ -592,13 +680,15 @@
       color 120ms ease;
   }
 
-  nav a:hover {
+  nav a:hover,
+  .account-trigger:hover {
     background: #f0f7ff;
     border-color: #9fb3c8;
     color: #243b53;
   }
 
-  nav a.active {
+  nav a.active,
+  .account-trigger.active {
     color: #0b4ea2;
     border-color: #6f9fdd;
     background: #e8f2ff;
@@ -663,17 +753,17 @@
     }
 
     .header-bar {
-      flex-direction: column;
-      align-items: stretch;
+      flex-direction: row;
+      align-items: flex-start;
     }
 
     .header-tools {
-      justify-items: stretch;
-      width: 100%;
+      width: auto;
+      flex-shrink: 0;
     }
 
-    .account-control {
-      min-width: 0;
+    .brand-block {
+      flex: 1 1 auto;
     }
 
     .nav-toggle {
@@ -726,11 +816,31 @@
       border-radius: 0.8rem;
     }
 
+    .account-nav-item {
+      display: grid;
+      width: 100%;
+    }
+
+    .account-trigger {
+      width: 100%;
+      text-align: left;
+      justify-content: flex-start;
+      padding: 0.7rem 0.85rem;
+      border-radius: 0.8rem;
+    }
+
+    .account-menu {
+      position: static;
+      width: 100%;
+      margin-top: 0.45rem;
+      border-radius: 0.8rem;
+      box-shadow: none;
+    }
+
     .account-actions {
       align-items: stretch;
     }
 
-    .account-link,
     .account-button,
     .account-badge {
       width: 100%;

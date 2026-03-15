@@ -26,7 +26,7 @@ import {
   type AuthUserRecord,
   type SessionRequestMetadata,
 } from "../auth";
-import { resolveAuthAppBaseUrl } from "../config";
+import { resolveAuthAppBaseUrl, resolveAuthEmailRuntimeConfig, type AuthEmailRuntimeConfig } from "../config";
 import { db as defaultDb } from "../db";
 import { createAuthEmailSender, type AuthEmailSender } from "../email";
 import type { DB } from "../types/db.d.ts";
@@ -78,11 +78,13 @@ export interface AuthFlowResult {
 }
 
 export interface RegisterResult {
+  developmentVerificationUrl: string | null;
   user: AuthUserRecord | null;
   verificationEmailSent: boolean;
 }
 
 export interface ResendVerificationResult {
+  developmentVerificationUrl: string | null;
   user: AuthUserRecord | null;
   verificationEmailSent: boolean;
 }
@@ -99,6 +101,7 @@ export interface LogoutResult {
 export interface AuthServiceDependencies {
   appBaseUrl?: string;
   db?: DatabaseClient;
+  emailRuntimeConfig?: AuthEmailRuntimeConfig;
   mailer?: AuthEmailSender;
   now?: () => Date;
 }
@@ -369,7 +372,9 @@ function throwExpiredToken(): never {
 
 export function createAuthService(dependencies: AuthServiceDependencies = {}) {
   const authDb = dependencies.db ?? defaultDb;
-  const mailer = dependencies.mailer ?? createAuthEmailSender();
+  const emailRuntimeConfig =
+    dependencies.emailRuntimeConfig ?? resolveAuthEmailRuntimeConfig();
+  const mailer = dependencies.mailer ?? createAuthEmailSender(console, emailRuntimeConfig);
   const now = dependencies.now ?? (() => new Date());
   const appBaseUrl = resolveAppBaseUrl(dependencies.appBaseUrl ?? process.env.APP_BASE_URL);
 
@@ -383,7 +388,11 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
 
       const existingUser = await findUserByEmail(authDb, email);
       if (existingUser && existingUser.status !== "pending_verification") {
-        return { user: null, verificationEmailSent: false };
+        return {
+          developmentVerificationUrl: null,
+          user: null,
+          verificationEmailSent: false,
+        };
       }
 
       const passwordHash = await hashPassword(input.password);
@@ -432,17 +441,29 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       });
 
       if (!result.user || !result.verification) {
-        return { user: null, verificationEmailSent: false };
+        return {
+          developmentVerificationUrl: null,
+          user: null,
+          verificationEmailSent: false,
+        };
       }
+
+      const verificationUrl = buildFrontendUrl(
+        appBaseUrl,
+        "/verify-email",
+        result.verification.token
+      );
 
       await mailer.sendVerificationEmail({
         displayName: result.user.display_name,
         email: result.user.email,
         expiresAt: result.verification.expiresAt,
-        verificationUrl: buildFrontendUrl(appBaseUrl, "/verify-email", result.verification.token),
+        verificationUrl,
       });
 
       return {
+        developmentVerificationUrl:
+          emailRuntimeConfig.mode === "dev-auto-verify" ? verificationUrl : null,
         user: result.user,
         verificationEmailSent: true,
       };
@@ -456,7 +477,11 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
 
       const user = await findUserByEmail(authDb, email);
       if (!user || user.status !== "pending_verification") {
-        return { user: null, verificationEmailSent: false };
+        return {
+          developmentVerificationUrl: null,
+          user: null,
+          verificationEmailSent: false,
+        };
       }
 
       const currentTime = now();
@@ -465,14 +490,20 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       });
 
       const authUser = toAuthUserRecord(user);
+      const verificationUrl = buildFrontendUrl(appBaseUrl, "/verify-email", verification.token);
       await mailer.sendVerificationEmail({
         displayName: authUser.display_name,
         email: authUser.email,
         expiresAt: verification.expiresAt,
-        verificationUrl: buildFrontendUrl(appBaseUrl, "/verify-email", verification.token),
+        verificationUrl,
       });
 
-      return { user: authUser, verificationEmailSent: true };
+      return {
+        developmentVerificationUrl:
+          emailRuntimeConfig.mode === "dev-auto-verify" ? verificationUrl : null,
+        user: authUser,
+        verificationEmailSent: true,
+      };
     },
 
     async verifyEmail(
