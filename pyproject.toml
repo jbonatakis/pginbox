@@ -11,3 +11,8 @@ description = "Download, parse, and store PostgreSQL mailing list mbox archives 
 name = "pginbox"
 requires-python = ">=3.12"
 version = "0.1.0"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

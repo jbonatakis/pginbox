@@ -300,6 +300,55 @@ Subject: [PATCH 2/2] Second patch
     ]
 
 
+def test_parse_mbox_recovers_body_lines_starting_with_from(tmp_path):
+    path = tmp_path / "pgsql-hackers.202603"
+    path.write_text(
+        """From pgsql-hackers-owner+archive@lists.postgresql.org Mon Mar 16 19:28:55 2026
+Date: Mon, 16 Mar 2026 15:28:06 -0400
+From: Jack Bonatakis <jack@bonatak.is>
+To: pgsql-hackers@postgresql.org
+Subject: Re: Read-only connection mode for AI workflows.
+Message-ID: <root@example.com>
+Content-Type: text/plain; charset=utf-8
+
+Hi Andrei,
+
+> Also, which commands do you want to restrict?
+
+From my perspective, many AI integrations would want to limit just about anything that can change the state of the database.
+
+That said, the design space becomes quite large.
+
+Jack
+
+From pgsql-hackers-owner+archive@lists.postgresql.org Mon Mar 16 19:34:21 2026
+Date: Mon, 16 Mar 2026 19:34:12 +0100
+From: Someone Else <someone@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Re: Another thread
+Message-ID: <next@example.com>
+Content-Type: text/plain; charset=utf-8
+
+Second message.
+""",
+        encoding="utf-8",
+    )
+
+    records = list(ingest.parse_mbox(path, list_id=1))
+
+    assert len(records) == 2
+    assert records[0]["message_id"] == "<root@example.com>"
+    assert records[0]["body"] == (
+        "Hi Andrei,\n\n"
+        "> Also, which commands do you want to restrict?\n\n"
+        "From my perspective, many AI integrations would want to limit just about anything "
+        "that can change the state of the database.\n\n"
+        "That said, the design space becomes quite large.\n\n"
+        "Jack\n"
+    )
+    assert records[1]["message_id"] == "<next@example.com>"
+
+
 def test_store_batch_live_refreshes_threads_after_message_insert(monkeypatch):
     events = []
 
@@ -367,6 +416,153 @@ def test_store_batch_live_refreshes_threads_after_message_insert(monkeypatch):
         ("insert_messages", ["<message@example.com>"]),
         ("refresh_threads", 23, ["<message@example.com>"]),
         ("insert_attachments", ["<message@example.com>"], {"<message@example.com>": 101}),
+        ("commit",),
+    ]
+
+
+def test_overwrite_messages_updates_existing_and_inserts_missing(monkeypatch):
+    events = []
+
+    class FakeCursor:
+        pass
+
+    batch = [
+        {
+            "message_id": "<existing@example.com>",
+            "thread_id": "<thread@example.com>",
+            "list_id": 23,
+            "sent_at": ts(1),
+            "sent_at_approx": False,
+            "from_name": "Existing",
+            "from_email": "existing@example.com",
+            "subject": "Existing subject",
+            "in_reply_to": None,
+            "refs": None,
+            "body": "Existing body",
+            "_attachments": [],
+            "_normalized_subject": "Existing subject",
+        },
+        {
+            "message_id": "<new@example.com>",
+            "thread_id": "<thread@example.com>",
+            "list_id": 23,
+            "sent_at": ts(2),
+            "sent_at_approx": False,
+            "from_name": "New",
+            "from_email": "new@example.com",
+            "subject": "New subject",
+            "in_reply_to": None,
+            "refs": None,
+            "body": "New body",
+            "_attachments": [],
+            "_normalized_subject": "New subject",
+        },
+    ]
+
+    def fake_fetch_existing_message_ids(cur, pending_batch):
+        events.append(("fetch_existing", [record["message_id"] for record in pending_batch]))
+        return {"<existing@example.com>": 101}
+
+    def fake_update_messages(cur, pending_batch):
+        events.append(("update", [record["message_id"] for record in pending_batch]))
+        return {"<existing@example.com>": 101}
+
+    def fake_insert_messages(cur, pending_batch):
+        events.append(("insert", [record["message_id"] for record in pending_batch]))
+        return {"<new@example.com>": 202}
+
+    monkeypatch.setattr(ingest, "_fetch_existing_message_ids", fake_fetch_existing_message_ids)
+    monkeypatch.setattr(ingest, "_update_messages", fake_update_messages)
+    monkeypatch.setattr(ingest, "_insert_messages", fake_insert_messages)
+
+    id_map = ingest._overwrite_messages(FakeCursor(), batch)
+
+    assert id_map == {
+        "<existing@example.com>": 101,
+        "<new@example.com>": 202,
+    }
+    assert events == [
+        ("fetch_existing", ["<existing@example.com>", "<new@example.com>"]),
+        ("update", ["<existing@example.com>"]),
+        ("insert", ["<new@example.com>"]),
+    ]
+
+
+def test_store_batch_overwrite_rewrites_messages_and_attachments(monkeypatch):
+    events = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def __init__(self):
+            self._cursor = FakeCursor()
+
+        def cursor(self):
+            return self._cursor
+
+        def commit(self):
+            events.append(("commit",))
+
+    batch = [
+        {
+            "message_id": "<message@example.com>",
+            "thread_id": "<thread@example.com>",
+            "list_id": 23,
+            "sent_at": ts(1),
+            "sent_at_approx": False,
+            "from_name": "Sender",
+            "from_email": "sender@example.com",
+            "subject": "Subject",
+            "in_reply_to": None,
+            "refs": None,
+            "body": "Body",
+            "_attachments": [
+                {
+                    "filename": "one.patch",
+                    "content_type": "text/x-diff",
+                    "size_bytes": 12,
+                    "content": "patch",
+                }
+            ],
+            "_normalized_subject": "Subject",
+        }
+    ]
+
+    def fake_resolve_batch_thread_ids(conn, pending_batch):
+        events.append(("resolve", [record["message_id"] for record in pending_batch]))
+
+    def fake_overwrite_messages(cur, pending_batch):
+        events.append(("overwrite_messages", [record["message_id"] for record in pending_batch]))
+        return {"<message@example.com>": 101}
+
+    def fake_replace_attachments_for_ids(cur, pending_batch, id_map, target_db_ids=None):
+        events.append((
+            "replace_attachments",
+            [record["message_id"] for record in pending_batch],
+            id_map,
+            target_db_ids,
+        ))
+        return {
+            "attachments_deleted": 1,
+            "attachments_inserted": 1,
+            "messages_repaired": 1,
+        }
+
+    monkeypatch.setattr(ingest, "_resolve_batch_thread_ids", fake_resolve_batch_thread_ids)
+    monkeypatch.setattr(ingest, "_overwrite_messages", fake_overwrite_messages)
+    monkeypatch.setattr(ingest, "_replace_attachments_for_ids", fake_replace_attachments_for_ids)
+
+    ingest.store_batch_overwrite(FakeConn(), batch)
+
+    assert events == [
+        ("resolve", ["<message@example.com>"]),
+        ("overwrite_messages", ["<message@example.com>"]),
+        ("replace_attachments", ["<message@example.com>"], {"<message@example.com>": 101}, None),
         ("commit",),
     ]
 
@@ -533,3 +729,69 @@ def test_replace_attachments_repairs_existing_messages(monkeypatch):
         },
     ]
     assert recorded["page_size"] == 500
+
+
+def test_ingest_overwrite_defers_thread_rebuild_until_requested(monkeypatch):
+    events = []
+
+    def fake_ensure_list(conn, session, list_name, year, month):
+        events.append(("ensure_list", list_name, year, month))
+        return 23
+
+    def fake_download_mbox(session, year, month, list_name, force=False):
+        events.append(("download_mbox", year, month, list_name, force))
+        return Path(f"/tmp/{list_name}.{year:04d}{month:02d}")
+
+    def fake_parse_mbox(path, list_id):
+        events.append(("parse_mbox", str(path), list_id))
+        yield {
+            "message_id": "<message@example.com>",
+            "thread_id": "<thread@example.com>",
+            "list_id": list_id,
+            "sent_at": ts(1),
+            "sent_at_approx": False,
+            "from_name": "Sender",
+            "from_email": "sender@example.com",
+            "subject": "Subject",
+            "in_reply_to": None,
+            "refs": None,
+            "body": "Body",
+            "_attachments": [],
+            "_normalized_subject": "Subject",
+        }
+
+    def fake_store_batch_overwrite(conn, batch):
+        events.append(("store_batch_overwrite", [record["message_id"] for record in batch]))
+
+    def fake_derive_threads(conn):
+        events.append(("derive_threads",))
+
+    def fake_refresh_analytics_views(conn):
+        events.append(("refresh_analytics_views",))
+
+    monkeypatch.setattr(ingest, "ensure_list", fake_ensure_list)
+    monkeypatch.setattr(ingest, "download_mbox", fake_download_mbox)
+    monkeypatch.setattr(ingest, "parse_mbox", fake_parse_mbox)
+    monkeypatch.setattr(ingest, "store_batch_overwrite", fake_store_batch_overwrite)
+    monkeypatch.setattr(ingest, "derive_threads", fake_derive_threads)
+    monkeypatch.setattr(ingest, "refresh_analytics_views", fake_refresh_analytics_views)
+
+    total = ingest.ingest(
+        conn=object(),
+        session=object(),
+        year=2026,
+        month=3,
+        list_name="pgsql-hackers",
+        overwrite_existing=True,
+        derive=True,
+        refresh_analytics=False,
+    )
+
+    assert total == 1
+    assert events == [
+        ("ensure_list", "pgsql-hackers", 2026, 3),
+        ("download_mbox", 2026, 3, "pgsql-hackers", False),
+        ("parse_mbox", "/tmp/pgsql-hackers.202603", 23),
+        ("store_batch_overwrite", ["<message@example.com>"]),
+        ("derive_threads",),
+    ]
