@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { ThreadDetail } from "shared/api";
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
   import ThreadPageControls from "../components/thread/ThreadPageControls.svelte";
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
   import {
     parseThreadDetailPage,
     parseThreadsDetailContext,
@@ -39,6 +40,7 @@
   let status: ThreadDetailStatus = "idle";
   let thread: ThreadDetail | null = null;
   let backToThreadsPath = threadsPath;
+  let lastAppliedHashAnchorKey: string | null = null;
 
   const threadSubject = (subject: string | null): string => {
     const normalized = subject?.trim() ?? "";
@@ -112,6 +114,33 @@
 
     const nextUrl = `${window.location.pathname}${nextSearch}${window.location.hash}`;
     window.history.replaceState(window.history.state, "", nextUrl);
+  };
+
+  const currentHashAnchorId = (): string | null => {
+    if (typeof window === "undefined") return null;
+    return parseHashAnchorId(window.location.hash);
+  };
+
+  const currentHashAnchorKey = (page: number): string | null => {
+    if (typeof window === "undefined") return null;
+    return buildHashAnchorApplicationKey(`${threadId}:${page}`, window.location.hash);
+  };
+
+  const scrollToCurrentHashAnchor = async (anchorKey: string): Promise<void> => {
+    await tick();
+
+    const anchorId = currentHashAnchorId();
+    if (!anchorId) {
+      lastAppliedHashAnchorKey = null;
+      return;
+    }
+
+    const anchorElement = document.getElementById(anchorId);
+    if (anchorElement) {
+      anchorElement.scrollIntoView({ block: "start" });
+    }
+
+    lastAppliedHashAnchorKey = anchorKey;
   };
 
   const loadThread = async (
@@ -280,6 +309,13 @@
     hasThreadId &&
     status === "error" &&
     (error?.status === 400 || error?.status === 422 || error?.code === "BAD_REQUEST");
+  $: hashAnchorKey = thread ? currentHashAnchorKey(thread.messagePagination.page) : null;
+
+  $: if (hashAnchorKey === null) {
+    lastAppliedHashAnchorKey = null;
+  } else if (hashAnchorKey !== lastAppliedHashAnchorKey) {
+    void scrollToCurrentHashAnchor(hashAnchorKey);
+  }
 
   onDestroy(() => {
     requestSequence += 1;
