@@ -105,6 +105,9 @@ Shared contract types should come from `src/shared/api.ts`.
 
 Semantic search is explicitly not a v1 feature. This section defines the intended phase-2 direction so the v1 URL and state model remain compatible.
 
+Chunking and indexing strategy for the underlying corpus are described separately in [`docs/SEMANTIC_CHUNKING.md`](./SEMANTIC_CHUNKING.md).
+The intended user journey and result-shape design are described in [`docs/SEMANTIC_SEARCH_UX.md`](./SEMANTIC_SEARCH_UX.md).
+
 Long semantic prompts can be large, ambiguous, and unsuitable as canonical URL query strings.
 
 Use a search-session model:
