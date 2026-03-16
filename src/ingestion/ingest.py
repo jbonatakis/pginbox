@@ -617,7 +617,8 @@ UPSERT_TOUCHED_THREADS_SQL = """
         max(sent_at),
         count(*)
     FROM messages
-    WHERE thread_id = ANY(%s)
+    WHERE list_id = %s
+      AND thread_id = ANY(%s)
     GROUP BY thread_id, list_id
     ON CONFLICT (thread_id) DO UPDATE SET
         list_id          = EXCLUDED.list_id,
@@ -946,7 +947,7 @@ def _refresh_threads_for_message_ids(cur, list_id: int, message_ids: list[str]):
     thread_ids = sorted(set(_fetch_thread_ids(cur, list_id, message_ids).values()))
     if not thread_ids:
         return
-    cur.execute(UPSERT_TOUCHED_THREADS_SQL, (thread_ids,))
+    cur.execute(UPSERT_TOUCHED_THREADS_SQL, (list_id, thread_ids))
 
 
 def store_batch_live(conn, batch: list):

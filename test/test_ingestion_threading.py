@@ -201,9 +201,39 @@ def test_refresh_threads_for_message_ids_uses_persisted_thread_ids(monkeypatch):
     assert calls == [
         (
             ingest.UPSERT_TOUCHED_THREADS_SQL,
-            (["<root@example.com>"],),
+            (17, ["<root@example.com>"]),
         )
     ]
+
+
+def test_refresh_threads_for_message_ids_scopes_upsert_to_current_list(monkeypatch):
+    calls = []
+
+    class FakeCursor:
+        def execute(self, sql, params):
+            calls.append((sql, params))
+
+    def fake_fetch_thread_ids(cur, list_id, message_ids):
+        assert list_id == 42
+        return {
+            "<a@example.com>": "<shared-root@example.com>",
+            "<b@example.com>": "<shared-root@example.com>",
+        }
+
+    monkeypatch.setattr(ingest, "_fetch_thread_ids", fake_fetch_thread_ids)
+
+    ingest._refresh_threads_for_message_ids(
+        FakeCursor(),
+        42,
+        ["<a@example.com>", "<b@example.com>"],
+    )
+
+    assert len(calls) == 1
+    sql, params = calls[0]
+    assert sql == ingest.UPSERT_TOUCHED_THREADS_SQL
+    # The first bind is list_id; this prevents cross-list duplicate upsert rows.
+    assert params[0] == 42
+    assert params[1] == ["<shared-root@example.com>"]
 
 
 def test_parse_mbox_recovers_attachments_from_embedded_git_patch_from_lines(tmp_path):
