@@ -9,6 +9,9 @@ Usage:
     # Backfill (bulk insert messages, derive threads at the end):
     python3 ingest.py --year 2026 --month 2 --backfill
 
+    # Reparse a month and overwrite existing message rows + attachments:
+    python3 ingest.py --year 2026 --month 2 --overwrite-existing
+
     # Rebuild canonical message.thread_id values and the derived threads table:
     python3 ingest.py --derive-only
 
@@ -63,6 +66,7 @@ HTTP_RETRIES = 5
 HTTP_RETRY_BASE_DELAY = 2.0
 MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
 GIT_PATCH_FROM_RE = re.compile(br"^From [0-9a-f]{7,64} Mon Sep 17 00:00:00 2001(?: .*)?$")
+RFC822_HEADER_RE = re.compile(br"^[A-Za-z0-9-]+:")
 DEFAULT_LIST_NAME = "pgsql-hackers"
 
 
@@ -296,6 +300,9 @@ def download_mbox(
 # ---------------------------------------------------------------------------
 
 def _decode_body(msg) -> str:
+    def _restore_mbox_escaped_from_lines(text: str) -> str:
+        return re.sub(r"(?m)^>(>*From )", r"\1", text)
+
     if msg.is_multipart():
         for part in msg.walk():
             if part.get_content_type() != "text/plain":
@@ -307,7 +314,7 @@ def _decode_body(msg) -> str:
                 if payload is None:
                     continue
                 charset = part.get_content_charset() or "utf-8"
-                return payload.decode(charset, errors="replace")
+                return _restore_mbox_escaped_from_lines(payload.decode(charset, errors="replace"))
             except Exception:
                 continue
         return ""
@@ -316,10 +323,10 @@ def _decode_body(msg) -> str:
             payload = msg.get_payload(decode=True)
             if payload:
                 charset = msg.get_content_charset() or "utf-8"
-                return payload.decode(charset, errors="replace")
+                return _restore_mbox_escaped_from_lines(payload.decode(charset, errors="replace"))
         except Exception:
             pass
-        return str(msg.get_payload() or "")
+        return _restore_mbox_escaped_from_lines(str(msg.get_payload() or ""))
 
 
 _TEXT_APPLICATION_TYPES = {
@@ -445,13 +452,40 @@ def _is_git_patch_from_line(raw: bytes) -> bool:
     return bool(GIT_PATCH_FROM_RE.match(raw.rstrip(b"\r\n")))
 
 
+def _looks_like_mbox_message_start(lines: list[bytes], index: int) -> bool:
+    """Heuristically distinguish real mbox separators from body lines starting with 'From '."""
+    if index < 0 or index >= len(lines):
+        return False
+
+    raw = lines[index].rstrip(b"\r\n")
+    if not raw.startswith(b"From "):
+        return False
+    if _is_git_patch_from_line(raw):
+        return False
+
+    saw_header = False
+    for candidate in lines[index + 1 :]:
+        stripped = candidate.rstrip(b"\r\n")
+        if not stripped:
+            return saw_header
+        if RFC822_HEADER_RE.match(stripped):
+            saw_header = True
+            continue
+        if saw_header and candidate.startswith((b" ", b"\t")):
+            continue
+        return False
+
+    return False
+
+
 def _mbox_contains_git_patch_from_lines(path: Path) -> bool:
     with path.open("rb") as src:
         return any(_is_git_patch_from_line(raw) for raw in src)
 
 
 def _sanitize_mbox_from_lines(path: Path) -> Path:
-    """Create a temp mbox copy that escapes embedded git patch From-lines."""
+    """Create a temp mbox copy that escapes body lines mistaken for message separators."""
+    lines = path.read_bytes().splitlines(keepends=True)
     tmp = tempfile.NamedTemporaryFile(
         mode="wb",
         prefix=f"{path.name}.",
@@ -461,12 +495,32 @@ def _sanitize_mbox_from_lines(path: Path) -> Path:
     )
     tmp_path = Path(tmp.name)
     try:
-        with path.open("rb") as src, tmp:
-            for raw in src:
-                if _is_git_patch_from_line(raw):
+        with tmp:
+            in_headers = False
+            in_body = False
+
+            for index, raw in enumerate(lines):
+                if not in_headers and not in_body:
+                    if _looks_like_mbox_message_start(lines, index):
+                        in_headers = True
+                    tmp.write(raw)
+                    continue
+
+                if in_headers:
+                    tmp.write(raw)
+                    if raw in (b"\n", b"\r\n"):
+                        in_headers = False
+                        in_body = True
+                    continue
+
+                if raw.startswith(b"From "):
+                    if _looks_like_mbox_message_start(lines, index):
+                        in_headers = True
+                        in_body = False
+                        tmp.write(raw)
+                        continue
                     raw = b">" + raw
-                elif raw.startswith(b"From "):
-                    raw = raw.decode("utf-8", errors="replace").encode("ascii", errors="replace")
+
                 tmp.write(raw)
         return tmp_path
     except Exception:
@@ -651,6 +705,25 @@ INSERT_MESSAGE_SQL = f"""
 """
 
 INSERT_MESSAGE_TEMPLATE = f"({', '.join(['%s'] * len(INSERT_MESSAGE_COLUMNS))})"
+
+OVERWRITE_MESSAGE_SQL = f"""
+    UPDATE messages AS m
+    SET
+        thread_id = v.thread_id,
+        list_id = v.list_id,
+        sent_at = v.sent_at,
+        sent_at_approx = v.sent_at_approx,
+        from_name = v.from_name,
+        from_email = v.from_email,
+        subject = v.subject,
+        in_reply_to = v.in_reply_to,
+        refs = v.refs,
+        body = v.body
+    FROM (VALUES %s) AS v ({", ".join(INSERT_MESSAGE_COLUMNS)})
+    WHERE m.message_id = v.message_id
+      AND m.list_id = v.list_id
+    RETURNING m.id, m.message_id
+"""
 
 INSERT_ATTACHMENT_SQL = """
     INSERT INTO attachments (message_id, part_index, filename, content_type, size_bytes, content)
@@ -856,6 +929,23 @@ def _insert_messages(cur, batch: list) -> dict[str, int]:
     return {message_id: db_id for db_id, message_id in inserted_rows}
 
 
+def _update_messages(cur, batch: list) -> dict[str, int]:
+    """Overwrite existing message rows in the current list and return their DB ids."""
+    if not batch:
+        return {}
+
+    rows = [tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch]
+    updated_rows = execute_values(
+        cur,
+        OVERWRITE_MESSAGE_SQL,
+        rows,
+        template=INSERT_MESSAGE_TEMPLATE,
+        page_size=500,
+        fetch=True,
+    )
+    return {message_id: db_id for db_id, message_id in updated_rows}
+
+
 def _fetch_existing_message_ids(cur, batch: list) -> dict[str, int]:
     if not batch:
         return {}
@@ -898,6 +988,41 @@ def _insert_attachments(cur, batch: list, inserted_message_ids: dict[str, int] |
         execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)
 
 
+def _replace_attachments_for_ids(
+    cur,
+    batch: list,
+    id_map: dict[str, int],
+    target_db_ids: set[int] | None = None,
+) -> dict[str, int]:
+    if not id_map:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    resolved_target_ids = set(id_map.values()) if target_db_ids is None else set(target_db_ids)
+    if not resolved_target_ids:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    cur.execute(DELETE_ATTACHMENTS_SQL, (sorted(resolved_target_ids),))
+    deleted_rows = cur.rowcount
+
+    att_rows = _attachment_rows_for_batch(batch, id_map, resolved_target_ids)
+    if att_rows:
+        execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)
+
+    return {
+        "attachments_deleted": deleted_rows,
+        "attachments_inserted": len(att_rows),
+        "messages_repaired": len(resolved_target_ids),
+    }
+
+
 def _replace_attachments(cur, batch: list) -> dict[str, int]:
     """Replace attachments for existing messages represented in the current batch."""
     id_map = _fetch_existing_message_ids(cur, batch)
@@ -921,26 +1046,22 @@ def _replace_attachments(cur, batch: list) -> dict[str, int]:
         if (db_id := id_map.get(record["message_id"])) is not None
         and (record.get("_attachments") or db_id in existing_attachment_ids)
     }
-    if not target_db_ids:
-        return {
-            "attachments_deleted": 0,
-            "attachments_inserted": 0,
-            "messages_repaired": 0,
-        }
+    return _replace_attachments_for_ids(cur, batch, id_map, target_db_ids)
 
-    ordered_target_ids = sorted(target_db_ids)
-    cur.execute(DELETE_ATTACHMENTS_SQL, (ordered_target_ids,))
-    deleted_rows = cur.rowcount
 
-    att_rows = _attachment_rows_for_batch(batch, id_map, target_db_ids)
-    if att_rows:
-        execute_batch(cur, INSERT_ATTACHMENT_SQL, att_rows, page_size=500)
+def _overwrite_messages(cur, batch: list) -> dict[str, int]:
+    """Insert new messages and overwrite existing rows in-place for the current list."""
+    if not batch:
+        return {}
 
-    return {
-        "attachments_deleted": deleted_rows,
-        "attachments_inserted": len(att_rows),
-        "messages_repaired": len(target_db_ids),
-    }
+    existing_message_ids = _fetch_existing_message_ids(cur, batch)
+    update_batch = [record for record in batch if record["message_id"] in existing_message_ids]
+    insert_batch = [record for record in batch if record["message_id"] not in existing_message_ids]
+
+    id_map = {}
+    id_map.update(_update_messages(cur, update_batch))
+    id_map.update(_insert_messages(cur, insert_batch))
+    return id_map
 
 
 def _refresh_threads_for_message_ids(cur, list_id: int, message_ids: list[str]):
@@ -971,6 +1092,18 @@ def store_batch_backfill(conn, batch: list):
     with conn.cursor() as cur:
         inserted_message_ids = _insert_messages(cur, batch)
         _insert_attachments(cur, batch, inserted_message_ids)
+    conn.commit()
+
+
+def store_batch_overwrite(conn, batch: list):
+    """Overwrite parsed message fields and attachments for the current batch."""
+    if not batch:
+        return
+
+    _resolve_batch_thread_ids(conn, batch)
+    with conn.cursor() as cur:
+        id_map = _overwrite_messages(cur, batch)
+        _replace_attachments_for_ids(cur, batch, id_map)
     conn.commit()
 
 
@@ -1108,10 +1241,17 @@ def ingest(
     list_name: str = "pgsql-hackers",
     force_download: bool = False,
     backfill: bool = False,
+    overwrite_existing: bool = False,
     derive: bool = True,
     refresh_analytics: bool = True,
 ):
-    print(f"\n=== {list_name}  {year:04d}-{month:02d} {'[backfill]' if backfill else '[live]'} ===")
+    if overwrite_existing:
+        mode = "[overwrite]"
+    elif backfill:
+        mode = "[backfill]"
+    else:
+        mode = "[live]"
+    print(f"\n=== {list_name}  {year:04d}-{month:02d} {mode} ===")
 
     list_id = ensure_list(conn, session, list_name, year, month)
     try:
@@ -1123,7 +1263,10 @@ def ingest(
     print(f"  [parse+store] {path.name}")
     batch: list = []
     total = 0
-    store_batch = store_batch_backfill if backfill else store_batch_live
+    if overwrite_existing:
+        store_batch = store_batch_overwrite
+    else:
+        store_batch = store_batch_backfill if backfill else store_batch_live
 
     for record in parse_mbox(path, list_id):
         batch.append(record)
@@ -1139,11 +1282,11 @@ def ingest(
 
     print(f"  [done] {total} messages ingested")
 
-    if backfill and derive:
+    if (backfill or overwrite_existing) and derive:
         derive_threads(conn)
         if refresh_analytics:
             refresh_analytics_views(conn)
-    elif not backfill and refresh_analytics:
+    elif not backfill and not overwrite_existing and refresh_analytics:
         refresh_analytics_views(conn)
 
     return total
@@ -1277,6 +1420,8 @@ def main():
                         help="Re-download even if cached")
     parser.add_argument("--backfill", action="store_true",
                         help="Bulk insert messages, derive threads at end (faster for historical data)")
+    parser.add_argument("--overwrite-existing", action="store_true",
+                        help="Reparse archives and overwrite existing messages plus attachments in place")
     parser.add_argument("--repair-attachments", action="store_true",
                         help="Reparse archives and replace attachments for existing messages")
     parser.add_argument("--delay", type=float, default=2.0,
@@ -1316,8 +1461,12 @@ def main():
         parser.error("--decode-subjects cannot be combined with --year/--month/--from/--to")
     if args.repair_attachments and args.backfill:
         parser.error("--repair-attachments cannot be combined with --backfill")
+    if args.repair_attachments and args.overwrite_existing:
+        parser.error("--repair-attachments cannot be combined with --overwrite-existing")
     if args.repair_attachments and args.parallel != 1:
         parser.error("--repair-attachments cannot be combined with --parallel")
+    if args.overwrite_existing and args.parallel != 1:
+        parser.error("--overwrite-existing cannot be combined with --parallel")
 
     if not args.dsn:
         print("Error: provide --dsn or set DATABASE_URL", file=sys.stderr)
@@ -1377,6 +1526,7 @@ def main():
         use_parallel = (
             args.parallel > 1
             and args.backfill
+            and not args.overwrite_existing
             and not args.repair_attachments
             and not needs_download
             and len(months) > 1
@@ -1441,13 +1591,13 @@ def main():
             derive_threads(conn)
         else:
             for i, (year, month) in enumerate(months):
-                # In range backfill mode, defer derive_threads until the final month.
-                derive = not args.backfill or (i == len(months) - 1)
+                # For backfill/overwrite modes, defer thread rebuild until the final month.
+                derive = (not args.backfill and not args.overwrite_existing) or (i == len(months) - 1)
                 try:
                     list_total += ingest(
                         conn, session, year, month,
                         list_name, args.force_download,
-                        args.backfill, derive, False,
+                        args.backfill, args.overwrite_existing, derive, False,
                     )
                 except ArchiveAuthError:
                     print("  [auth] archive access failed, re-authenticating and retrying once...")
@@ -1456,7 +1606,7 @@ def main():
                     list_total += ingest(
                         conn, session, year, month,
                         list_name, args.force_download,
-                        args.backfill, derive, False,
+                        args.backfill, args.overwrite_existing, derive, False,
                     )
                 if i < len(months) - 1:
                     time.sleep(args.delay)
