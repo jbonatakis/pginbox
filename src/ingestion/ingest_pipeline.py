@@ -5,7 +5,13 @@ from pathlib import Path
 import psycopg2
 import requests
 
-from src.ingestion.ingest_archive import DEFAULT_LIST_NAME, MonthNotFound, download_mbox, ensure_list, mbox_cache_path
+from src.ingestion.ingest_archive import (
+    DEFAULT_LIST_NAME,
+    MonthNotFound,
+    download_mbox,
+    ensure_list,
+    mbox_cache_path,
+)
 from src.ingestion.ingest_parse import parse_mbox
 from src.ingestion.ingest_store import (
     derive_threads,
@@ -45,7 +51,9 @@ def _ingest_worker(
         if batch:
             store_batch_backfill_fn(conn, batch)
             total += len(batch)
-        print(f"  [done] {total} messages ingested ({list_name} {year:04d}-{month:02d})")
+        print(
+            f"  [done] {total} messages ingested ({list_name} {year:04d}-{month:02d})"
+        )
         return total
     finally:
         conn.close()
@@ -174,7 +182,11 @@ def repair_attachments(
             stats["attachments_inserted"] += batch_stats["attachments_inserted"]
             stats["messages_repaired"] += batch_stats["messages_repaired"]
             stats["messages_scanned"] += len(batch)
-            print(f"    ...{stats['messages_scanned']} messages scanned", end="\r", flush=True)
+            print(
+                f"    ...{stats['messages_scanned']} messages scanned",
+                end="\r",
+                flush=True,
+            )
             batch = []
 
     if batch:

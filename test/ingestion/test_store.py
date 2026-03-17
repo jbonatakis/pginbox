@@ -48,22 +48,30 @@ def test_store_batch_live_refreshes_threads_after_message_insert(ingest, monkeyp
         events.append(("resolve", [record["message_id"] for record in pending_batch]))
 
     def fake_insert_messages(cur, pending_batch):
-        events.append(("insert_messages", [record["message_id"] for record in pending_batch]))
+        events.append(
+            ("insert_messages", [record["message_id"] for record in pending_batch])
+        )
         return {"<message@example.com>": 101}
 
     def fake_refresh_threads_for_message_ids(cur, list_id, message_ids):
         events.append(("refresh_threads", list_id, message_ids))
 
     def fake_insert_attachments(cur, pending_batch, inserted_message_ids=None):
-        events.append((
-            "insert_attachments",
-            [record["message_id"] for record in pending_batch],
-            inserted_message_ids,
-        ))
+        events.append(
+            (
+                "insert_attachments",
+                [record["message_id"] for record in pending_batch],
+                inserted_message_ids,
+            )
+        )
 
-    monkeypatch.setattr(ingest, "_resolve_batch_thread_ids", fake_resolve_batch_thread_ids)
+    monkeypatch.setattr(
+        ingest, "_resolve_batch_thread_ids", fake_resolve_batch_thread_ids
+    )
     monkeypatch.setattr(ingest, "_insert_messages", fake_insert_messages)
-    monkeypatch.setattr(ingest, "_refresh_threads_for_message_ids", fake_refresh_threads_for_message_ids)
+    monkeypatch.setattr(
+        ingest, "_refresh_threads_for_message_ids", fake_refresh_threads_for_message_ids
+    )
     monkeypatch.setattr(ingest, "_insert_attachments", fake_insert_attachments)
 
     ingest.store_batch_live(FakeConn(), batch)
@@ -72,7 +80,11 @@ def test_store_batch_live_refreshes_threads_after_message_insert(ingest, monkeyp
         ("resolve", ["<message@example.com>"]),
         ("insert_messages", ["<message@example.com>"]),
         ("refresh_threads", 23, ["<message@example.com>"]),
-        ("insert_attachments", ["<message@example.com>"], {"<message@example.com>": 101}),
+        (
+            "insert_attachments",
+            ["<message@example.com>"],
+            {"<message@example.com>": 101},
+        ),
         ("commit",),
     ]
 
@@ -117,7 +129,9 @@ def test_overwrite_messages_updates_existing_and_inserts_missing(ingest, monkeyp
     ]
 
     def fake_fetch_existing_message_ids(cur, pending_batch):
-        events.append(("fetch_existing", [record["message_id"] for record in pending_batch]))
+        events.append(
+            ("fetch_existing", [record["message_id"] for record in pending_batch])
+        )
         return {"<existing@example.com>": 101}
 
     def fake_update_messages(cur, pending_batch):
@@ -128,7 +142,9 @@ def test_overwrite_messages_updates_existing_and_inserts_missing(ingest, monkeyp
         events.append(("insert", [record["message_id"] for record in pending_batch]))
         return {"<new@example.com>": 202}
 
-    monkeypatch.setattr(ingest, "_fetch_existing_message_ids", fake_fetch_existing_message_ids)
+    monkeypatch.setattr(
+        ingest, "_fetch_existing_message_ids", fake_fetch_existing_message_ids
+    )
     monkeypatch.setattr(ingest, "_update_messages", fake_update_messages)
     monkeypatch.setattr(ingest, "_insert_messages", fake_insert_messages)
 
@@ -194,32 +210,47 @@ def test_store_batch_overwrite_rewrites_messages_and_attachments(ingest, monkeyp
         events.append(("resolve", [record["message_id"] for record in pending_batch]))
 
     def fake_overwrite_messages(cur, pending_batch):
-        events.append(("overwrite_messages", [record["message_id"] for record in pending_batch]))
+        events.append(
+            ("overwrite_messages", [record["message_id"] for record in pending_batch])
+        )
         return {"<message@example.com>": 101}
 
-    def fake_replace_attachments_for_ids(cur, pending_batch, id_map, target_db_ids=None):
-        events.append((
-            "replace_attachments",
-            [record["message_id"] for record in pending_batch],
-            id_map,
-            target_db_ids,
-        ))
+    def fake_replace_attachments_for_ids(
+        cur, pending_batch, id_map, target_db_ids=None
+    ):
+        events.append(
+            (
+                "replace_attachments",
+                [record["message_id"] for record in pending_batch],
+                id_map,
+                target_db_ids,
+            )
+        )
         return {
             "attachments_deleted": 1,
             "attachments_inserted": 1,
             "messages_repaired": 1,
         }
 
-    monkeypatch.setattr(ingest, "_resolve_batch_thread_ids", fake_resolve_batch_thread_ids)
+    monkeypatch.setattr(
+        ingest, "_resolve_batch_thread_ids", fake_resolve_batch_thread_ids
+    )
     monkeypatch.setattr(ingest, "_overwrite_messages", fake_overwrite_messages)
-    monkeypatch.setattr(ingest, "_replace_attachments_for_ids", fake_replace_attachments_for_ids)
+    monkeypatch.setattr(
+        ingest, "_replace_attachments_for_ids", fake_replace_attachments_for_ids
+    )
 
     ingest.store_batch_overwrite(FakeConn(), batch)
 
     assert events == [
         ("resolve", ["<message@example.com>"]),
         ("overwrite_messages", ["<message@example.com>"]),
-        ("replace_attachments", ["<message@example.com>"], {"<message@example.com>": 101}, None),
+        (
+            "replace_attachments",
+            ["<message@example.com>"],
+            {"<message@example.com>": 101},
+            None,
+        ),
         ("commit",),
     ]
 

@@ -12,7 +12,9 @@ def test_extract_message_id_prefers_last_for_in_reply_to(ingest):
         "<root@example.com>",
         "<parent@example.com>",
     ]
-    assert ingest._extract_message_id(header, prefer_last=True) == "<parent@example.com>"
+    assert (
+        ingest._extract_message_id(header, prefer_last=True) == "<parent@example.com>"
+    )
 
 
 def test_decode_subject_decodes_rfc2047_encoded_words(ingest):
@@ -21,7 +23,10 @@ def test_decode_subject_decodes_rfc2047_encoded_words(ingest):
         "=?UTF-8?Q?mand_tag_negotiation_via_=5Fpq=5F?="
     )
 
-    assert ingest._decode_subject(encoded) == "[PATCH v1] command_tag_format — protocol-level command tag negotiation via _pq_"
+    assert (
+        ingest._decode_subject(encoded)
+        == "[PATCH v1] command_tag_format — protocol-level command tag negotiation via _pq_"
+    )
 
 
 def test_provisional_threading_prefers_known_parent_over_references_root(ingest):
@@ -197,7 +202,9 @@ def test_refresh_threads_for_message_ids_uses_persisted_thread_ids(ingest, monke
     ]
 
 
-def test_refresh_threads_for_message_ids_scopes_upsert_to_current_list(ingest, monkeypatch):
+def test_refresh_threads_for_message_ids_scopes_upsert_to_current_list(
+    ingest, monkeypatch
+):
     calls = []
 
     class FakeCursor:

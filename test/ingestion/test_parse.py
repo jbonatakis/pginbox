@@ -1,4 +1,6 @@
-def test_parse_mbox_recovers_attachments_from_embedded_git_patch_from_lines(ingest, tmp_path):
+def test_parse_mbox_recovers_attachments_from_embedded_git_patch_from_lines(
+    ingest, tmp_path
+):
     path = tmp_path / "pgsql-hackers.202409"
     path.write_text(
         """From pgsql-hackers-owner+archive@lists.postgresql.org Sun Sep 01 01:33:15 2024

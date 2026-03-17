@@ -52,7 +52,9 @@ def make_session(username: str, password: str) -> requests.Session:
         "this_is_the_login_form": "1",
         "next": "",
     }
-    login_resp = session.post(LOGIN_URL, data=payload, headers={"Referer": LOGIN_URL}, timeout=30)
+    login_resp = session.post(
+        LOGIN_URL, data=payload, headers={"Referer": LOGIN_URL}, timeout=30
+    )
     login_resp.raise_for_status()
 
     if "id_password" in login_resp.text:
@@ -96,15 +98,14 @@ def _open_archive_response(
             )
             time.sleep(delay)
     else:
-        raise RuntimeError(f"Failed to open archive URL after retries: {auth_url}") from last_error
+        raise RuntimeError(
+            f"Failed to open archive URL after retries: {auth_url}"
+        ) from last_error
 
     content_type = resp.headers.get("content-type", "")
-    if (
-        "text/html" in content_type
-        and any(
-            marker in resp.url
-            for marker in ("/account/login", "/list/_auth/accounts/login", "/account/auth/")
-        )
+    if "text/html" in content_type and any(
+        marker in resp.url
+        for marker in ("/account/login", "/list/_auth/accounts/login", "/account/auth/")
     ):
         resp.close()
         raise ArchiveAuthError(
@@ -114,7 +115,9 @@ def _open_archive_response(
     return resp
 
 
-def ensure_archive_access(session: requests.Session, list_name: str, year: int, month: int):
+def ensure_archive_access(
+    session: requests.Session, list_name: str, year: int, month: int
+):
     """Verify the current session can access archive data without auth redirects."""
     year_month = f"{year:04d}{month:02d}"
     url = BASE_URL.format(list_name=list_name, year_month=year_month)
@@ -140,7 +143,9 @@ def _validate_list(session: requests.Session, list_name: str, year: int, month: 
     print(" ok")
 
 
-def ensure_list(conn, session: requests.Session, list_name: str, year: int, month: int) -> int:
+def ensure_list(
+    conn, session: requests.Session, list_name: str, year: int, month: int
+) -> int:
     """Return the list_id for list_name, registering it if this is the first time we've seen it.
 
     Validation (probing the mbox URL) is skipped when the file is already cached,
@@ -221,7 +226,9 @@ def download_mbox(
             )
 
         if downloaded == 0:
-            raise MonthNotFound(f"No mbox found for {list_name} {year_month} (empty response)")
+            raise MonthNotFound(
+                f"No mbox found for {list_name} {year_month} (empty response)"
+            )
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise

@@ -12,14 +12,20 @@ from pathlib import Path
 
 
 MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
-GIT_PATCH_FROM_RE = re.compile(br"^From [0-9a-f]{7,64} Mon Sep 17 00:00:00 2001(?: .*)?$")
-RFC822_HEADER_RE = re.compile(br"^[A-Za-z0-9-]+:")
+GIT_PATCH_FROM_RE = re.compile(
+    rb"^From [0-9a-f]{7,64} Mon Sep 17 00:00:00 2001(?: .*)?$"
+)
+RFC822_HEADER_RE = re.compile(rb"^[A-Za-z0-9-]+:")
 
 _TEXT_APPLICATION_TYPES = {
-    "application/sql", "application/x-sql",
-    "application/x-sh", "application/x-shellscript",
-    "application/x-perl", "application/x-perl-script",
-    "application/x-python", "application/x-python-script",
+    "application/sql",
+    "application/x-sql",
+    "application/x-sh",
+    "application/x-shellscript",
+    "application/x-perl",
+    "application/x-perl-script",
+    "application/x-python",
+    "application/x-python-script",
     "application/x-ruby-script",
     "application/xhtml+xml",
 }
@@ -40,7 +46,9 @@ def _decode_body(msg) -> str:
                 if payload is None:
                     continue
                 charset = part.get_content_charset() or "utf-8"
-                return _restore_mbox_escaped_from_lines(payload.decode(charset, errors="replace"))
+                return _restore_mbox_escaped_from_lines(
+                    payload.decode(charset, errors="replace")
+                )
             except Exception:
                 continue
         return ""
@@ -49,7 +57,9 @@ def _decode_body(msg) -> str:
             payload = msg.get_payload(decode=True)
             if payload:
                 charset = msg.get_content_charset() or "utf-8"
-                return _restore_mbox_escaped_from_lines(payload.decode(charset, errors="replace"))
+                return _restore_mbox_escaped_from_lines(
+                    payload.decode(charset, errors="replace")
+                )
         except Exception:
             pass
         return _restore_mbox_escaped_from_lines(str(msg.get_payload() or ""))
@@ -68,7 +78,9 @@ def _parse_attachments(msg) -> list:
         ct = part.get_content_type()
         disp = part.get_content_disposition() or ""
         filename = part.get_filename()
-        ext = filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
+        ext = (
+            filename.rsplit(".", 1)[-1].lower() if filename and "." in filename else ""
+        )
 
         if ct in (
             "application/pgp-signature",
@@ -93,24 +105,34 @@ def _parse_attachments(msg) -> list:
         content = None
 
         if payload:
-            if ct.startswith("text/") or ct in _TEXT_APPLICATION_TYPES or ext in ("patch", "diff"):
+            if (
+                ct.startswith("text/")
+                or ct in _TEXT_APPLICATION_TYPES
+                or ext in ("patch", "diff")
+            ):
                 charset = part.get_content_charset() or "utf-8"
                 try:
                     content = payload.decode(charset, errors="replace")
                 except Exception:
                     pass
-            elif ct in ("application/gzip", "application/x-gzip", "application/x-compressed") or ext in ("gz", "tgz"):
+            elif ct in (
+                "application/gzip",
+                "application/x-gzip",
+                "application/x-compressed",
+            ) or ext in ("gz", "tgz"):
                 try:
                     content = gzip.decompress(payload).decode("utf-8")
                 except Exception:
                     pass
 
-        attachments.append({
-            "filename": _strip_nul(filename) if filename else None,
-            "content_type": ct,
-            "size_bytes": size,
-            "content": _strip_nul(content) if content else None,
-        })
+        attachments.append(
+            {
+                "filename": _strip_nul(filename) if filename else None,
+                "content_type": ct,
+                "size_bytes": size,
+                "content": _strip_nul(content) if content else None,
+            }
+        )
 
     return attachments
 
@@ -133,7 +155,7 @@ def _decode_subject(value: str | None) -> str:
 def _normalize_email(addr: str) -> str:
     """Lowercase and strip +tags (e.g. user+tag@example.com → user@example.com)."""
     addr = addr.lower().strip()
-    return re.sub(r'\+[^@]*@', '@', addr)
+    return re.sub(r"\+[^@]*@", "@", addr)
 
 
 def _extract_message_ids(value: str | None) -> list[str]:
@@ -154,12 +176,12 @@ def _extract_message_id(value: str | None, *, prefer_last: bool = False) -> str 
 
 
 def _normalize_subject(subject: str) -> str:
-    return re.sub(r'^(Re|Fwd?)\s*:\s*', '', subject, flags=re.IGNORECASE).strip()
+    return re.sub(r"^(Re|Fwd?)\s*:\s*", "", subject, flags=re.IGNORECASE).strip()
 
 
 def _strip_nul(s: str) -> str:
     """Remove NUL bytes that PostgreSQL rejects in text fields."""
-    return s.replace('\x00', '') if s else s
+    return s.replace("\x00", "") if s else s
 
 
 def _is_git_patch_from_line(raw: bytes) -> bool:
@@ -244,7 +266,9 @@ def _sanitize_mbox_from_lines(path: Path) -> Path:
 
 def _iter_mbox_messages(path: Path):
     if _mbox_contains_git_patch_from_lines(path):
-        print("  [warn] detected embedded git patch From-lines; retrying with sanitized copy")
+        print(
+            "  [warn] detected embedded git patch From-lines; retrying with sanitized copy"
+        )
         sanitized_path = _sanitize_mbox_from_lines(path)
         try:
             mbox = mailbox.mbox(str(sanitized_path))
@@ -262,7 +286,9 @@ def _iter_mbox_messages(path: Path):
     try:
         for msg in mbox:
             if not msg.keys():
-                print("  [warn] detected header-less mbox fragments; retrying with sanitized copy")
+                print(
+                    "  [warn] detected header-less mbox fragments; retrying with sanitized copy"
+                )
                 break
             buffered.append(msg)
         else:

@@ -120,7 +120,9 @@ def _attachment_rows_for_batch(
     return store_lib._attachment_rows_for_batch(batch, id_map, allowed_db_ids)
 
 
-def _insert_attachments(cur, batch: list, inserted_message_ids: dict[str, int] | None = None):
+def _insert_attachments(
+    cur, batch: list, inserted_message_ids: dict[str, int] | None = None
+):
     return store_lib._insert_attachments(
         cur,
         batch,
@@ -303,6 +305,7 @@ def repair_attachments(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _parse_year_month(value: str):
     try:
         y, m = value.split("-")
@@ -331,7 +334,13 @@ def _load_list_names(args, parser: argparse.ArgumentParser) -> list[str]:
     if not list_names:
         env_many = os.environ.get("PGINBOX_LIST_NAMES", "")
         if env_many:
-            list_names.extend([candidate for candidate in env_many.replace(",", " ").split() if candidate])
+            list_names.extend(
+                [
+                    candidate
+                    for candidate in env_many.replace(",", " ").split()
+                    if candidate
+                ]
+            )
 
     if not list_names:
         env_one = os.environ.get("PGINBOX_LIST_NAME", "")
@@ -353,48 +362,111 @@ def _load_list_names(args, parser: argparse.ArgumentParser) -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingest PostgreSQL mailing list mbox archives")
-    parser.add_argument("--list", dest="list_names", action="append", default=[],
-                        help="List name to ingest (repeatable, supports comma-separated values)")
-    parser.add_argument("--lists-file", default="",
-                        help="Path to file with one list name per line (# comments supported)")
-    parser.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""),
-                        help="Postgres DSN (or set DATABASE_URL)")
-    parser.add_argument("--pg-user", default=os.environ.get("PG_LIST_USER", ""),
-                        help="postgresql.org account username (or set PG_LIST_USER)")
-    parser.add_argument("--pg-pass", default=os.environ.get("PG_LIST_PASS", ""),
-                        help="postgresql.org account password (or set PG_LIST_PASS)")
-    parser.add_argument("--force-download", action="store_true",
-                        help="Re-download even if cached")
-    parser.add_argument("--backfill", action="store_true",
-                        help="Bulk insert messages, derive threads at end (faster for historical data)")
-    parser.add_argument("--overwrite-existing", action="store_true",
-                        help="Reparse archives and overwrite existing messages plus attachments in place")
-    parser.add_argument("--repair-attachments", action="store_true",
-                        help="Reparse archives and replace attachments for existing messages")
-    parser.add_argument("--delay", type=float, default=2.0,
-                        help="Seconds to wait between downloads in range mode (default: 2)")
-    parser.add_argument("--parallel", type=int, default=1, metavar="N",
-                        help="Number of parallel workers for cache-only backfill (default: 1)")
-    parser.add_argument("--derive-only", action="store_true",
-                        help="Recompute canonical message thread IDs and rebuild the threads table")
-    parser.add_argument("--decode-subjects", action="store_true",
-                        help="Decode stored RFC 2047 message subjects and rebuild the threads table")
+    parser = argparse.ArgumentParser(
+        description="Ingest PostgreSQL mailing list mbox archives"
+    )
+    parser.add_argument(
+        "--list",
+        dest="list_names",
+        action="append",
+        default=[],
+        help="List name to ingest (repeatable, supports comma-separated values)",
+    )
+    parser.add_argument(
+        "--lists-file",
+        default="",
+        help="Path to file with one list name per line (# comments supported)",
+    )
+    parser.add_argument(
+        "--dsn",
+        default=os.environ.get("DATABASE_URL", ""),
+        help="Postgres DSN (or set DATABASE_URL)",
+    )
+    parser.add_argument(
+        "--pg-user",
+        default=os.environ.get("PG_LIST_USER", ""),
+        help="postgresql.org account username (or set PG_LIST_USER)",
+    )
+    parser.add_argument(
+        "--pg-pass",
+        default=os.environ.get("PG_LIST_PASS", ""),
+        help="postgresql.org account password (or set PG_LIST_PASS)",
+    )
+    parser.add_argument(
+        "--force-download", action="store_true", help="Re-download even if cached"
+    )
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="Bulk insert messages, derive threads at end (faster for historical data)",
+    )
+    parser.add_argument(
+        "--overwrite-existing",
+        action="store_true",
+        help="Reparse archives and overwrite existing messages plus attachments in place",
+    )
+    parser.add_argument(
+        "--repair-attachments",
+        action="store_true",
+        help="Reparse archives and replace attachments for existing messages",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=2.0,
+        help="Seconds to wait between downloads in range mode (default: 2)",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of parallel workers for cache-only backfill (default: 1)",
+    )
+    parser.add_argument(
+        "--derive-only",
+        action="store_true",
+        help="Recompute canonical message thread IDs and rebuild the threads table",
+    )
+    parser.add_argument(
+        "--decode-subjects",
+        action="store_true",
+        help="Decode stored RFC 2047 message subjects and rebuild the threads table",
+    )
 
     mode = parser.add_mutually_exclusive_group(required=False)
     mode.add_argument("--year", type=int, help="Single month: year")
-    mode.add_argument("--from", dest="from_ym", type=_parse_year_month,
-                      metavar="YYYY-MM", help="Range start (inclusive)")
+    mode.add_argument(
+        "--from",
+        dest="from_ym",
+        type=_parse_year_month,
+        metavar="YYYY-MM",
+        help="Range start (inclusive)",
+    )
 
-    parser.add_argument("--month", type=int, help="Single month: month (required with --year)")
-    parser.add_argument("--to", dest="to_ym", type=_parse_year_month,
-                        metavar="YYYY-MM", help="Range end (inclusive, required with --from)")
+    parser.add_argument(
+        "--month", type=int, help="Single month: month (required with --year)"
+    )
+    parser.add_argument(
+        "--to",
+        dest="to_ym",
+        type=_parse_year_month,
+        metavar="YYYY-MM",
+        help="Range end (inclusive, required with --from)",
+    )
 
     args = parser.parse_args()
     list_names = _load_list_names(args, parser)
 
-    if not args.derive_only and not args.decode_subjects and args.year is None and args.from_ym is None:
-        parser.error("one of --derive-only, --decode-subjects, --year, or --from is required")
+    if (
+        not args.derive_only
+        and not args.decode_subjects
+        and args.year is None
+        and args.from_ym is None
+    ):
+        parser.error(
+            "one of --derive-only, --decode-subjects, --year, or --from is required"
+        )
 
     # Validate single vs range args
     if args.year is not None and args.month is None:
@@ -403,14 +475,22 @@ def main():
         parser.error("--to is required with --from")
     if args.derive_only and args.decode_subjects:
         parser.error("--derive-only cannot be combined with --decode-subjects")
-    if args.derive_only and any(value is not None for value in (args.year, args.month, args.from_ym, args.to_ym)):
+    if args.derive_only and any(
+        value is not None for value in (args.year, args.month, args.from_ym, args.to_ym)
+    ):
         parser.error("--derive-only cannot be combined with --year/--month/--from/--to")
-    if args.decode_subjects and any(value is not None for value in (args.year, args.month, args.from_ym, args.to_ym)):
-        parser.error("--decode-subjects cannot be combined with --year/--month/--from/--to")
+    if args.decode_subjects and any(
+        value is not None for value in (args.year, args.month, args.from_ym, args.to_ym)
+    ):
+        parser.error(
+            "--decode-subjects cannot be combined with --year/--month/--from/--to"
+        )
     if args.repair_attachments and args.backfill:
         parser.error("--repair-attachments cannot be combined with --backfill")
     if args.repair_attachments and args.overwrite_existing:
-        parser.error("--repair-attachments cannot be combined with --overwrite-existing")
+        parser.error(
+            "--repair-attachments cannot be combined with --overwrite-existing"
+        )
     if args.repair_attachments and args.parallel != 1:
         parser.error("--repair-attachments cannot be combined with --parallel")
     if args.overwrite_existing and args.parallel != 1:
@@ -443,12 +523,18 @@ def main():
 
     # Only auth if at least one month needs downloading across any requested list.
     needs_download_by_list = {
-        list_name: (args.force_download or any(not is_cached(y, m, list_name) for y, m in months))
+        list_name: (
+            args.force_download
+            or any(not is_cached(y, m, list_name) for y, m in months)
+        )
         for list_name in list_names
     }
     if any(needs_download_by_list.values()):
         if not args.pg_user or not args.pg_pass:
-            print("Error: provide --pg-user/--pg-pass or set PG_LIST_USER/PG_LIST_PASS", file=sys.stderr)
+            print(
+                "Error: provide --pg-user/--pg-pass or set PG_LIST_USER/PG_LIST_PASS",
+                file=sys.stderr,
+            )
             sys.exit(1)
         print("[auth] logging in to postgresql.org...")
         session = make_session(args.pg_user, args.pg_pass)
@@ -456,7 +542,9 @@ def main():
             if not needs_download_by_list[list_name]:
                 continue
             first_download_month = next(
-                (y, m) for y, m in months if args.force_download or not is_cached(y, m, list_name)
+                (y, m)
+                for y, m in months
+                if args.force_download or not is_cached(y, m, list_name)
             )
             ensure_archive_access(session, list_name, *first_download_month)
     else:
@@ -499,7 +587,9 @@ def main():
                         args.force_download,
                     )
                 except ArchiveAuthError:
-                    print("  [auth] archive access failed, re-authenticating and retrying once...")
+                    print(
+                        "  [auth] archive access failed, re-authenticating and retrying once..."
+                    )
                     session = make_session(args.pg_user, args.pg_pass)
                     ensure_archive_access(session, list_name, year, month)
                     month_stats = repair_attachments(
@@ -527,10 +617,14 @@ def main():
         elif use_parallel:
             # Pre-register the list in the main thread so workers don't race on it
             list_id = ensure_list(conn, session, list_name, *months[0])
-            print(f"\n[parallel] {list_name}: {len(months)} months, {args.parallel} workers")
+            print(
+                f"\n[parallel] {list_name}: {len(months)} months, {args.parallel} workers"
+            )
             with ProcessPoolExecutor(max_workers=args.parallel) as executor:
                 futures = {
-                    executor.submit(_ingest_worker, args.dsn, list_id, y, m, list_name): (y, m)
+                    executor.submit(
+                        _ingest_worker, args.dsn, list_id, y, m, list_name
+                    ): (y, m)
                     for y, m in months
                 }
                 for future in as_completed(futures):
@@ -540,21 +634,39 @@ def main():
         else:
             for i, (year, month) in enumerate(months):
                 # For backfill/overwrite modes, defer thread rebuild until the final month.
-                derive = (not args.backfill and not args.overwrite_existing) or (i == len(months) - 1)
+                derive = (not args.backfill and not args.overwrite_existing) or (
+                    i == len(months) - 1
+                )
                 try:
                     list_total += ingest(
-                        conn, session, year, month,
-                        list_name, args.force_download,
-                        args.backfill, args.overwrite_existing, derive, False,
+                        conn,
+                        session,
+                        year,
+                        month,
+                        list_name,
+                        args.force_download,
+                        args.backfill,
+                        args.overwrite_existing,
+                        derive,
+                        False,
                     )
                 except ArchiveAuthError:
-                    print("  [auth] archive access failed, re-authenticating and retrying once...")
+                    print(
+                        "  [auth] archive access failed, re-authenticating and retrying once..."
+                    )
                     session = make_session(args.pg_user, args.pg_pass)
                     ensure_archive_access(session, list_name, year, month)
                     list_total += ingest(
-                        conn, session, year, month,
-                        list_name, args.force_download,
-                        args.backfill, args.overwrite_existing, derive, False,
+                        conn,
+                        session,
+                        year,
+                        month,
+                        list_name,
+                        args.force_download,
+                        args.backfill,
+                        args.overwrite_existing,
+                        derive,
+                        False,
                     )
                 if i < len(months) - 1:
                     time.sleep(args.delay)

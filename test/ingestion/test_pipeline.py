@@ -36,7 +36,9 @@ def test_ingest_overwrite_defers_thread_rebuild_until_requested(ingest, monkeypa
         }
 
     def fake_store_batch_overwrite(conn, batch):
-        events.append(("store_batch_overwrite", [record["message_id"] for record in batch]))
+        events.append(
+            ("store_batch_overwrite", [record["message_id"] for record in batch])
+        )
 
     def fake_derive_threads(conn):
         events.append(("derive_threads",))

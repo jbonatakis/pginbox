@@ -118,7 +118,9 @@ def _fetch_thread_ids(cur, list_id: int, message_ids: list[str]) -> dict[str, st
     return {message_id: thread_id for message_id, thread_id in cur.fetchall()}
 
 
-def _last_known_reference(message_id: str, refs: list[str] | None, known_message_ids: set[str]) -> str | None:
+def _last_known_reference(
+    message_id: str, refs: list[str] | None, known_message_ids: set[str]
+) -> str | None:
     for ref in reversed(refs or []):
         if ref != message_id and ref in known_message_ids:
             return ref
@@ -210,7 +212,11 @@ def _resolve_batch_thread_ids(
 
 def _message_sort_key(message_id: str, records: dict[str, dict]):
     sent_at = records[message_id].get("sent_at")
-    return (sent_at is None, sent_at or datetime.max.replace(tzinfo=timezone.utc), message_id)
+    return (
+        sent_at is None,
+        sent_at or datetime.max.replace(tzinfo=timezone.utc),
+        message_id,
+    )
 
 
 def _canonical_thread_ids_for_list(records: dict[str, dict]) -> dict[str, str]:
@@ -252,9 +258,15 @@ def _canonical_thread_ids_for_list(records: dict[str, dict]) -> dict[str, str]:
     canonical: dict[str, str] = {}
     for members in components.values():
         member_set = set(members)
-        root_candidates = [message_id for message_id in members if parents.get(message_id) not in member_set]
+        root_candidates = [
+            message_id
+            for message_id in members
+            if parents.get(message_id) not in member_set
+        ]
         candidates = root_candidates or members
-        thread_id = min(candidates, key=lambda message_id: _message_sort_key(message_id, records))
+        thread_id = min(
+            candidates, key=lambda message_id: _message_sort_key(message_id, records)
+        )
         for message_id in members:
             canonical[message_id] = thread_id
 
@@ -266,7 +278,9 @@ def _insert_messages(cur, batch: list) -> dict[str, int]:
     if not batch:
         return {}
 
-    rows = [tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch]
+    rows = [
+        tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch
+    ]
     inserted_rows = execute_values(
         cur,
         INSERT_MESSAGE_SQL,
@@ -283,7 +297,9 @@ def _update_messages(cur, batch: list) -> dict[str, int]:
     if not batch:
         return {}
 
-    rows = [tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch]
+    rows = [
+        tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch
+    ]
     updated_rows = execute_values(
         cur,
         OVERWRITE_MESSAGE_SQL,
@@ -364,7 +380,9 @@ def _replace_attachments_for_ids(
             "messages_repaired": 0,
         }
 
-    resolved_target_ids = set(id_map.values()) if target_db_ids is None else set(target_db_ids)
+    resolved_target_ids = (
+        set(id_map.values()) if target_db_ids is None else set(target_db_ids)
+    )
     if not resolved_target_ids:
         return {
             "attachments_deleted": 0,
@@ -431,8 +449,12 @@ def _overwrite_messages(
         return {}
 
     existing_message_ids = fetch_existing_message_ids(cur, batch)
-    update_batch = [record for record in batch if record["message_id"] in existing_message_ids]
-    insert_batch = [record for record in batch if record["message_id"] not in existing_message_ids]
+    update_batch = [
+        record for record in batch if record["message_id"] in existing_message_ids
+    ]
+    insert_batch = [
+        record for record in batch if record["message_id"] not in existing_message_ids
+    ]
 
     id_map = {}
     id_map.update(update_messages(cur, update_batch))
@@ -536,7 +558,9 @@ def rethread_messages(conn):
     """Recompute messages.thread_id as canonical conversation IDs per list."""
     print("  [rethread messages]", end="", flush=True)
     with conn.cursor() as cur:
-        cur.execute("SELECT list_id, message_id, sent_at, in_reply_to, refs, thread_id FROM messages")
+        cur.execute(
+            "SELECT list_id, message_id, sent_at, in_reply_to, refs, thread_id FROM messages"
+        )
         rows = cur.fetchall()
 
     records_by_list: dict[int, dict[str, dict]] = {}
