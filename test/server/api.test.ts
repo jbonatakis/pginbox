@@ -229,4 +229,11 @@ describe("API not-found and success (require DB)", () => {
     expect(json).toHaveProperty("uniqueSenders");
     expect(json).toHaveProperty("monthsIngested");
   });
+
+  it("GET /analytics/messages-last-24h returns 200 with message count", async () => {
+    const { status, json } = await get("/analytics/messages-last-24h");
+    expect(status).toBe(200);
+    expect(json).toHaveProperty("messages");
+    expect(typeof (json as { messages: unknown }).messages).toBe("number");
+  });
 });

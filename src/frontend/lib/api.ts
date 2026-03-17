@@ -1,6 +1,7 @@
 import type {
   AttachmentDetail,
   AnalyticsSummary,
+  AnalyticsMessagesLast24h,
   AccountProfileUpdateRequest,
   AccountProfileUpdateResponse,
   AuthForgotPasswordRequest,
@@ -503,6 +504,12 @@ export async function getAnalyticsByDow(options: RequestOptions = {}): Promise<B
   return requestJson<ByDow[]>(withApiBase("/analytics/by-dow"), options);
 }
 
+export async function getAnalyticsMessagesLast24h(
+  options: RequestOptions = {}
+): Promise<AnalyticsMessagesLast24h> {
+  return requestJson<AnalyticsMessagesLast24h>(withApiBase("/analytics/messages-last-24h"), options);
+}
+
 export const api = {
   attachments: {
     get: getAttachment,
@@ -510,6 +517,7 @@ export const api = {
   analytics: {
     getByDow: getAnalyticsByDow,
     getByHour: getAnalyticsByHour,
+    getMessagesLast24h: getAnalyticsMessagesLast24h,
     getByMonth: getAnalyticsByMonth,
     getSummary: getAnalyticsSummary,
     getTopSenders: getAnalyticsTopSenders,

@@ -170,6 +170,10 @@ export interface AnalyticsSummary {
   monthsIngested: number;
 }
 
+export interface AnalyticsMessagesLast24h {
+  messages: number;
+}
+
 export interface ByMonth {
   year: number;
   month: number;

@@ -102,6 +102,7 @@ BEGIN
     REFRESH MATERIALIZED VIEW analytics_top_senders;
     REFRESH MATERIALIZED VIEW analytics_by_hour;
     REFRESH MATERIALIZED VIEW analytics_by_dow;
+    REFRESH MATERIALIZED VIEW analytics_messages_last_24h;
 END;
 $$;
 
@@ -167,6 +168,18 @@ CREATE MATERIALIZED VIEW public.analytics_by_month AS
    FROM public.messages
   WHERE ((sent_at_approx = false) AND (sent_at IS NOT NULL))
   GROUP BY ((EXTRACT(year FROM sent_at))::integer), ((EXTRACT(month FROM sent_at))::integer)
+  WITH NO DATA;
+
+
+--
+-- Name: analytics_messages_last_24h; Type: MATERIALIZED VIEW; Schema: public; Owner: -
+--
+
+CREATE MATERIALIZED VIEW public.analytics_messages_last_24h AS
+ SELECT (1)::smallint AS singleton_id,
+    count(*) AS messages
+   FROM public.messages
+  WHERE ((sent_at IS NOT NULL) AND (sent_at >= (now() - '24:00:00'::interval)))
   WITH NO DATA;
 
 
@@ -746,6 +759,13 @@ CREATE UNIQUE INDEX analytics_by_month_year_month_idx ON public.analytics_by_mon
 
 
 --
+-- Name: analytics_messages_last_24h_singleton_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_messages_last_24h_singleton_idx ON public.analytics_messages_last_24h USING btree (singleton_id);
+
+
+--
 -- Name: analytics_summary_singleton_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -990,4 +1010,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260312000007'),
     ('20260314000008'),
     ('20260315000009'),
-    ('20260315000010');
+    ('20260315000010'),
+    ('20260317000011');

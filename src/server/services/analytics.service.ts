@@ -32,6 +32,10 @@ type ByDowRow = {
   messages: IntLike;
 };
 
+type MessagesLast24hRow = {
+  messages: IntLike;
+};
+
 function toNumber(value: IntLike): number {
   if (typeof value === "number") return value;
   if (typeof value === "bigint") return Number(value);
@@ -114,4 +118,16 @@ export async function getByDow() {
     dow: toNumber(row.dow),
     messages: toNumber(row.messages),
   }));
+}
+
+export async function getMessagesLast24h() {
+  const result = await sql<MessagesLast24hRow>`
+    SELECT messages
+    FROM analytics_messages_last_24h
+  `.execute(db);
+
+  const row = result.rows[0];
+  return {
+    messages: row ? toNumber(row.messages) : 0,
+  };
 }

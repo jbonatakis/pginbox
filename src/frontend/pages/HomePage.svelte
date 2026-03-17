@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { api } from "../lib/api";
   import { navigate, threadsPath } from "../router";
 
   let searchQuery = "";
@@ -7,6 +9,8 @@
     "walsender",
     "repack",
   ];
+  const messageCountFormatter = new Intl.NumberFormat("en-US");
+  let messagesLast24h: number | null = null;
 
   const threadsSearchPath = (query: string): string => {
     const normalized = query.trim();
@@ -24,6 +28,22 @@
     searchQuery = query;
     submitSearch();
   };
+
+  onMount(() => {
+    let cancelled = false;
+
+    void api.analytics
+      .getMessagesLast24h()
+      .then((result) => {
+        if (cancelled) return;
+        messagesLast24h = result.messages;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  });
 </script>
 
 <section class="home-page">
@@ -55,6 +75,12 @@
         >
       {/each}
     </div>
+
+    {#if messagesLast24h !== null}
+      <p class="freshness">
+        {messageCountFormatter.format(messagesLast24h)} messages sent in the last 24 hours
+      </p>
+    {/if}
   </div>
 </section>
 
@@ -202,6 +228,13 @@
     margin-top: 0.2rem;
   }
 
+  .freshness {
+    margin: 0.05rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.3;
+  }
+
   .suggestion-chip {
     border: 1px solid var(--border);
     border-radius: 999px;
@@ -266,6 +299,10 @@
     .suggestion-chip {
       font-size: 0.73rem;
       padding: 0.3rem 0.62rem;
+    }
+
+    .freshness {
+      font-size: 0.76rem;
     }
   }
 </style>
