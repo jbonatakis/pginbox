@@ -25,7 +25,7 @@ session = make_session(username, password)
 
 path = download_mbox(session, YEAR, MONTH, LIST)
 
-msgs = list(parse_mbox(path, LIST, YEAR * 100 + MONTH))
+msgs = list(parse_mbox(path, list_id=1))
 print(f"\nParsed {len(msgs)} messages\n")
 
 if msgs:

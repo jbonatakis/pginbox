@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = spec_from_file_location("ingest", ROOT / "src/ingestion/ingest.py")
+assert SPEC is not None
 ingest = module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(ingest)
@@ -624,7 +626,7 @@ def test_insert_attachments_only_uses_newly_inserted_message_ids(monkeypatch):
 
 
 def test_replace_attachments_repairs_existing_messages(monkeypatch):
-    recorded = {"executions": []}
+    recorded: dict[str, Any] = {"executions": []}
 
     class FakeCursor:
         def __init__(self):

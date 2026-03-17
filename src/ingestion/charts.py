@@ -203,6 +203,6 @@ for (r, c), cell in table.get_celld().items():
     cell.set_edgecolor("none")
 ax9.set_title("Summary", pad=12)
 
-plt.tight_layout(rect=[0, 0, 1, 0.97])
+plt.tight_layout(rect=(0, 0, 1, 0.97))
 plt.savefig(OUT, dpi=150, bbox_inches="tight")
 print(f"Saved {OUT}")
