@@ -3,12 +3,13 @@
 Quick smoke test: authenticate, download a month, and verify parsing works.
 
 Usage:
-    PG_LIST_USER=you PG_LIST_PASS=secret python3 test_parse.py
+    PG_LIST_USER=you PG_LIST_PASS=secret python3 parse_smoke.py
 """
 
 import os
 import sys
-from ingest import make_session, download_mbox, parse_mbox
+
+from ingest import download_mbox, make_session, parse_mbox
 
 username = os.environ.get("PG_LIST_USER", "")
 password = os.environ.get("PG_LIST_PASS", "")

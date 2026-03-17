@@ -72,13 +72,22 @@ for LIST_NAME in "${LIST_NAMES[@]}"; do
 done
 
 log "run started: ingesting ${#LIST_NAMES[@]} list(s) for $YEAR-$MONTH using a shared auth session"
-"$UV_BIN" run python3 src/ingestion/ingest.py \
-  "${INGEST_ARGS[@]}" \
-  "${INGEST_EXTRA_ARGS[@]}" \
-  --year "$YEAR" \
-  --month "$MONTH" \
-  --force-download \
-  --dsn "$DSN" 2>&1 | while IFS= read -r line; do
+INGEST_CMD=(
+  "$UV_BIN"
+  run
+  python3
+  src/ingestion/ingest.py
+  "${INGEST_ARGS[@]}"
+  --year "$YEAR"
+  --month "$MONTH"
+  --force-download
+  --dsn "$DSN"
+)
+if (( ${#INGEST_EXTRA_ARGS[@]} > 0 )); then
+  INGEST_CMD+=("${INGEST_EXTRA_ARGS[@]}")
+fi
+
+"${INGEST_CMD[@]}" 2>&1 | while IFS= read -r line; do
   log "$line"
 done
 
