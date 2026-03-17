@@ -221,6 +221,14 @@ describe("auth enforcement", () => {
     expect(res.status).toBe(401);
   });
 
+  it("POST /me/thread-follow-states returns 401 when unauthenticated", async () => {
+    const res = await send("/me/thread-follow-states", {
+      method: "POST",
+      body: { threadIds: ["some-thread"] },
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("GET /threads/:id/progress returns 401 when unauthenticated", async () => {
     const res = await send("/threads/some-thread/progress");
     expect(res.status).toBe(401);
@@ -435,7 +443,30 @@ describe("thread list follow state", () => {
     }
   });
 
-  it("GET /threads annotates followed rows for authenticated users", async () => {
+  it("POST /me/thread-follow-states returns follow state for the requested thread ids", async () => {
+    const followRes = await send(`/threads/${encodeURIComponent(followedThread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(followRes.status).toBe(200);
+
+    const res = await send("/me/thread-follow-states", {
+      method: "POST",
+      cookie: session.cookie,
+      body: {
+        threadIds: [followedThread.threadId, unfollowedThread.threadId],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as {
+      states: Record<string, { isFollowed: boolean }>;
+    };
+
+    expect(body.states[followedThread.threadId]?.isFollowed).toBe(true);
+    expect(body.states[unfollowedThread.threadId]?.isFollowed).toBe(false);
+  });
+
+  it("GET /threads stays unannotated even for authenticated users", async () => {
     const followRes = await send(`/threads/${encodeURIComponent(followedThread.threadId)}/follow`, {
       method: "POST",
       cookie: session.cookie,
@@ -447,14 +478,16 @@ describe("thread list follow state", () => {
     });
     expect(res.status).toBe(200);
     const body = (await parseJson(res)) as {
-      items: Array<{ is_followed?: boolean; thread_id: string }>;
+      items: Array<Record<string, unknown> & { thread_id: string }>;
     };
 
     const followedItem = body.items.find((item) => item.thread_id === followedThread.threadId);
     const unfollowedItem = body.items.find((item) => item.thread_id === unfollowedThread.threadId);
 
-    expect(followedItem?.is_followed).toBe(true);
-    expect(unfollowedItem?.is_followed).toBe(false);
+    expect(followedItem).toBeDefined();
+    expect(unfollowedItem).toBeDefined();
+    expect("is_followed" in (followedItem ?? {})).toBe(false);
+    expect("is_followed" in (unfollowedItem ?? {})).toBe(false);
   });
 
   it("GET /progress repairs stale progress that predates the follow time", async () => {

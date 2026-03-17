@@ -72,6 +72,7 @@
   };
 
   const isFollowPending = (threadId: string): boolean => pendingThreadIds.includes(threadId);
+  const hasKnownFollowState = (thread: Thread): boolean => typeof thread.is_followed === "boolean";
 
   const handleFollowClick = (event: MouseEvent, thread: Thread): void => {
     event.preventDefault();
@@ -83,7 +84,11 @@
   };
 
   const followButtonLabel = (thread: Thread): string =>
-    thread.is_followed === true ? "Unfollow thread" : "Follow thread";
+    !hasKnownFollowState(thread)
+      ? "Loading follow state"
+      : thread.is_followed === true
+        ? "Unfollow thread"
+        : "Follow thread";
 </script>
 
 <div class="table-wrap">
@@ -123,13 +128,13 @@
                 type="button"
                 aria-pressed={thread.is_followed === true}
                 aria-label={followButtonLabel(thread)}
-                title={thread.is_followed === true ? "Following" : "Follow"}
+                title={!hasKnownFollowState(thread) ? "Loading follow state" : thread.is_followed === true ? "Following" : "Follow"}
                 class:followed={thread.is_followed === true}
                 class="follow-button"
-                disabled={isFollowPending(thread.thread_id)}
+                disabled={isFollowPending(thread.thread_id) || !hasKnownFollowState(thread)}
                 on:click={(event) => handleFollowClick(event, thread)}
               >
-                {#if isFollowPending(thread.thread_id)}
+                {#if isFollowPending(thread.thread_id) || !hasKnownFollowState(thread)}
                   <span class="follow-pending" aria-hidden="true"></span>
                 {:else}
                   <svg

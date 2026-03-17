@@ -21,6 +21,18 @@ export interface Thread {
   is_followed?: boolean;
 }
 
+export interface ThreadFollowStatesRequest {
+  threadIds: string[];
+}
+
+export interface ThreadFollowStateSummary {
+  isFollowed: boolean;
+}
+
+export interface ThreadFollowStatesResponse {
+  states: Record<string, ThreadFollowStateSummary>;
+}
+
 export interface Message {
   id: string;
   message_id: string;
