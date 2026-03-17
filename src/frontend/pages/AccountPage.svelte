@@ -365,23 +365,6 @@
         </div>
       </article>
 
-      <article class="account-card">
-        <header class="card-header stacked">
-          <div>
-            <p class="eyebrow">Future access</p>
-            <h2>Advanced search</h2>
-          </div>
-          <p class="support-copy">
-            Semantic and other account-only search features will appear here once they ship.
-          </p>
-        </header>
-
-        <ul class="placeholder-list" aria-label="Planned account features">
-          <li>Usage and rate-limit visibility tied to this account</li>
-          <li>Access controls for future expensive search features</li>
-          <li>Clear account-level moderation and recovery surface</li>
-        </ul>
-      </article>
     </section>
 
     <section class="followed-threads-section" aria-label="Followed threads">
@@ -641,16 +624,6 @@
     background: #f0f7ff;
     border-color: #9fb3c8;
     color: #243b53;
-  }
-
-  .placeholder-list {
-    margin: 0;
-    padding-left: 1.1rem;
-    color: #334e68;
-    display: grid;
-    gap: 0.38rem;
-    font-size: 0.92rem;
-    line-height: 1.45;
   }
 
   .profile-form {
