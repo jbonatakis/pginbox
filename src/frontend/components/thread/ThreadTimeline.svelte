@@ -18,6 +18,7 @@
   export let firstUnreadMessageId: string | null = null;
   export let threadId: string | null = null;
   export let isAuthenticated: boolean = false;
+  export let trackReadProgress: boolean = false;
 
   const numberFormatter = new Intl.NumberFormat("en-US");
   let collapsedMessages: Record<string, boolean> = {};
@@ -31,7 +32,7 @@
   const observedEntries = new Map<Element, TimelineEntry>();
 
   const flushProgress = (): void => {
-    if (!threadId || !isAuthenticated || !hwmMessageId) return;
+    if (!threadId || !isAuthenticated || !trackReadProgress || !hwmMessageId) return;
     if (hwmMessageId === lastFlushedMessageId) return;
     const messageId = hwmMessageId;
     lastFlushedMessageId = messageId;
@@ -94,7 +95,7 @@
   };
 
   const syncObserver = (): void => {
-    if (!isAuthenticated || typeof IntersectionObserver === "undefined") {
+    if (!isAuthenticated || !trackReadProgress || typeof IntersectionObserver === "undefined") {
       disconnectObserver();
       return;
     }
@@ -134,7 +135,7 @@
       [entry.key]: !wasCollapsed,
     };
     // If expanding and isAuthenticated, check if element is already in viewport
-    if (wasCollapsed && isAuthenticated) {
+    if (wasCollapsed && isAuthenticated && trackReadProgress) {
       const el = document.getElementById(entry.anchorId);
       if (el) {
         const rect = el.getBoundingClientRect();
@@ -232,8 +233,8 @@
     <ol class="timeline-list">
       {#each timelineEntries as entry (entry.key)}
         {#if firstUnreadMessageId !== null && entry.message.id === firstUnreadMessageId}
-          <li class="unread-divider" aria-label="New to you">
-            <span class="unread-divider-label">New to you</span>
+          <li class="unread-divider" aria-label="Unread messages">
+            <span class="unread-divider-label">Unread messages</span>
           </li>
         {/if}
         <li use:observeMessage={entry}>

@@ -49,57 +49,20 @@ async function getLatestMessageIdInCanonicalOrder(threadId: string): Promise<str
   return latestMsg ? msgIdStr(latestMsg.id) : null;
 }
 
+async function getThreadMessageCount(threadId: string): Promise<number> {
+  const row = await db
+    .selectFrom("messages")
+    .select(sql<string>`count(*)`.as("count"))
+    .where("thread_id", "=", threadId)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
 async function computeProgressStats(
   threadId: string,
-  lastReadMessageId: string | null,
-  createdAtBaseline?: Date | null
+  lastReadMessageId: string | null
 ): Promise<ProgressStats> {
   if (lastReadMessageId === null) {
-    if (createdAtBaseline) {
-      const result = await sql<{
-        last_read_id: string | null;
-        last_read_ordinal: string | null;
-        first_unread_id: string | null;
-        total_messages: string;
-      }>`
-        WITH ordered AS (
-          SELECT
-            m.id,
-            m.sent_at,
-            row_number() OVER (ORDER BY m.sent_at ASC NULLS LAST, m.id ASC) AS ordinal,
-            count(*) OVER () AS total_messages
-          FROM messages m
-          WHERE m.thread_id = ${threadId}
-        ),
-        baseline AS (
-          SELECT o.id, o.ordinal
-          FROM ordered o
-          WHERE o.sent_at <= ${createdAtBaseline}
-          ORDER BY o.ordinal DESC
-          LIMIT 1
-        )
-        SELECT
-          (SELECT id::text FROM baseline) AS last_read_id,
-          (SELECT ordinal::text FROM baseline) AS last_read_ordinal,
-          (
-            SELECT id::text
-            FROM ordered
-            WHERE ordinal = COALESCE((SELECT ordinal FROM baseline), 0) + 1
-          ) AS first_unread_id,
-          COALESCE((SELECT total_messages FROM ordered LIMIT 1), 0)::text AS total_messages
-      `.execute(db);
-
-      const row = result.rows[0];
-      if (row) {
-        return {
-          totalMessages: Number(row.total_messages),
-          lastReadOrdinal: row.last_read_ordinal ? Number(row.last_read_ordinal) : 0,
-          lastReadMessageId: row.last_read_id ?? null,
-          firstUnreadMessageId: row.first_unread_id ?? null,
-        };
-      }
-    }
-
     const [countRow, firstMsgRow] = await Promise.all([
       db.selectFrom("messages")
         .select(sql<string>`count(*)`.as("count"))
@@ -175,6 +138,30 @@ function buildThreadProgress(
     resumePage: hasUnread ? Math.floor(lastReadOrdinal / pageSize) + 1 : null,
     latestPage,
   };
+}
+
+function buildUnfollowedThreadProgress(
+  threadId: string,
+  totalMessages: number,
+  pageSize: number
+): ThreadProgress {
+  return {
+    threadId,
+    isFollowed: false,
+    lastReadMessageId: null,
+    firstUnreadMessageId: null,
+    unreadCount: 0,
+    hasUnread: false,
+    resumePage: null,
+    latestPage: Math.max(1, Math.ceil(totalMessages / pageSize)),
+  };
+}
+
+async function deleteProgressRow(userId: DbInt8Value, threadId: string): Promise<void> {
+  await db.deleteFrom("thread_read_progress")
+    .where("user_id", "=", toDbInt8(userId))
+    .where("thread_id", "=", threadId)
+    .execute();
 }
 
 // ---- Canonicalization ----
@@ -420,13 +407,17 @@ export async function unfollowThread(
   userId: DbInt8Value,
   threadId: string
 ): Promise<ThreadFollowState> {
-  const canonicalThreadId = await canonicalizeFollowRow(userId, threadId);
-  const targetThreadId = canonicalThreadId ?? threadId;
+  const [canonicalThreadId, canonicalProgress] = await Promise.all([
+    canonicalizeFollowRow(userId, threadId),
+    canonicalizeProgressRow(userId, threadId),
+  ]);
+  const targetThreadId = canonicalThreadId ?? canonicalProgress?.threadId ?? threadId;
 
   await db.deleteFrom("thread_follows")
     .where("user_id", "=", toDbInt8(userId))
     .where("thread_id", "=", targetThreadId)
     .execute();
+  await deleteProgressRow(userId, targetThreadId);
   return { threadId: targetThreadId, isFollowed: false };
 }
 
@@ -437,11 +428,7 @@ export async function getProgress(
 ): Promise<ThreadProgress> {
   const userIdStr = toDbInt8(userId);
 
-  const [userRow, canonicalFollowThreadId, progressResult] = await Promise.all([
-    db.selectFrom("users")
-      .select("created_at")
-      .where("id", "=", userIdStr)
-      .executeTakeFirstOrThrow(),
+  const [canonicalFollowThreadId, progressResult] = await Promise.all([
     canonicalizeFollowRow(userId, threadId),
     canonicalizeProgressRow(userId, threadId),
   ]);
@@ -449,17 +436,24 @@ export async function getProgress(
   const canonicalThreadId = progressResult?.threadId ?? canonicalFollowThreadId ?? threadId;
   const followRow = await db
     .selectFrom("thread_follows")
-    .select("thread_id")
+    .select(["thread_id", "anchor_message_id"])
     .where("user_id", "=", userIdStr)
     .where("thread_id", "=", canonicalThreadId)
     .executeTakeFirst();
 
+  if (!followRow) {
+    if (progressResult) {
+      await deleteProgressRow(userId, progressResult.threadId);
+    }
+    const totalMessages = await getThreadMessageCount(canonicalThreadId);
+    return buildUnfollowedThreadProgress(canonicalThreadId, totalMessages, pageSize);
+  }
+
   const stats = await computeProgressStats(
     canonicalThreadId,
-    progressResult?.lastReadMessageId ?? null,
-    userRow.created_at
+    progressResult?.lastReadMessageId ?? msgIdStr(followRow.anchor_message_id)
   );
-  return buildThreadProgress(canonicalThreadId, !!followRow, stats, pageSize);
+  return buildThreadProgress(canonicalThreadId, true, stats, pageSize);
 }
 
 export async function advanceProgress(
@@ -469,6 +463,15 @@ export async function advanceProgress(
   pageSize = 50
 ): Promise<ThreadProgress> {
   const userIdStr = toDbInt8(userId);
+  const followedThreadId = await canonicalizeFollowRow(userId, threadId);
+
+  if (!followedThreadId) {
+    const orphanProgress = await canonicalizeProgressRow(userId, threadId);
+    if (orphanProgress) {
+      await deleteProgressRow(userId, orphanProgress.threadId);
+    }
+    return getProgress(userId, threadId, pageSize);
+  }
 
   const msg = await db
     .selectFrom("messages")
@@ -476,9 +479,11 @@ export async function advanceProgress(
     .where("id", "=", lastReadMessageId)
     .executeTakeFirst();
   if (!msg) throw new BadRequestError("Message not found");
-  if (msg.thread_id !== threadId) throw new BadRequestError("Message does not belong to this thread");
+  if (msg.thread_id !== followedThreadId) {
+    throw new BadRequestError("Message does not belong to this thread");
+  }
 
-  const existing = await canonicalizeProgressRow(userId, threadId);
+  const existing = await canonicalizeProgressRow(userId, followedThreadId);
 
   if (existing) {
     const ordinalResult = await sql<{ new_ordinal: string | null; existing_ordinal: string | null }>`
@@ -505,7 +510,7 @@ export async function advanceProgress(
     await db.insertInto("thread_read_progress")
       .values({
         user_id: userIdStr,
-        thread_id: threadId,
+        thread_id: followedThreadId,
         last_read_message_id: lastReadMessageId,
       })
       .onConflict((oc) =>
@@ -517,7 +522,7 @@ export async function advanceProgress(
       .execute();
   }
 
-  return getProgress(userId, threadId, pageSize);
+  return getProgress(userId, followedThreadId, pageSize);
 }
 
 export async function markRead(
@@ -526,14 +531,23 @@ export async function markRead(
   pageSize = 50
 ): Promise<ThreadProgress> {
   const userIdStr = toDbInt8(userId);
+  const followedThreadId = await canonicalizeFollowRow(userId, threadId);
 
-  const latestMessageId = await getLatestMessageIdInCanonicalOrder(threadId);
+  if (!followedThreadId) {
+    const orphanProgress = await canonicalizeProgressRow(userId, threadId);
+    if (orphanProgress) {
+      await deleteProgressRow(userId, orphanProgress.threadId);
+    }
+    return getProgress(userId, threadId, pageSize);
+  }
+
+  const latestMessageId = await getLatestMessageIdInCanonicalOrder(followedThreadId);
 
   if (latestMessageId) {
     await db.insertInto("thread_read_progress")
       .values({
         user_id: userIdStr,
-        thread_id: threadId,
+        thread_id: followedThreadId,
         last_read_message_id: latestMessageId,
       })
       .onConflict((oc) =>
@@ -545,7 +559,7 @@ export async function markRead(
       .execute();
   }
 
-  return getProgress(userId, threadId, pageSize);
+  return getProgress(userId, followedThreadId, pageSize);
 }
 
 export async function listFollowedThreads(
@@ -555,12 +569,6 @@ export async function listFollowedThreads(
 ): Promise<{ items: FollowedThread[]; nextCursor: string | null }> {
   const userIdStr = toDbInt8(userId);
   limit = Math.min(Math.max(1, limit), 100);
-
-  const userRow = await db
-    .selectFrom("users")
-    .select("created_at")
-    .where("id", "=", userIdStr)
-    .executeTakeFirstOrThrow();
 
   await canonicalizeAllFollowRowsForUser(userId);
   await canonicalizeAllProgressRowsForUser(userId);
@@ -582,6 +590,7 @@ export async function listFollowedThreads(
       "threads.last_activity_at",
       "threads.message_count",
       "lists.name as list_name",
+      "thread_follows.anchor_message_id",
       "thread_read_progress.last_read_message_id",
     ])
     .where("thread_follows.user_id", "=", userIdStr)
@@ -619,8 +628,9 @@ export async function listFollowedThreads(
     items.map(async (row) => {
       const stats = await computeProgressStats(
         row.thread_id,
-        row.last_read_message_id ? msgIdStr(row.last_read_message_id) : null,
-        userRow.created_at
+        row.last_read_message_id
+          ? msgIdStr(row.last_read_message_id)
+          : msgIdStr(row.anchor_message_id)
       );
       const latestPage = Math.max(1, Math.ceil(stats.totalMessages / pageSize));
       const hasUnread = stats.lastReadOrdinal < stats.totalMessages;

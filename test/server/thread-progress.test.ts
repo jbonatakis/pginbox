@@ -154,6 +154,17 @@ async function createThreadWithSentAtValues(
   return { threadId, msgIds: ordered.map((r) => String(r.id)) };
 }
 
+async function insertFollowRow(userId: string, threadId: string, anchorMessageId: string): Promise<void> {
+  await db
+    .insertInto("thread_follows")
+    .values({
+      user_id: userId,
+      thread_id: threadId,
+      anchor_message_id: anchorMessageId,
+    })
+    .execute();
+}
+
 async function deleteThread(threadId: string): Promise<void> {
   // Deletes messages first (FK: thread_follows.anchor_message_id → messages.id RESTRICT)
   // The user must already be deleted before this is called so follows are gone.
@@ -326,7 +337,7 @@ describe("follow/unfollow behavior", () => {
     );
   });
 
-  it("unfollowing removes follow row but preserves progress", async () => {
+  it("unfollowing removes both follow row and progress", async () => {
     await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
       method: "POST",
       cookie: session.cookie,
@@ -353,7 +364,7 @@ describe("follow/unfollow behavior", () => {
       .where("user_id", "=", user!.id)
       .where("thread_id", "=", thread.threadId)
       .executeTakeFirst();
-    expect(progress).toBeDefined();
+    expect(progress).toBeUndefined();
   });
 });
 
@@ -407,6 +418,13 @@ describe("canonical latest-message ordering", () => {
   });
 
   it("mark-read also uses the last message in canonical thread order", async () => {
+    const followRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      body: { seedLastReadMessageId: thread.msgIds[0] },
+      cookie: session.cookie,
+    });
+    expect(followRes.status).toBe(200);
+
     const res = await send(`/threads/${encodeURIComponent(thread.threadId)}/progress/mark-read`, {
       method: "POST",
       cookie: session.cookie,
@@ -458,6 +476,11 @@ describe("progress advance", () => {
   });
 
   it("rejects a message id belonging to a different thread with 400", async () => {
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+
     const res = await send(`/threads/${encodeURIComponent(thread.threadId)}/progress`, {
       method: "POST",
       body: { lastReadMessageId: otherThread.msgIds[0] },
@@ -491,15 +514,11 @@ describe("progress advance", () => {
   });
 
   it("progress advances forward when a later message is submitted", async () => {
-    // Start with progress at ordinal 3
-    await db
-      .insertInto("thread_read_progress")
-      .values({
-        user_id: user!.id,
-        thread_id: thread.threadId,
-        last_read_message_id: thread.msgIds[2],
-      })
-      .execute();
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      body: { seedLastReadMessageId: thread.msgIds[2] },
+      cookie: session.cookie,
+    });
 
     const res = await send(`/threads/${encodeURIComponent(thread.threadId)}/progress`, {
       method: "POST",
@@ -516,11 +535,31 @@ describe("progress advance", () => {
       .executeTakeFirstOrThrow();
     expect(String(progress.last_read_message_id)).toBe(thread.msgIds[6]);
   });
+
+  it("does not create progress for an unfollowed thread", async () => {
+    const res = await send(`/threads/${encodeURIComponent(thread.threadId)}/progress`, {
+      method: "POST",
+      body: { lastReadMessageId: thread.msgIds[6] },
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as Record<string, unknown>;
+    expect(body.isFollowed).toBe(false);
+    expect(body.hasUnread).toBe(false);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirst();
+    expect(progress).toBeUndefined();
+  });
 });
 
-// ── resume page calculation ───────────────────────────────────────────────────
+// ── followed-thread progress calculation ──────────────────────────────────────
 
-describe("resume page calculation (pageSize=50, 100 messages)", () => {
+describe("followed-thread progress calculation (pageSize=50, 100 messages)", () => {
   let listId: number;
   let thread: { threadId: string; msgIds: string[] };
   let user: TestUser | null = null;
@@ -557,123 +596,45 @@ describe("resume page calculation (pageSize=50, 100 messages)", () => {
     return parseJson(res) as Promise<Record<string, unknown>>;
   }
 
-  it("no progress row (ordinal 0) → resumePage 1, unreadCount 100", async () => {
+  it("unfollowed threads return no unread state", async () => {
     const body = await getProgress();
-    expect(body.resumePage).toBe(1);     // floor(0/50) + 1 = 1
-    expect(body.unreadCount).toBe(100);
-    expect(body.hasUnread).toBe(true);
+    expect(body.isFollowed).toBe(false);
+    expect(body.lastReadMessageId).toBeNull();
+    expect(body.firstUnreadMessageId).toBeNull();
+    expect(body.unreadCount).toBe(0);
+    expect(body.hasUnread).toBe(false);
+    expect(body.resumePage).toBeNull();
   });
 
-  it("ordinal 49 read, pageSize 50 → resumePage 1", async () => {
-    // msgIds[48] is ordinal 49 (0-indexed array, 1-indexed ordinal)
-    await db
-      .insertInto("thread_read_progress")
-      .values({
-        user_id: user!.id,
-        thread_id: thread.threadId,
-        last_read_message_id: thread.msgIds[48],
-      })
-      .execute();
+  it("follow rows with no progress row fall back to the follow anchor", async () => {
+    await insertFollowRow(user!.id, thread.threadId, thread.msgIds[48]);
     const body = await getProgress();
-    expect(body.resumePage).toBe(1); // floor(49/50) + 1 = 0 + 1 = 1
+    expect(body.isFollowed).toBe(true);
+    expect(body.lastReadMessageId).toBe(thread.msgIds[48]);
+    expect(body.resumePage).toBe(1);
+    expect(body.unreadCount).toBe(51);
   });
 
   it("ordinal 50 read, pageSize 50 → resumePage 2", async () => {
-    // msgIds[49] is ordinal 50
-    await db
-      .insertInto("thread_read_progress")
-      .values({
-        user_id: user!.id,
-        thread_id: thread.threadId,
-        last_read_message_id: thread.msgIds[49],
-      })
-      .execute();
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      body: { seedLastReadMessageId: thread.msgIds[49] },
+      cookie: session.cookie,
+    });
     const body = await getProgress();
-    expect(body.resumePage).toBe(2); // floor(50/50) + 1 = 1 + 1 = 2
+    expect(body.resumePage).toBe(2);
   });
 
   it("all 100 messages read → no unread, resumePage null", async () => {
-    // msgIds[99] is ordinal 100 (last message)
-    await db
-      .insertInto("thread_read_progress")
-      .values({
-        user_id: user!.id,
-        thread_id: thread.threadId,
-        last_read_message_id: thread.msgIds[99],
-      })
-      .execute();
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      body: { seedLastReadMessageId: thread.msgIds[99] },
+      cookie: session.cookie,
+    });
     const body = await getProgress();
     expect(body.hasUnread).toBe(false);
     expect(body.unreadCount).toBe(0);
     expect(body.resumePage).toBeNull();
-  });
-});
-
-describe("created_at baseline for users without thread progress", () => {
-  let listId: number;
-  let spanningThread: { threadId: string; msgIds: string[] };
-  let historicalThread: { threadId: string; msgIds: string[] };
-  let user: TestUser | null = null;
-  let session: TestSession;
-
-  beforeAll(async () => {
-    listId = await createList();
-    spanningThread = await createThreadWithSentAtValues(listId, [
-      new Date(Date.UTC(2024, 0, 1, 0, 0, 0)),
-      new Date(Date.UTC(2024, 0, 1, 0, 0, 1)),
-      new Date(Date.UTC(2024, 0, 3, 0, 0, 0)),
-      new Date(Date.UTC(2024, 0, 4, 0, 0, 0)),
-    ]);
-    historicalThread = await createThreadWithSentAtValues(listId, [
-      new Date(Date.UTC(2023, 11, 1, 0, 0, 0)),
-      new Date(Date.UTC(2023, 11, 2, 0, 0, 0)),
-    ]);
-  });
-
-  afterAll(async () => {
-    await deleteThread(spanningThread.threadId);
-    await deleteThread(historicalThread.threadId);
-    await deleteList(listId);
-  });
-
-  beforeEach(async () => {
-    user = await createTestUserWithCreatedAt(new Date(Date.UTC(2024, 0, 2, 12, 0, 0)));
-    session = await createTestSession(user.id);
-  });
-
-  afterEach(async () => {
-    if (user) {
-      await deleteUser(user.id);
-      user = null;
-    }
-  });
-
-  it("treats only post-created_at messages as unread when no progress row exists", async () => {
-    const res = await send(`/threads/${encodeURIComponent(spanningThread.threadId)}/progress`, {
-      cookie: session.cookie,
-    });
-    expect(res.status).toBe(200);
-    const body = (await parseJson(res)) as Record<string, unknown>;
-
-    expect(body.lastReadMessageId).toBe(spanningThread.msgIds[1]);
-    expect(body.firstUnreadMessageId).toBe(spanningThread.msgIds[2]);
-    expect(body.unreadCount).toBe(2);
-    expect(body.resumePage).toBe(1);
-    expect(body.hasUnread).toBe(true);
-  });
-
-  it("does not mark a fully historical thread as unread for a new account", async () => {
-    const res = await send(`/threads/${encodeURIComponent(historicalThread.threadId)}/progress`, {
-      cookie: session.cookie,
-    });
-    expect(res.status).toBe(200);
-    const body = (await parseJson(res)) as Record<string, unknown>;
-
-    expect(body.lastReadMessageId).toBe(historicalThread.msgIds[1]);
-    expect(body.firstUnreadMessageId).toBeNull();
-    expect(body.unreadCount).toBe(0);
-    expect(body.resumePage).toBeNull();
-    expect(body.hasUnread).toBe(false);
   });
 });
 
@@ -708,15 +669,11 @@ describe("mark-read", () => {
   });
 
   it("advances progress to latest message regardless of current page", async () => {
-    // Start at ordinal 3, well before the latest
-    await db
-      .insertInto("thread_read_progress")
-      .values({
-        user_id: user!.id,
-        thread_id: thread.threadId,
-        last_read_message_id: thread.msgIds[2],
-      })
-      .execute();
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      body: { seedLastReadMessageId: thread.msgIds[2] },
+      cookie: session.cookie,
+    });
 
     const res = await send(
       `/threads/${encodeURIComponent(thread.threadId)}/progress/mark-read`,
@@ -737,15 +694,24 @@ describe("mark-read", () => {
     expect(String(progress.last_read_message_id)).toBe(thread.msgIds[9]); // latest (ordinal 10)
   });
 
-  it("mark-read on a thread with no existing progress creates a fully-read progress row", async () => {
+  it("mark-read on an unfollowed thread leaves the thread stateless", async () => {
     const res = await send(
       `/threads/${encodeURIComponent(thread.threadId)}/progress/mark-read`,
       { method: "POST", cookie: session.cookie }
     );
     expect(res.status).toBe(200);
     const body = (await parseJson(res)) as Record<string, unknown>;
-    expect(body.hasUnread).toBe(false);
+    expect(body.isFollowed).toBe(false);
+    expect(body.lastReadMessageId).toBeNull();
     expect(body.unreadCount).toBe(0);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirst();
+    expect(progress).toBeUndefined();
   });
 });
 
@@ -873,14 +839,12 @@ describe("canonicalization after thread_id drift", () => {
 
   it("progress row is updated to the new canonical thread_id", async () => {
     const progressMsgId = msgIds[2];
-    await db
-      .insertInto("thread_read_progress")
-      .values({
-        user_id: user!.id,
-        thread_id: oldThreadId,
-        last_read_message_id: progressMsgId,
-      })
-      .execute();
+    const followRes = await send(`/threads/${encodeURIComponent(oldThreadId)}/follow`, {
+      method: "POST",
+      body: { seedLastReadMessageId: progressMsgId },
+      cookie: session.cookie,
+    });
+    expect(followRes.status).toBe(200);
 
     // Simulate re-threading
     await simulateDrift();

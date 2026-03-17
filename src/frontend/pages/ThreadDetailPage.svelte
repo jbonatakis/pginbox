@@ -312,7 +312,7 @@
 
   const resumeReading = (event: MouseEvent): void => {
     event.preventDefault();
-    if (!progress?.firstUnreadMessageId) return;
+    if (!progress?.isFollowed || !progress.firstUnreadMessageId) return;
 
     const targetThreadId = progress.threadId;
     const targetPage = progress.resumePage ?? progress.latestPage;
@@ -348,7 +348,7 @@
   };
 
   const markRead = async (): Promise<void> => {
-    if (isBannerBusy) return;
+    if (isBannerBusy || !progress?.isFollowed) return;
     isBannerBusy = true;
     try {
       progress = await api.threads.markRead(progress?.threadId ?? threadId);
@@ -366,7 +366,7 @@
     try {
       const result = progress.isFollowed
         ? await api.threads.unfollow(progress.threadId)
-        : await api.threads.follow(progress.threadId, progress.lastReadMessageId);
+        : await api.threads.follow(progress.threadId);
       const refreshedProgress = await fetchProgress(threadId);
       progress = refreshedProgress ?? { ...progress, isFollowed: result.isFollowed };
       progressRequestedThreadId = threadId;
@@ -575,15 +575,19 @@
     {#if $authStore.isAuthenticated && progress !== null}
       <div class="progress-banner">
         <span class="progress-banner-status">
-          {#if progress.hasUnread}
-            {numberFormatter.format(progress.unreadCount)}
-            {progress.unreadCount === 1 ? "unread message" : "unread messages"}
+          {#if progress.isFollowed}
+            {#if progress.hasUnread}
+              {numberFormatter.format(progress.unreadCount)}
+              {progress.unreadCount === 1 ? "unread message" : "unread messages"}
+            {:else}
+              All caught up
+            {/if}
           {:else}
-            All caught up
+            Follow this thread to track unread messages.
           {/if}
         </span>
         <div class="progress-banner-actions">
-          {#if progress.hasUnread && progress.firstUnreadMessageId !== null}
+          {#if progress.isFollowed && progress.hasUnread && progress.firstUnreadMessageId !== null}
             <button
               class="banner-button banner-button--primary"
               type="button"
@@ -591,7 +595,7 @@
               on:click={resumeReading}
             >Resume reading</button>
           {/if}
-          {#if progress.hasUnread}
+          {#if progress.isFollowed && progress.hasUnread}
             <button
               class="banner-button"
               type="button"
@@ -630,6 +634,7 @@
       firstUnreadMessageId={progress?.firstUnreadMessageId ?? null}
       threadId={progress?.threadId ?? threadId}
       isAuthenticated={$authStore.isAuthenticated}
+      trackReadProgress={progress?.isFollowed ?? false}
     />
 
     <ThreadPageControls
