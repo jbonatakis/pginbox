@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { requireAuth, resolveCurrentSession, type ResponseCookieTarget } from "../auth";
-import { listFollowedThreads } from "../services/thread-progress.service";
+import { getThreadFollowStates, listFollowedThreads } from "../services/thread-progress.service";
 import { BadRequestError } from "../errors";
 
 function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTarget {
@@ -15,6 +15,22 @@ function parseLimit(value: string | undefined, defaultVal: number): number | nul
 }
 
 export const meRoutes = new Elysia({ prefix: "/me" })
+  .post(
+    "/thread-follow-states",
+    async ({ body, request, set, status }) => {
+      const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
+      const { user } = await requireAuth(resolved);
+      if (body.threadIds.length > 100) {
+        return status(400, { message: "threadIds must contain at most 100 items" });
+      }
+      return getThreadFollowStates(user.id, body.threadIds);
+    },
+    {
+      body: t.Object({
+        threadIds: t.Array(t.String()),
+      }),
+    }
+  )
   .get(
     "/followed-threads",
     async ({ query, request, set, status }) => {

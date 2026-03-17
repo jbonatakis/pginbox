@@ -37,7 +37,12 @@
   const LIMIT_OPTIONS = [10, 25, 50, 100];
 
   let activeListsRequestController: AbortController | null = null;
+  let activeFollowStatesRequestController: AbortController | null = null;
   let activeThreadsRequestController: AbortController | null = null;
+  let followStateLoadError: ApiErrorShape | null = null;
+  let followStateRequestSequence = 0;
+  let followStatesLoadedKey: string | null = null;
+  let followStatesRequestedKey: string | null = null;
   let isRefreshing = false;
   let lists: List[] = [];
   let listsError: ApiErrorShape | null = null;
@@ -62,7 +67,25 @@
   $: isInitialLoad = status === "idle" || (status === "loading" && threads.length === 0);
   $: listsErrorMessage = listsError?.message ?? null;
   $: searchQuery = queryState.q ?? "";
+  $: threadIdsKey = threads.map((thread) => thread.thread_id).join(",");
   $: toDate = toDateInputValue(queryState.to);
+  $: if ($authStore.isBootstrapped && !$authStore.isAuthenticated) {
+    clearActiveFollowStatesRequest();
+    followStateLoadError = null;
+    followStatesLoadedKey = null;
+    followStatesRequestedKey = null;
+  }
+  $: if (
+    $authStore.isBootstrapped &&
+    $authStore.isAuthenticated &&
+    status === "success" &&
+    threads.length > 0 &&
+    threadIdsKey.length > 0 &&
+    followStatesLoadedKey !== threadIdsKey &&
+    followStatesRequestedKey !== threadIdsKey
+  ) {
+    void loadFollowStates(threads);
+  }
   $: if (
     typeof window !== "undefined" &&
     pendingRestoreScrollY !== null &&
@@ -92,6 +115,13 @@
 
     activeListsRequestController.abort();
     activeListsRequestController = null;
+  };
+
+  const clearActiveFollowStatesRequest = (): void => {
+    if (!activeFollowStatesRequestController) return;
+
+    activeFollowStatesRequestController.abort();
+    activeFollowStatesRequestController = null;
   };
 
   const clearActiveThreadsRequest = (): void => {
@@ -205,6 +235,10 @@
     targetPageIndex?: number
   ): Promise<void> => {
     clearActiveThreadsRequest();
+    followStateRequestSequence += 1;
+    clearActiveFollowStatesRequest();
+    followStatesLoadedKey = null;
+    followStatesRequestedKey = null;
     const requestController = new AbortController();
     activeThreadsRequestController = requestController;
 
@@ -213,6 +247,7 @@
 
     threadsError = null;
     followError = null;
+    followStateLoadError = null;
     if (mode === "replace" || !hasThreads) {
       status = "loading";
       isRefreshing = false;
@@ -243,6 +278,10 @@
       nextCursor = response.nextCursor;
       syncCursorTrail(normalizeCursor(state.cursor), response.nextCursor, targetPageIndex);
       status = response.items.length === 0 ? "empty" : "success";
+
+      if ($authStore.isBootstrapped && $authStore.isAuthenticated && response.items.length > 0) {
+        void loadFollowStates(response.items);
+      }
     } catch (rawError) {
       const apiError = toApiErrorShape(rawError);
       if (apiError.code === "ABORTED" || requestId !== requestSequence) return;
@@ -260,6 +299,57 @@
       isRefreshing = false;
       if (activeThreadsRequestController === requestController) {
         activeThreadsRequestController = null;
+      }
+    }
+  };
+
+  const loadFollowStates = async (items: Thread[]): Promise<void> => {
+    const threadIds = items.map((thread) => thread.thread_id);
+    const threadIdSet = new Set(threadIds);
+    const nextKey = threadIds.join(",");
+
+    if (
+      threadIds.length === 0 ||
+      !$authStore.isBootstrapped ||
+      !$authStore.isAuthenticated ||
+      followStatesLoadedKey === nextKey ||
+      followStatesRequestedKey === nextKey
+    ) {
+      return;
+    }
+
+    clearActiveFollowStatesRequest();
+    const requestController = new AbortController();
+    activeFollowStatesRequestController = requestController;
+
+    const requestId = ++followStateRequestSequence;
+    followStateLoadError = null;
+    followStatesRequestedKey = nextKey;
+
+    try {
+      const response = await api.me.threadFollowStates(
+        { threadIds },
+        { signal: requestController.signal }
+      );
+      if (requestId !== followStateRequestSequence) return;
+
+      threads = threads.map((thread) => {
+        if (!threadIdSet.has(thread.thread_id)) return thread;
+
+        return {
+          ...thread,
+          is_followed: response.states[thread.thread_id]?.isFollowed ?? false,
+        };
+      });
+      followStatesLoadedKey = nextKey;
+    } catch (rawError) {
+      const apiError = toApiErrorShape(rawError);
+      if (apiError.code === "ABORTED" || requestId !== followStateRequestSequence) return;
+
+      followStateLoadError = apiError;
+    } finally {
+      if (activeFollowStatesRequestController === requestController) {
+        activeFollowStatesRequestController = null;
       }
     }
   };
@@ -332,6 +422,12 @@
     void loadThreads(queryState, mode);
   };
 
+  const retryFollowStates = (): void => {
+    followStateLoadError = null;
+    followStatesRequestedKey = null;
+    void loadFollowStates(threads);
+  };
+
   const handleSearchSubmit = (event: CustomEvent<SubmittedFilters>): void => {
     applyFilterPatch({
       from: event.detail.from,
@@ -402,6 +498,8 @@
 
   onDestroy(() => {
     requestSequence += 1;
+    followStateRequestSequence += 1;
+    clearActiveFollowStatesRequest();
     clearActiveThreadsRequest();
     clearActiveListsRequest();
   });
@@ -472,6 +570,19 @@
         message={followError.message}
         detail={formatErrorDetail(followError, "/api/threads/:threadId/follow")}
       />
+    {/if}
+
+    {#if $authStore.isAuthenticated && followStateLoadError}
+      <div class="status-block">
+        <ErrorState
+          title="Unable to load follow state"
+          message={followStateLoadError.message}
+          detail={formatErrorDetail(followStateLoadError, "/api/me/thread-follow-states")}
+        />
+        <button class="retry-button" type="button" on:click={retryFollowStates}>
+          Retry follow state
+        </button>
+      </div>
     {/if}
 
     {#if status === "empty"}

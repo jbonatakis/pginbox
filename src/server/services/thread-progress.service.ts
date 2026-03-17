@@ -2,7 +2,12 @@ import { db } from "../db";
 import { sql } from "kysely";
 import { toDbInt8, type DbInt8Value } from "../db-ids";
 import { BadRequestError } from "../errors";
-import type { FollowedThread, ThreadFollowState, ThreadProgress } from "shared/api";
+import type {
+  FollowedThread,
+  ThreadFollowState,
+  ThreadFollowStatesResponse,
+  ThreadProgress,
+} from "shared/api";
 
 function msgIdStr(v: bigint | number | string): string {
   return String(v);
@@ -682,6 +687,30 @@ export async function markRead(
   }
 
   return getProgress(userId, followedThreadId, pageSize);
+}
+
+export async function getThreadFollowStates(
+  userId: DbInt8Value,
+  threadIds: string[]
+): Promise<ThreadFollowStatesResponse> {
+  const normalizedThreadIds = [...new Set(threadIds.map((threadId) => threadId.trim()).filter(Boolean))];
+  if (normalizedThreadIds.length === 0) {
+    return { states: {} };
+  }
+
+  const rows = await db
+    .selectFrom("thread_follows")
+    .select("thread_id")
+    .where("user_id", "=", toDbInt8(userId))
+    .where("thread_id", "in", normalizedThreadIds)
+    .execute();
+
+  const followedIds = new Set(rows.map((row) => row.thread_id));
+  return {
+    states: Object.fromEntries(
+      normalizedThreadIds.map((threadId) => [threadId, { isFollowed: followedIds.has(threadId) }])
+    ),
+  };
 }
 
 export async function listFollowedThreads(

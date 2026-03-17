@@ -31,6 +31,8 @@ import type {
   Thread,
   ThreadDetail,
   ThreadFollowState,
+  ThreadFollowStatesRequest,
+  ThreadFollowStatesResponse,
   ThreadProgress,
   TopSender,
 } from "shared/api";
@@ -589,6 +591,21 @@ export async function listFollowedThreads(
   return requestAuthJson<Paginated<FollowedThread>>(path, options);
 }
 
+export async function getThreadFollowStates(
+  input: ThreadFollowStatesRequest,
+  options: RequestOptions = {}
+): Promise<ThreadFollowStatesResponse> {
+  if (input.threadIds.length === 0) {
+    return { states: {} };
+  }
+
+  return postAuthJson<ThreadFollowStatesResponse>(
+    withApiBase("/me/thread-follow-states"),
+    input,
+    options
+  );
+}
+
 export const api = {
   attachments: {
     get: getAttachment,
@@ -623,6 +640,7 @@ export const api = {
   },
   me: {
     followedThreads: listFollowedThreads,
+    threadFollowStates: getThreadFollowStates,
   },
   threads: {
     advanceProgress: advanceThreadProgress,
