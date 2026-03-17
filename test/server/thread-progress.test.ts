@@ -79,6 +79,15 @@ async function createList(): Promise<number> {
   return row.id as number;
 }
 
+async function getListName(listId: number): Promise<string> {
+  const row = await db
+    .selectFrom("lists")
+    .select("name")
+    .where("id", "=", listId)
+    .executeTakeFirstOrThrow();
+  return row.name;
+}
+
 async function createThread(
   listId: number,
   msgCount: number
@@ -337,6 +346,31 @@ describe("follow/unfollow behavior", () => {
     );
   });
 
+  it("following resets stale pre-follow progress to the follow boundary", async () => {
+    await db
+      .insertInto("thread_read_progress")
+      .values({
+        user_id: user!.id,
+        thread_id: thread.threadId,
+        last_read_message_id: thread.msgIds[1],
+      })
+      .execute();
+
+    const followRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(followRes.status).toBe(200);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(progress.last_read_message_id)).toBe(thread.msgIds[4]);
+  });
+
   it("unfollowing removes both follow row and progress", async () => {
     await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
       method: "POST",
@@ -365,6 +399,101 @@ describe("follow/unfollow behavior", () => {
       .where("thread_id", "=", thread.threadId)
       .executeTakeFirst();
     expect(progress).toBeUndefined();
+  });
+});
+
+describe("thread list follow state", () => {
+  let listId: number;
+  let listName: string;
+  let followedThread: { threadId: string; msgIds: string[] };
+  let unfollowedThread: { threadId: string; msgIds: string[] };
+  let user: TestUser | null = null;
+  let session: TestSession;
+
+  beforeAll(async () => {
+    listId = await createList();
+    listName = await getListName(listId);
+    followedThread = await createThread(listId, 3);
+    unfollowedThread = await createThread(listId, 2);
+  });
+
+  afterAll(async () => {
+    await deleteThread(followedThread.threadId);
+    await deleteThread(unfollowedThread.threadId);
+    await deleteList(listId);
+  });
+
+  beforeEach(async () => {
+    user = await createTestUser();
+    session = await createTestSession(user.id);
+  });
+
+  afterEach(async () => {
+    if (user) {
+      await deleteUser(user.id);
+      user = null;
+    }
+  });
+
+  it("GET /threads annotates followed rows for authenticated users", async () => {
+    const followRes = await send(`/threads/${encodeURIComponent(followedThread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(followRes.status).toBe(200);
+
+    const res = await send(`/threads?list=${encodeURIComponent(listName)}&limit=100`, {
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as {
+      items: Array<{ is_followed?: boolean; thread_id: string }>;
+    };
+
+    const followedItem = body.items.find((item) => item.thread_id === followedThread.threadId);
+    const unfollowedItem = body.items.find((item) => item.thread_id === unfollowedThread.threadId);
+
+    expect(followedItem?.is_followed).toBe(true);
+    expect(unfollowedItem?.is_followed).toBe(false);
+  });
+
+  it("GET /progress repairs stale progress that predates the follow time", async () => {
+    const followedAt = new Date(Date.now() + 1000);
+    await db
+      .insertInto("thread_read_progress")
+      .values({
+        user_id: user!.id,
+        thread_id: followedThread.threadId,
+        last_read_message_id: followedThread.msgIds[0],
+      })
+      .execute();
+
+    await insertFollowRow(user!.id, followedThread.threadId, followedThread.msgIds[0]);
+    await db
+      .updateTable("thread_follows")
+      .set({
+        created_at: followedAt,
+        updated_at: followedAt,
+      })
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", followedThread.threadId)
+      .execute();
+
+    const res = await send(`/threads/${encodeURIComponent(followedThread.threadId)}/progress`, {
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as Record<string, unknown>;
+    expect(body.lastReadMessageId).toBe(followedThread.msgIds[2]);
+    expect(body.unreadCount).toBe(0);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", followedThread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(progress.last_read_message_id)).toBe(followedThread.msgIds[2]);
   });
 });
 

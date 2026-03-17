@@ -1,10 +1,20 @@
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
   import type { Thread } from "shared/api";
   import { withThreadsRestoreScroll } from "../../lib/state/threadsQuery";
   import { isClientNavigationEvent, onLinkClick, threadDetailPath } from "../../router";
 
   export let contextSearch = "";
   export let items: Thread[] = [];
+  export let canManageFollows = false;
+  export let pendingThreadIds: string[] = [];
+
+  const dispatch = createEventDispatcher<{
+    togglefollow: {
+      isFollowed: boolean;
+      threadId: string;
+    };
+  }>();
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
@@ -60,6 +70,17 @@
     persistCurrentListContext();
     onLinkClick(event, threadPath(threadId, true));
   };
+
+  const isFollowPending = (threadId: string): boolean => pendingThreadIds.includes(threadId);
+
+  const handleFollowClick = (event: MouseEvent, thread: Thread): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    dispatch("togglefollow", {
+      threadId: thread.thread_id,
+      isFollowed: thread.is_followed === true,
+    });
+  };
 </script>
 
 <div class="table-wrap">
@@ -70,6 +91,9 @@
         <th scope="col">List</th>
         <th scope="col">Last activity</th>
         <th scope="col" class="numeric">Messages</th>
+        {#if canManageFollows}
+          <th scope="col" class="follow-column">Follow</th>
+        {/if}
       </tr>
     </thead>
 
@@ -78,13 +102,38 @@
         {@const path = threadPath(thread.thread_id)}
         <tr>
           <td class="subject" data-label="Subject">
-            <a href={path} on:click={(event) => handleThreadClick(event, thread.thread_id)}
-              >{subjectLabel(thread.subject)}</a
-            >
+            <div class="subject-row">
+              <a href={path} on:click={(event) => handleThreadClick(event, thread.thread_id)}
+                >{subjectLabel(thread.subject)}</a
+              >
+              {#if canManageFollows && thread.is_followed === true}
+                <span class="follow-badge">Followed</span>
+              {/if}
+            </div>
           </td>
           <td data-label="List">{listLabel(thread.list_name)}</td>
           <td data-label="Last activity">{formatDateTime(thread.last_activity_at)}</td>
           <td class="numeric" data-label="Messages">{messageCountFormatter.format(thread.message_count)}</td>
+          {#if canManageFollows}
+            <td class="follow-cell" data-label="Follow">
+              <button
+                type="button"
+                aria-pressed={thread.is_followed === true}
+                class:followed={thread.is_followed === true}
+                class="follow-button"
+                disabled={isFollowPending(thread.thread_id)}
+                on:click={(event) => handleFollowClick(event, thread)}
+              >
+                {#if isFollowPending(thread.thread_id)}
+                  Saving...
+                {:else if thread.is_followed === true}
+                  Following
+                {:else}
+                  Follow
+                {/if}
+              </button>
+            </td>
+          {/if}
         </tr>
       {/each}
     </tbody>
@@ -141,12 +190,35 @@
     min-width: 0;
   }
 
+  .subject-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
   .subject a {
     color: var(--primary);
     font-weight: 650;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
     overflow-wrap: anywhere;
+  }
+
+  .follow-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.35rem;
+    padding: 0.12rem 0.5rem;
+    border: 1px solid rgba(11, 78, 162, 0.22);
+    border-radius: 999px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
   }
 
   .subject a:focus-visible {
@@ -159,6 +231,45 @@
     text-align: right;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+  }
+
+  .follow-column,
+  .follow-cell {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .follow-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2rem;
+    min-width: 6.4rem;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: #ffffff;
+    color: var(--text-subtle);
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .follow-button.followed {
+    border-color: rgba(11, 78, 162, 0.34);
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  .follow-button:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+
+  .follow-button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
 
   @media (max-width: 760px) {
@@ -215,6 +326,15 @@
     .results td.numeric {
       text-align: left;
       white-space: normal;
+    }
+
+    .results td.follow-cell {
+      text-align: left;
+    }
+
+    .follow-button {
+      min-width: 0;
+      justify-self: start;
     }
 
     .results tbody tr:hover td {

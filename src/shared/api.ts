@@ -18,6 +18,7 @@ export interface Thread {
   last_activity_at: string | null;
   message_count: number;
   list_name: string;
+  is_followed?: boolean;
 }
 
 export interface Message {

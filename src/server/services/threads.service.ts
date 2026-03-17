@@ -2,6 +2,7 @@ import { db } from "../db";
 import { BadRequestError } from "../errors";
 import { sql } from "kysely";
 import { getAttachmentsByMessageIds } from "./attachments.service";
+import { toDbInt8, type DbInt8Value } from "../db-ids";
 
 function encodeCursor(lastActivityAt: Date | null, threadId: string): string {
   return Buffer.from(JSON.stringify({ lastActivityAt, threadId })).toString("base64url");
@@ -34,7 +35,7 @@ function decodeCursorSafe(cursor: string): { lastActivityAt: string | null; thre
   }
 }
 
-export async function listThreads(query: ThreadsQuery) {
+export async function listThreads(query: ThreadsQuery, userId?: DbInt8Value | null) {
   const limit = Math.min(Math.max(1, query.limit), 100);
 
   let q = db
@@ -42,9 +43,23 @@ export async function listThreads(query: ThreadsQuery) {
     .innerJoin("lists", "lists.id", "threads.list_id")
     .selectAll("threads")
     .select("lists.name as list_name")
+    .select(sql<boolean | null>`null`.as("is_followed"))
     .orderBy(sql`threads.last_activity_at DESC NULLS LAST`)
     .orderBy("threads.thread_id", "asc")
     .limit(limit + 1);
+
+  if (userId != null) {
+    q = q
+      .leftJoin("thread_follows", (join) =>
+        join
+          .onRef("thread_follows.thread_id", "=", "threads.thread_id")
+          .on("thread_follows.user_id", "=", toDbInt8(userId))
+      )
+      .clearSelect()
+      .selectAll("threads")
+      .select("lists.name as list_name")
+      .select(sql<boolean>`thread_follows.thread_id is not null`.as("is_followed"));
+  }
 
   if (query.list) q = q.where("lists.name", "=", query.list);
   if (query.q) q = q.where("threads.subject", "ilike", `%${query.q}%`);

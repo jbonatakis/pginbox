@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { resolveCurrentSession, type ResponseCookieTarget } from "../auth";
 import { toThread, toThreadDetail } from "../serialize";
 import { listThreads, getThread } from "../services/threads.service";
 
@@ -67,16 +68,21 @@ export function parseThreadsToDate(value: string | undefined): Date | null {
   return parseDate(value, "to");
 }
 
+function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTarget {
+  return target as ResponseCookieTarget;
+}
+
 export const threadsRoutes = new Elysia({ prefix: "/threads" })
   .get(
     "/",
-    async ({ query, status }) => {
+    async ({ query, request, set, status }) => {
       const limit = parseLimit(query.limit, 25);
       if (limit === null) return status(400, { message: "limit must be an integer between 1 and 100" });
       const from = parseThreadsFromDate(query.from);
       if (query.from !== undefined && from === null) return status(400, { message: "from must be a valid ISO date" });
       const to = parseThreadsToDate(query.to);
       if (query.to !== undefined && to === null) return status(400, { message: "to must be a valid ISO date" });
+      const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const result = await listThreads({
         list: query.list,
         q: query.q,
@@ -84,7 +90,7 @@ export const threadsRoutes = new Elysia({ prefix: "/threads" })
         to: to ?? undefined,
         cursor: query.cursor,
         limit,
-      });
+      }, resolved.user?.id ?? null);
       return { items: result.items.map(toThread), nextCursor: result.nextCursor };
     },
     {

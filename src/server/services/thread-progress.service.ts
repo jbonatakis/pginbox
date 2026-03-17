@@ -36,11 +36,41 @@ interface ProgressStats {
   firstUnreadMessageId: string | null;
 }
 
+interface FollowRowState {
+  anchor_message_id: bigint | number | string;
+  created_at: Date | string;
+}
+
+interface CanonicalProgressRow {
+  threadId: string;
+  lastReadMessageId: string;
+  updatedAt: Date | string;
+}
+
 async function getLatestMessageIdInCanonicalOrder(threadId: string): Promise<string | null> {
   const latestMsg = await db
     .selectFrom("messages")
     .select("id")
     .where("thread_id", "=", threadId)
+    .orderBy(sql`sent_at DESC NULLS FIRST`)
+    .orderBy("id", "desc")
+    .limit(1)
+    .executeTakeFirst();
+
+  return latestMsg ? msgIdStr(latestMsg.id) : null;
+}
+
+async function getLatestMessageIdAtOrBefore(threadId: string, cutoff: Date): Promise<string | null> {
+  const latestMsg = await db
+    .selectFrom("messages")
+    .select("id")
+    .where("thread_id", "=", threadId)
+    .where(({ eb, or }) =>
+      or([
+        eb("sent_at", "<=", cutoff),
+        eb("sent_at", "is", null),
+      ])
+    )
     .orderBy(sql`sent_at DESC NULLS FIRST`)
     .orderBy("id", "desc")
     .limit(1)
@@ -164,6 +194,95 @@ async function deleteProgressRow(userId: DbInt8Value, threadId: string): Promise
     .execute();
 }
 
+async function upsertProgressRow(
+  userId: DbInt8Value,
+  threadId: string,
+  lastReadMessageId: string,
+  updatedAt = new Date()
+): Promise<void> {
+  await db.insertInto("thread_read_progress")
+    .values({
+      user_id: toDbInt8(userId),
+      thread_id: threadId,
+      last_read_message_id: lastReadMessageId,
+      updated_at: updatedAt,
+    })
+    .onConflict((oc) =>
+      oc.columns(["user_id", "thread_id"]).doUpdateSet({
+        last_read_message_id: lastReadMessageId,
+        updated_at: updatedAt,
+      })
+    )
+    .execute();
+}
+
+async function updateFollowAnchor(
+  userId: DbInt8Value,
+  threadId: string,
+  anchorMessageId: string,
+  updatedAt = new Date()
+): Promise<void> {
+  await db.updateTable("thread_follows")
+    .set({
+      anchor_message_id: sql`${anchorMessageId}::bigint`,
+      updated_at: updatedAt,
+    })
+    .where("user_id", "=", toDbInt8(userId))
+    .where("thread_id", "=", threadId)
+    .execute();
+}
+
+async function resolveFollowSeedMessageId(
+  threadId: string,
+  seedLastReadMessageId?: string | null,
+  followedAt?: Date
+): Promise<string | null> {
+  if (seedLastReadMessageId) {
+    const msg = await db
+      .selectFrom("messages")
+      .select("id")
+      .where("id", "=", seedLastReadMessageId)
+      .where("thread_id", "=", threadId)
+      .executeTakeFirst();
+    if (msg) return msgIdStr(msg.id);
+  }
+
+  if (followedAt) {
+    const latestAtFollowTime = await getLatestMessageIdAtOrBefore(threadId, followedAt);
+    if (latestAtFollowTime) return latestAtFollowTime;
+  }
+
+  return getLatestMessageIdInCanonicalOrder(threadId);
+}
+
+async function getEffectiveLastReadMessageId(
+  userId: DbInt8Value,
+  threadId: string,
+  followRow: FollowRowState,
+  progressRow: CanonicalProgressRow | null
+): Promise<string | null> {
+  if (!progressRow) {
+    return msgIdStr(followRow.anchor_message_id);
+  }
+
+  const followCreatedAt = new Date(followRow.created_at);
+  const progressUpdatedAt = new Date(progressRow.updatedAt);
+  if (progressUpdatedAt.getTime() >= followCreatedAt.getTime()) {
+    return progressRow.lastReadMessageId;
+  }
+
+  const repairedBaseline =
+    await resolveFollowSeedMessageId(threadId, null, followCreatedAt)
+    ?? progressRow.lastReadMessageId;
+
+  await Promise.all([
+    upsertProgressRow(userId, threadId, repairedBaseline),
+    updateFollowAnchor(userId, threadId, repairedBaseline),
+  ]);
+
+  return repairedBaseline;
+}
+
 // ---- Canonicalization ----
 
 async function canonicalizeFollowRow(
@@ -228,7 +347,7 @@ async function canonicalizeFollowRow(
 async function canonicalizeProgressRow(
   userId: DbInt8Value,
   threadId: string
-): Promise<{ threadId: string; lastReadMessageId: string } | null> {
+): Promise<CanonicalProgressRow | null> {
   const userIdStr = toDbInt8(userId);
   const row = await db
     .selectFrom("thread_read_progress")
@@ -247,7 +366,7 @@ async function canonicalizeProgressRow(
 
   const lastReadMsgId = msgIdStr(row.last_read_message_id);
   if (lastReadMsg.thread_id === row.thread_id) {
-    return { threadId, lastReadMessageId: lastReadMsgId };
+    return { threadId, lastReadMessageId: lastReadMsgId, updatedAt: row.updated_at };
   }
 
   const newThreadId = lastReadMsg.thread_id;
@@ -282,7 +401,7 @@ async function canonicalizeProgressRow(
         .where("user_id", "=", userIdStr)
         .where("thread_id", "=", threadId)
         .execute();
-      return { threadId: newThreadId, lastReadMessageId: lastReadMsgId };
+      return { threadId: newThreadId, lastReadMessageId: lastReadMsgId, updatedAt: new Date() };
     } else {
       await db.deleteFrom("thread_read_progress")
         .where("user_id", "=", userIdStr)
@@ -296,7 +415,7 @@ async function canonicalizeProgressRow(
       .where("user_id", "=", userIdStr)
       .where("thread_id", "=", threadId)
       .execute();
-    return { threadId: newThreadId, lastReadMessageId: lastReadMsgId };
+    return { threadId: newThreadId, lastReadMessageId: lastReadMsgId, updatedAt: new Date() };
   }
 }
 
@@ -340,25 +459,22 @@ export async function followThread(
     await seedProgressIfNeeded(userId, canonicalId, seedLastReadMessageId);
     return { threadId: canonicalId, isFollowed: true };
   }
-
-  const anchorMsg = await db
-    .selectFrom("messages")
-    .select("id")
-    .where("thread_id", "=", threadId)
-    .limit(1)
-    .executeTakeFirst();
-  if (!anchorMsg) throw new BadRequestError("Thread not found");
+  const followedAt = new Date();
+  const seedMsgId = await resolveFollowSeedMessageId(threadId, seedLastReadMessageId, followedAt);
+  if (!seedMsgId) throw new BadRequestError("Thread not found");
 
   await db.insertInto("thread_follows")
     .values({
       user_id: userIdStr,
       thread_id: threadId,
-      anchor_message_id: anchorMsg.id,
+      anchor_message_id: sql`${seedMsgId}::bigint`,
+      created_at: followedAt,
+      updated_at: followedAt,
     })
     .onConflict((oc) => oc.columns(["user_id", "thread_id"]).doNothing())
     .execute();
 
-  await seedProgressIfNeeded(userId, threadId, seedLastReadMessageId);
+  await upsertProgressRow(userId, threadId, seedMsgId, followedAt);
   return { threadId, isFollowed: true };
 }
 
@@ -436,7 +552,7 @@ export async function getProgress(
   const canonicalThreadId = progressResult?.threadId ?? canonicalFollowThreadId ?? threadId;
   const followRow = await db
     .selectFrom("thread_follows")
-    .select(["thread_id", "anchor_message_id"])
+    .select(["thread_id", "anchor_message_id", "created_at"])
     .where("user_id", "=", userIdStr)
     .where("thread_id", "=", canonicalThreadId)
     .executeTakeFirst();
@@ -449,9 +565,15 @@ export async function getProgress(
     return buildUnfollowedThreadProgress(canonicalThreadId, totalMessages, pageSize);
   }
 
+  const effectiveLastReadMessageId = await getEffectiveLastReadMessageId(
+    userId,
+    canonicalThreadId,
+    followRow,
+    progressResult
+  );
   const stats = await computeProgressStats(
     canonicalThreadId,
-    progressResult?.lastReadMessageId ?? msgIdStr(followRow.anchor_message_id)
+    effectiveLastReadMessageId
   );
   return buildThreadProgress(canonicalThreadId, true, stats, pageSize);
 }
@@ -591,7 +713,9 @@ export async function listFollowedThreads(
       "threads.message_count",
       "lists.name as list_name",
       "thread_follows.anchor_message_id",
+      "thread_follows.created_at",
       "thread_read_progress.last_read_message_id",
+      "thread_read_progress.updated_at as progress_updated_at",
     ])
     .where("thread_follows.user_id", "=", userIdStr)
     .orderBy(sql`threads.last_activity_at DESC NULLS LAST`)
@@ -626,11 +750,24 @@ export async function listFollowedThreads(
 
   const followedThreads: FollowedThread[] = await Promise.all(
     items.map(async (row) => {
+      const effectiveLastReadMessageId = await getEffectiveLastReadMessageId(
+        userId,
+        row.thread_id,
+        {
+          anchor_message_id: row.anchor_message_id,
+          created_at: row.created_at,
+        },
+        row.last_read_message_id
+          ? {
+              threadId: row.thread_id,
+              lastReadMessageId: msgIdStr(row.last_read_message_id),
+              updatedAt: row.progress_updated_at ?? row.created_at,
+            }
+          : null
+      );
       const stats = await computeProgressStats(
         row.thread_id,
-        row.last_read_message_id
-          ? msgIdStr(row.last_read_message_id)
-          : msgIdStr(row.anchor_message_id)
+        effectiveLastReadMessageId
       );
       const latestPage = Math.max(1, Math.ceil(stats.totalMessages / pageSize));
       const hasUnread = stats.lastReadOrdinal < stats.totalMessages;
