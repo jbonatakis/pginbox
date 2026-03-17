@@ -1,5 +1,5 @@
 <script lang="ts">
-  export interface TrendRow {
+  interface TrendRow {
     id: string;
     label: string;
     messages: number;

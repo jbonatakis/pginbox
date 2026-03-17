@@ -26,7 +26,7 @@
   let profileMessage: string | null = null;
   let resendError: ApiErrorShape | null = null;
   let resendMessage: string | null = null;
-  let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+  let redirectTimer: number | null = null;
   let syncedDisplayName: string | null = null;
 
   const forgotPasswordLink = buildAuthPath(forgotPasswordPath, accountPath);

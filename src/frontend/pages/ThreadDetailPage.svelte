@@ -19,6 +19,10 @@
 
   type ThreadDetailStatus = "idle" | "loading" | "success" | "error";
   type LoadMode = "navigate" | "refresh" | "replace";
+  type LoadThreadOptions = {
+    preserveHashAnchor?: boolean;
+    scrollToTop?: boolean;
+  };
 
   export let threadId: string;
 
@@ -47,6 +51,7 @@
   let progressRequestedThreadId: string | null = null;
   let backToThreadsPath = threadsPath;
   let lastAppliedHashAnchorKey: string | null = null;
+  let retryNavigateOptions: LoadThreadOptions = {};
 
   const threadSubject = (subject: string | null): string => {
     const normalized = subject?.trim() ?? "";
@@ -143,17 +148,22 @@
     return parseThreadDetailPage(window.location.search);
   };
 
-  const syncLocationPage = (page: number, totalPages: number): void => {
+  const syncLocationPage = (
+    page: number,
+    totalPages: number,
+    { preserveHashAnchor = true }: LoadThreadOptions = {}
+  ): void => {
     if (typeof window === "undefined") return;
 
     const nextSearch = withThreadDetailPage(
       window.location.search,
       page < totalPages ? page : null
     );
+    const nextHash = preserveHashAnchor ? window.location.hash : "";
 
-    if (nextSearch === window.location.search) return;
+    if (nextSearch === window.location.search && nextHash === window.location.hash) return;
 
-    const nextUrl = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    const nextUrl = `${window.location.pathname}${nextSearch}${nextHash}`;
     window.history.replaceState(window.history.state, "", nextUrl);
   };
 
@@ -184,11 +194,21 @@
     lastAppliedHashAnchorKey = anchorKey;
   };
 
+  const scrollToTop = (): void => {
+    if (typeof window === "undefined") return;
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ left: 0, top: 0 });
+    });
+  };
+
   const loadThread = async (
     targetThreadId: string,
     mode: LoadMode,
-    targetPage?: number
+    targetPage?: number,
+    options: LoadThreadOptions = {}
   ): Promise<void> => {
+    const { preserveHashAnchor = true, scrollToTop: shouldScrollToTop = false } = options;
+
     clearActiveRequest();
     const requestController = new AbortController();
     activeRequestController = requestController;
@@ -210,6 +230,7 @@
       isNavigatingPage = false;
       isRefreshing = false;
     } else if (mode === "navigate") {
+      retryNavigateOptions = options;
       isNavigatingPage = true;
       isRefreshing = false;
     } else {
@@ -236,7 +257,12 @@
       thread = response;
       progress = progressResponse;
       status = "success";
-      syncLocationPage(response.messagePagination.page, response.messagePagination.totalPages);
+      syncLocationPage(response.messagePagination.page, response.messagePagination.totalPages, {
+        preserveHashAnchor,
+      });
+      if (mode === "navigate" && shouldScrollToTop) {
+        scrollToTop();
+      }
     } catch (rawError) {
       const apiError = toApiErrorShape(rawError);
       if (apiError.code === "ABORTED" || requestId !== requestSequence) return;
@@ -267,7 +293,7 @@
       return;
     }
     if (errorMode === "navigate" && errorPage !== null) {
-      void loadThread(threadId, "navigate", errorPage);
+      void loadThread(threadId, "navigate", errorPage, retryNavigateOptions);
       return;
     }
     void loadThread(threadId, "refresh", thread.messagePagination.page);
@@ -278,7 +304,10 @@
     const totalPages = thread.messagePagination.totalPages;
     const nextPage = Math.max(1, Math.min(page, totalPages));
     if (nextPage === thread.messagePagination.page) return;
-    void loadThread(threadId, "navigate", nextPage);
+    void loadThread(threadId, "navigate", nextPage, {
+      preserveHashAnchor: false,
+      scrollToTop: true,
+    });
   };
 
   const resumeReading = (event: MouseEvent): void => {
@@ -305,7 +334,10 @@
     }
 
     if (!thread || targetPage !== thread.messagePagination.page) {
-      void loadThread(threadId, "navigate", targetPage);
+      void loadThread(threadId, "navigate", targetPage, {
+        preserveHashAnchor: true,
+        scrollToTop: false,
+      });
     } else {
       lastAppliedHashAnchorKey = null;
       const anchorKey = currentHashAnchorKey(thread.messagePagination.page);

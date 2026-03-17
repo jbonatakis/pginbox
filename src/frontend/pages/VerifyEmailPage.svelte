@@ -23,7 +23,7 @@
   let loginLink = loginPath;
   let nextRedirect = homePath;
   let pageStatus: "loading" | "success" | "error" | "missing-token" = "loading";
-  let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+  let redirectTimer: number | null = null;
   let registerLink = registerPath;
   let resendEmail = "";
   let resendError: ApiErrorShape | null = null;
