@@ -6,6 +6,9 @@ Usage:
     # Live (inserts messages, refreshes affected threads):
     python3 ingest.py --year 2026 --month 2
 
+    # Live without refreshing analytics materialized views:
+    python3 ingest.py --year 2026 --month 2 --skip-analytics
+
     # Backfill (bulk insert messages, derive threads at the end):
     python3 ingest.py --year 2026 --month 2 --backfill
 
@@ -435,6 +438,11 @@ def main():
         action="store_true",
         help="Decode stored RFC 2047 message subjects and rebuild the threads table",
     )
+    parser.add_argument(
+        "--skip-analytics",
+        action="store_true",
+        help="Skip refreshing analytics materialized views after ingest/derive work",
+    )
 
     mode = parser.add_mutually_exclusive_group(required=False)
     mode.add_argument("--year", type=int, help="Single month: year")
@@ -505,13 +513,15 @@ def main():
     conn = psycopg2.connect(args.dsn)
     if args.derive_only:
         derive_threads(conn)
-        refresh_analytics_views(conn)
+        if not args.skip_analytics:
+            refresh_analytics_views(conn)
         conn.close()
         return
     if args.decode_subjects:
         decode_message_subjects(conn)
         derive_threads(conn)
-        refresh_analytics_views(conn)
+        if not args.skip_analytics:
+            refresh_analytics_views(conn)
         conn.close()
         return
 
@@ -690,7 +700,7 @@ def main():
             f"\n=== Total: {grand_total:,} messages across "
             f"{len(list_names)} lists x {len(months)} months ==="
         )
-    if not args.repair_attachments:
+    if not args.repair_attachments and not args.skip_analytics:
         refresh_analytics_views(conn)
 
     conn.close()

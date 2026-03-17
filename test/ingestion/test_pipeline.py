@@ -72,3 +72,37 @@ def test_ingest_overwrite_defers_thread_rebuild_until_requested(ingest, monkeypa
         ("store_batch_overwrite", ["<message@example.com>"]),
         ("derive_threads",),
     ]
+
+
+def test_main_derive_only_skip_analytics_suppresses_refresh(ingest, monkeypatch):
+    events = []
+
+    class FakeConn:
+        def close(self):
+            events.append(("close",))
+
+    monkeypatch.setattr(ingest.psycopg2, "connect", lambda dsn: FakeConn())
+    monkeypatch.setattr(ingest, "derive_threads", lambda conn: events.append(("derive_threads",)))
+    monkeypatch.setattr(
+        ingest,
+        "refresh_analytics_views",
+        lambda conn: events.append(("refresh_analytics_views",)),
+    )
+    monkeypatch.setattr(
+        ingest.sys,
+        "argv",
+        [
+            "ingest.py",
+            "--dsn",
+            "postgresql://example",
+            "--derive-only",
+            "--skip-analytics",
+        ],
+    )
+
+    ingest.main()
+
+    assert events == [
+        ("derive_threads",),
+        ("close",),
+    ]

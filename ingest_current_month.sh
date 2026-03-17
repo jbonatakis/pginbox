@@ -12,6 +12,48 @@ log() {
   printf '[%s] %s\n' "$(timestamp)" "$*"
 }
 
+usage() {
+  cat <<'EOF'
+Usage: ./ingest_current_month.sh [list-name ...] [ingest.py options]
+
+Runs the current month ingest for one or more tracked lists.
+
+Examples:
+  ./ingest_current_month.sh
+  ./ingest_current_month.sh pgsql-hackers
+  ./ingest_current_month.sh --skip-analytics
+  ./ingest_current_month.sh pgsql-hackers pgsql-general --skip-analytics
+
+Common passthrough options:
+  --skip-analytics    Skip refreshing analytics materialized views after ingest
+  --backfill          Bulk-insert messages and defer thread rebuild
+  --overwrite-existing
+                      Reparse archives and overwrite stored rows in place
+
+Any option beginning with '-' is passed through to src/ingestion/ingest.py.
+Any positional argument is treated as a list name.
+EOF
+}
+
+load_default_list_names() {
+  if [[ -n "${PGINBOX_LIST_NAMES:-}" ]]; then
+    LIST_NAMES=($(printf '%s' "$PGINBOX_LIST_NAMES" | tr ',' ' '))
+  elif [[ -f "$TRACKED_LISTS_FILE" ]]; then
+    while IFS= read -r line; do
+      list_name="${line%%#*}"
+      list_name="${list_name#"${list_name%%[![:space:]]*}"}"
+      list_name="${list_name%"${list_name##*[![:space:]]}"}"
+      if [[ -n "$list_name" ]]; then
+        LIST_NAMES+=("$list_name")
+      fi
+    done < "$TRACKED_LISTS_FILE"
+  elif [[ -n "${PGINBOX_LIST_NAME:-}" ]]; then
+    LIST_NAMES=("$PGINBOX_LIST_NAME")
+  else
+    LIST_NAMES=("pgsql-hackers")
+  fi
+}
+
 if [[ -f "$ROOT_DIR/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
@@ -35,32 +77,37 @@ LIST_NAMES=()
 INGEST_EXTRA_ARGS=()
 TRACKED_LISTS_FILE="${TRACKED_LISTS_FILE:-$ROOT_DIR/lists.tracked}"
 if (( $# > 0 )); then
-  for arg in "$@"; do
-    if [[ "$arg" == -* ]]; then
-      INGEST_EXTRA_ARGS+=("$arg")
-    else
-      LIST_NAMES+=("$arg")
+  while (( $# > 0 )); do
+    arg="$1"
+    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+      usage
+      exit 0
     fi
+    case "$arg" in
+      --delay|--parallel|--dsn|--pg-user|--pg-pass|--lists-file|--year|--month|--from|--to)
+        INGEST_EXTRA_ARGS+=("$arg")
+        shift
+        if (( $# == 0 )); then
+          log "missing value for $arg" >&2
+          exit 1
+        fi
+        INGEST_EXTRA_ARGS+=("$1")
+        ;;
+      -*)
+        INGEST_EXTRA_ARGS+=("$arg")
+        ;;
+      *)
+        LIST_NAMES+=("$arg")
+        ;;
+    esac
+    shift
   done
-elif [[ -n "${PGINBOX_LIST_NAMES:-}" ]]; then
-  LIST_NAMES=($(printf '%s' "$PGINBOX_LIST_NAMES" | tr ',' ' '))
-elif [[ -f "$TRACKED_LISTS_FILE" ]]; then
-  while IFS= read -r line; do
-    list_name="${line%%#*}"
-    list_name="${list_name#"${list_name%%[![:space:]]*}"}"
-    list_name="${list_name%"${list_name##*[![:space:]]}"}"
-    if [[ -n "$list_name" ]]; then
-      LIST_NAMES+=("$list_name")
-    fi
-  done < "$TRACKED_LISTS_FILE"
-elif [[ -n "${PGINBOX_LIST_NAME:-}" ]]; then
-  LIST_NAMES=("$PGINBOX_LIST_NAME")
 else
-  LIST_NAMES=("pgsql-hackers")
+  load_default_list_names
 fi
 
 if (( ${#LIST_NAMES[@]} == 0 )); then
-  LIST_NAMES=("pgsql-hackers")
+  load_default_list_names
 fi
 
 YEAR="$(date +%Y)"
