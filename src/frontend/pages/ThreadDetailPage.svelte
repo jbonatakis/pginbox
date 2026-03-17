@@ -559,12 +559,14 @@
               on:click={resumeReading}
             >Resume reading</button>
           {/if}
-          <button
-            class="banner-button"
-            type="button"
-            disabled={isBusy || isBannerBusy}
-            on:click={markRead}
-          >Mark as read</button>
+          {#if progress.hasUnread}
+            <button
+              class="banner-button"
+              type="button"
+              disabled={isBusy || isBannerBusy}
+              on:click={markRead}
+            >Mark as read</button>
+          {/if}
           <button
             class="banner-button banner-button--follow"
             type="button"
