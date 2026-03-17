@@ -93,9 +93,9 @@
 
 <style>
   .table-wrap {
-    border: 1px solid #d9e2ec;
+    border: 1px solid var(--border);
     border-radius: 0.75rem;
-    background: rgba(255, 255, 255, 0.94);
+    background: var(--surface-soft);
     overflow-x: auto;
   }
 
@@ -109,18 +109,18 @@
   td {
     text-align: left;
     padding: 0.58rem 0.72rem;
-    border-bottom: 1px solid #e4ebf3;
+    border-bottom: 1px solid var(--border-soft);
     vertical-align: top;
   }
 
   thead th {
     font-size: 0.76rem;
-    color: #486581;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     font-weight: 700;
     white-space: nowrap;
-    background: #f5f9ff;
+    background: var(--surface-muted);
   }
 
   tbody tr:last-child td {
@@ -128,12 +128,12 @@
   }
 
   tbody tr:hover td {
-    background: #f8fbff;
+    background: var(--surface-muted);
   }
 
   td {
     font-size: 0.88rem;
-    color: #243b53;
+    color: var(--text-subtle);
     line-height: 1.35;
   }
 
@@ -142,7 +142,7 @@
   }
 
   .subject a {
-    color: #0b4ea2;
+    color: var(--primary);
     font-weight: 650;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
@@ -150,7 +150,7 @@
   }
 
   .subject a:focus-visible {
-    outline: 2px solid #0b4ea2;
+    outline: 2px solid var(--primary);
     outline-offset: 2px;
     border-radius: 0.15rem;
   }
@@ -188,9 +188,9 @@
     .results tr {
       display: grid;
       gap: 0.35rem;
-      border: 1px solid #d9e2ec;
+      border: 1px solid var(--border);
       border-radius: 0.6rem;
-      background: #f8fbff;
+      background: var(--surface-muted);
       padding: 0.5rem 0.6rem;
     }
 
@@ -205,7 +205,7 @@
 
     .results td::before {
       content: attr(data-label);
-      color: #627d98;
+      color: var(--text-muted);
       font-size: 0.71rem;
       text-transform: uppercase;
       letter-spacing: 0.04em;

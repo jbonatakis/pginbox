@@ -18,8 +18,8 @@
     align-items: center;
     gap: 0.75rem;
     border-radius: 0.75rem;
-    border: 1px solid #bfd3ec;
-    background: #f5f9ff;
+    border: 1px solid var(--border);
+    background: var(--surface-muted);
     padding: 0.8rem 0.9rem;
   }
 
@@ -28,7 +28,7 @@
     height: 1rem;
     border-radius: 999px;
     border: 2px solid #9fbde3;
-    border-top-color: #0b4ea2;
+    border-top-color: var(--primary);
     animation: spin 800ms linear infinite;
   }
 
@@ -40,14 +40,14 @@
   h3 {
     margin: 0;
     font-size: 0.95rem;
-    color: #0b4ea2;
+    color: var(--primary);
     font-weight: 700;
   }
 
   p {
     margin: 0;
     font-size: 0.89rem;
-    color: #334e68;
+    color: var(--text-subtle);
     line-height: 1.35;
   }
 

@@ -363,9 +363,9 @@
 
 <style>
   .filters-card {
-    border: 1px solid #d9e2ec;
+    border: 1px solid var(--border);
     border-radius: 0.75rem;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--surface-soft);
     padding: 0.7rem;
     display: grid;
     gap: 0.65rem;
@@ -386,23 +386,23 @@
 
   .filters-summary h2 {
     margin: 0;
-    color: #102a43;
+    color: var(--text);
     font-size: 0.92rem;
     line-height: 1.1;
   }
 
   .filters-summary p {
     margin: 0;
-    color: #627d98;
+    color: var(--text-muted);
     font-size: 0.8rem;
     line-height: 1.2;
   }
 
   .filters-toggle {
-    border: 1px solid #cfd8e3;
+    border: 1px solid var(--border);
     border-radius: 999px;
     background: #f5f7fa;
-    color: #334e68;
+    color: var(--text-subtle);
     font-weight: 700;
     font-size: 0.8rem;
     line-height: 1;
@@ -412,9 +412,9 @@
   }
 
   .filters-toggle.modified {
-    border-color: #6f9fdd;
-    background: #e8f2ff;
-    color: #0b4ea2;
+    border-color: rgba(111, 159, 221, 0.76);
+    background: var(--primary-soft);
+    color: var(--primary);
   }
 
   .filters {
@@ -445,7 +445,7 @@
 
   label {
     font-size: 0.79rem;
-    color: #486581;
+    color: var(--text-muted);
     font-weight: 700;
     letter-spacing: 0.02em;
     text-transform: uppercase;
@@ -455,10 +455,10 @@
   select {
     width: 100%;
     min-width: 0;
-    border: 1px solid #c5d0da;
+    border: 1px solid var(--border);
     border-radius: 0.45rem;
     background: #fff;
-    color: #102a43;
+    color: var(--text);
     font-size: 0.85rem;
     font-weight: 600;
     padding: 0.36rem 0.45rem;
@@ -491,10 +491,10 @@
   }
 
   .search-button {
-    border: 1px solid #6f9fdd;
+    border: 1px solid rgba(111, 159, 221, 0.76);
     border-radius: 0.45rem;
-    background: #e8f2ff;
-    color: #0b4ea2;
+    background: var(--primary-soft);
+    color: var(--primary);
     font-weight: 700;
     font-size: 0.82rem;
     line-height: 1;
@@ -515,10 +515,10 @@
   }
 
   .clear-button {
-    border: 1px solid #cfd8e3;
+    border: 1px solid var(--border);
     border-radius: 0.45rem;
     background: #f5f7fa;
-    color: #334e68;
+    color: var(--text-subtle);
     font-weight: 650;
     font-size: 0.82rem;
     line-height: 1;
@@ -528,9 +528,9 @@
   }
 
   .clear-button.modified {
-    border-color: #6f9fdd;
-    background: #e8f2ff;
-    color: #0b4ea2;
+    border-color: rgba(111, 159, 221, 0.76);
+    background: var(--primary-soft);
+    color: var(--primary);
   }
 
   .clear-button:disabled {
@@ -541,7 +541,7 @@
   .field-note {
     margin: 0;
     font-size: 0.78rem;
-    color: #486581;
+    color: var(--text-muted);
   }
 
   .field-error {
@@ -554,14 +554,14 @@
   .field-error p {
     margin: 0;
     font-size: 0.78rem;
-    color: #8a1c1c;
+    color: var(--danger);
   }
 
   .field-error button {
-    border: 1px solid #e7b4b8;
+    border: 1px solid var(--danger-border);
     border-radius: 0.42rem;
     background: #fff;
-    color: #8a1c1c;
+    color: var(--danger);
     font-size: 0.76rem;
     font-weight: 700;
     line-height: 1;

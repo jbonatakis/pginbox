@@ -18,7 +18,7 @@
     align-items: start;
     gap: 0.75rem;
     border-radius: 0.75rem;
-    border: 1px solid #d2dee9;
+    border: 1px solid var(--border);
     background: #fbfcfe;
     padding: 0.8rem 0.9rem;
   }
@@ -41,14 +41,14 @@
   h3 {
     margin: 0;
     font-size: 0.95rem;
-    color: #243b53;
+    color: var(--text);
     font-weight: 700;
   }
 
   p {
     margin: 0;
     font-size: 0.89rem;
-    color: #486581;
+    color: var(--text-muted);
     line-height: 1.35;
   }
 </style>

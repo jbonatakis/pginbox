@@ -40,9 +40,9 @@
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.75rem;
-    border: 1px solid #d9e2ec;
+    border: 1px solid var(--border);
     border-radius: 0.65rem;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--surface-soft);
     padding: 0.56rem 0.72rem;
     text-decoration: none;
     transition:
@@ -53,12 +53,12 @@
 
   .row:hover {
     border-color: #9fb3c8;
-    background: #f0f7ff;
+    background: var(--primary-soft);
     box-shadow: 0 0 0 2px rgba(159, 179, 200, 0.18);
   }
 
   .row:focus-visible {
-    outline: 2px solid #0b4ea2;
+    outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
 
@@ -66,7 +66,7 @@
     min-width: 1.6rem;
     font-size: 0.84rem;
     font-weight: 700;
-    color: #486581;
+    color: var(--text-muted);
     text-align: right;
   }
 
@@ -74,14 +74,14 @@
     min-width: 0;
     font-size: 0.95rem;
     font-weight: 650;
-    color: #102a43;
+    color: var(--text);
     overflow-wrap: anywhere;
   }
 
   .count {
     font-size: 0.82rem;
     font-weight: 600;
-    color: #0b4ea2;
+    color: var(--primary);
     white-space: nowrap;
   }
 

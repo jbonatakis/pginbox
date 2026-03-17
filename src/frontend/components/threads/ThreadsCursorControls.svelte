@@ -45,9 +45,9 @@
 
 <style>
   .controls {
-    border: 1px solid #d9e2ec;
+    border: 1px solid var(--border);
     border-radius: 0.65rem;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--surface-soft);
     padding: 0.54rem 0.68rem;
     display: flex;
     justify-content: space-between;
@@ -59,7 +59,7 @@
   p {
     margin: 0;
     font-size: 0.82rem;
-    color: #486581;
+    color: var(--text-muted);
   }
 
   .actions {
@@ -69,10 +69,10 @@
   }
 
   button {
-    border: 1px solid #6f9fdd;
+    border: 1px solid rgba(111, 159, 221, 0.76);
     border-radius: 0.45rem;
-    background: #e8f2ff;
-    color: #0b4ea2;
+    background: var(--primary-soft);
+    color: var(--primary);
     font-weight: 650;
     font-size: 0.82rem;
     line-height: 1;

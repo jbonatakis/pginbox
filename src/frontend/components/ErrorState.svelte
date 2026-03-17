@@ -22,8 +22,8 @@
     align-items: start;
     gap: 0.75rem;
     border-radius: 0.75rem;
-    border: 1px solid #e7b4b8;
-    background: #fff6f6;
+    border: 1px solid var(--danger-border);
+    background: var(--danger-soft);
     padding: 0.8rem 0.9rem;
   }
 
@@ -32,7 +32,7 @@
     height: 1rem;
     border-radius: 999px;
     border: 2px solid #d64545;
-    color: #b42318;
+    color: var(--danger);
     font-size: 0.67rem;
     font-weight: 700;
     display: grid;
@@ -49,7 +49,7 @@
   h3 {
     margin: 0;
     font-size: 0.95rem;
-    color: #8a1c1c;
+    color: var(--danger);
     font-weight: 700;
   }
 
@@ -65,7 +65,7 @@
     margin-top: 0.15rem;
     padding: 0.22rem 0.38rem;
     border-radius: 0.35rem;
-    border: 1px solid #e7b4b8;
+    border: 1px solid var(--danger-border);
     background: #fff;
     color: #5d1018;
     font-size: 0.8rem;

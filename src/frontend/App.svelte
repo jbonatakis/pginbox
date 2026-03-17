@@ -182,9 +182,10 @@
     <div class="header-bar">
       <div class="brand-block">
         <a href={homePath} class="brand-link" on:click={(event) => onLinkClick(event, homePath)}
-          >pginbox</a
+          ><span class="brand-mark" aria-hidden="true">pg</span>
+          <span class="brand-wordmark">pginbox</span></a
         >
-        <p>Searchable PostgreSQL mailing list history</p>
+        <p class="brand-tagline">Searchable PostgreSQL mailing list history</p>
       </div>
 
       <div class="header-tools">
@@ -207,12 +208,14 @@
 
           <nav
             id="primary-navigation"
+            class="primary-nav"
             class:mobile-open={mobileNavOpen}
             aria-label="Primary navigation"
           >
             {#each navItems as item}
               <a
                 href={item.path}
+                class="nav-link"
                 class:active={isActiveNavItem(item, $currentRoute.name)}
                 aria-current={isActiveNavItem(item, $currentRoute.name) ? "page" : undefined}
                 on:click={(event) => {
@@ -224,6 +227,7 @@
 
             <a
               href={$authStore.isAuthenticated ? accountLink : loginLink}
+              class="nav-link auth-link"
               class:active={authNavActive}
               on:click={(event) => {
                 closeMobileNav();
@@ -280,7 +284,22 @@
 
 <style>
   :global(:root) {
-    --focus-ring-color: #0b4ea2;
+    --bg: #f3f6fb;
+    --bg-elevated: #ffffff;
+    --text: #102a43;
+    --text-muted: #526b84;
+    --text-subtle: #304a64;
+    --border: #c9d6e4;
+    --border-soft: #dfe7f0;
+    --surface-soft: rgba(255, 255, 255, 0.92);
+    --surface-muted: #f3f8ff;
+    --primary: #0b4ea2;
+    --primary-hover: #0c5abf;
+    --primary-soft: #e8f2ff;
+    --danger: #8a1c1c;
+    --danger-soft: #fff6f6;
+    --danger-border: #e7b4b8;
+    --focus-ring-color: var(--primary);
     --focus-ring-shadow: rgba(11, 78, 162, 0.18);
   }
 
@@ -300,11 +319,11 @@
       "Segoe UI",
       sans-serif;
     line-height: 1.45;
-    color: #102a43;
+    color: var(--text);
     background:
-      radial-gradient(circle at 8% 0%, #e3eefc 0%, rgba(227, 238, 252, 0) 35%),
-      radial-gradient(circle at 95% 5%, #f8f2df 0%, rgba(248, 242, 223, 0) 42%),
-      linear-gradient(180deg, #f7fbff 0%, #f2f5fa 48%, #eef2f7 100%);
+      radial-gradient(circle at 8% 0%, #dce9fb 0%, rgba(220, 233, 251, 0) 37%),
+      radial-gradient(circle at 94% 5%, #eaf1fd 0%, rgba(234, 241, 253, 0) 42%),
+      linear-gradient(180deg, #f9fbfe 0%, var(--bg) 55%, #edf2f9 100%);
   }
 
   :global(a:focus-visible),
@@ -327,7 +346,7 @@
     max-width: 1160px;
     min-height: 100vh;
     margin: 0 auto;
-    padding: 1rem 1.25rem 2.5rem;
+    padding: 0.85rem 1.25rem 2.5rem;
     display: grid;
     align-content: start;
     gap: 1rem;
@@ -354,13 +373,13 @@
   }
 
   .shell-header {
-    padding-bottom: 0.9rem;
-    border-bottom: 1px solid #bcccdc;
+    padding-bottom: 0.72rem;
+    border-bottom: 1px solid rgba(126, 151, 177, 0.4);
   }
 
   .header-bar {
     display: flex;
-    align-items: start;
+    align-items: center;
     justify-content: space-between;
     gap: 0.9rem;
     min-width: 0;
@@ -382,23 +401,62 @@
 
   .brand-block {
     display: grid;
-    gap: 0.2rem;
+    gap: 0.14rem;
     min-width: 0;
   }
 
   .brand-link {
     margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.56rem;
+    width: fit-content;
     text-decoration: none;
-    color: #102a43;
-    font-size: 1.5rem;
-    font-weight: 750;
-    letter-spacing: 0.01em;
+    color: var(--text);
+    transition:
+      color 120ms ease,
+      transform 120ms ease;
   }
 
-  .brand-block p {
+  .brand-link:hover {
+    color: var(--primary);
+    transform: translateY(-1px);
+  }
+
+  .brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.52rem;
+    height: 1.52rem;
+    padding: 0 0.42rem;
+    border-radius: 0.45rem;
+    background: linear-gradient(145deg, var(--primary), #1865c7);
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    font-family:
+      "IBM Plex Mono",
+      "SFMono-Regular",
+      Menlo,
+      monospace;
+  }
+
+  .brand-wordmark {
+    font-size: 1.3rem;
+    line-height: 1;
+    font-weight: 760;
+    letter-spacing: 0.015em;
+    text-transform: lowercase;
+  }
+
+  .brand-tagline {
     margin: 0;
-    color: #486581;
-    font-size: 0.92rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.012em;
   }
 
   .nav-toggle {
@@ -406,10 +464,10 @@
     align-items: center;
     gap: 0.6rem;
     padding: 0.45rem 0.7rem;
-    border: 1px solid #c5d0da;
+    border: 1px solid var(--border);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.92);
-    color: #243b53;
+    background: rgba(255, 255, 255, 0.9);
+    color: var(--text);
     font-size: 0.88rem;
     font-weight: 700;
     line-height: 1;
@@ -440,38 +498,52 @@
     transform-origin: center;
   }
 
-  nav {
+  .primary-nav {
     display: flex;
-    gap: 0.55rem;
+    gap: 0.32rem;
     flex-wrap: nowrap;
     align-items: center;
+    padding: 0.2rem;
+    border: 1px solid rgba(126, 151, 177, 0.36);
+    border-radius: 0.74rem;
+    background: rgba(255, 255, 255, 0.66);
+    backdrop-filter: blur(6px);
   }
 
-  nav a {
-    color: #334e68;
+  .nav-link {
+    color: #304a64;
     text-decoration: none;
-    padding: 0.42rem 0.72rem;
-    border-radius: 999px;
-    border: 1px solid #d9e2ec;
-    background: rgba(255, 255, 255, 0.82);
-    font-size: 0.94rem;
-    font-weight: 600;
+    padding: 0.33rem 0.64rem;
+    border-radius: 0.5rem;
+    border: 1px solid transparent;
+    background: transparent;
+    font-size: 0.85rem;
+    font-weight: 640;
     transition:
       background-color 120ms ease,
       border-color 120ms ease,
       color 120ms ease;
   }
 
-  nav a:hover {
-    background: #f0f7ff;
-    border-color: #9fb3c8;
-    color: #243b53;
+  .nav-link:hover {
+    background: rgba(232, 242, 255, 0.9);
+    border-color: rgba(111, 159, 221, 0.46);
+    color: #1f3d5a;
   }
 
-  nav a.active {
-    color: #0b4ea2;
-    border-color: #6f9fdd;
-    background: #e8f2ff;
+  .nav-link.active {
+    color: var(--primary);
+    border-color: rgba(111, 159, 221, 0.76);
+    background: rgba(232, 242, 255, 0.96);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.8);
+  }
+
+  .auth-link {
+    margin-left: 0.08rem;
+    border-left: 1px solid rgba(126, 151, 177, 0.35);
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    padding-left: 0.74rem;
   }
 
   .context-strip {
@@ -520,7 +592,7 @@
 
   @media (max-width: 640px) {
     .shell {
-      padding: 0.75rem 0.75rem 2rem;
+      padding: 0.65rem 0.75rem 2rem;
       gap: 0.8rem;
     }
 
@@ -529,12 +601,12 @@
     }
 
     .shell-header {
-      padding-bottom: 0.7rem;
+      padding-bottom: 0.62rem;
     }
 
     .header-bar {
       flex-direction: row;
-      align-items: flex-start;
+      align-items: center;
     }
 
     .header-tools {
@@ -544,6 +616,20 @@
 
     .brand-block {
       flex: 1 1 auto;
+    }
+
+    .brand-mark {
+      min-width: 1.5rem;
+      height: 1.5rem;
+      font-size: 0.62rem;
+    }
+
+    .brand-wordmark {
+      font-size: 1.28rem;
+    }
+
+    .brand-tagline {
+      font-size: 0.76rem;
     }
 
     .nav-toggle {
@@ -563,7 +649,7 @@
       transform: translateY(-0.31rem) rotate(-45deg);
     }
 
-    nav {
+    .primary-nav {
       position: absolute;
       top: calc(100% + 0.45rem);
       right: 0;
@@ -579,9 +665,10 @@
         0 20px 45px -28px rgba(16, 42, 67, 0.45),
         0 8px 18px -16px rgba(16, 42, 67, 0.35);
       z-index: 30;
+      backdrop-filter: none;
     }
 
-    nav.mobile-open {
+    .primary-nav.mobile-open {
       display: grid;
     }
 
@@ -589,11 +676,21 @@
       justify-content: flex-end;
     }
 
-    nav a {
+    .nav-link {
       width: 100%;
       text-align: left;
       padding: 0.7rem 0.85rem;
       border-radius: 0.8rem;
+    }
+
+    .auth-link {
+      margin-left: 0;
+      border-left: 0;
+      border-top: 1px solid rgba(126, 151, 177, 0.35);
+      border-top-left-radius: 0.8rem;
+      border-top-right-radius: 0.8rem;
+      padding-left: 0.85rem;
+      margin-top: 0.15rem;
     }
 
     .context-strip {

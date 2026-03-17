@@ -41,9 +41,9 @@
 <style>
   .card {
     margin: 0;
-    border: 1px solid #d9e2ec;
+    border: 1px solid var(--border);
     border-radius: 0.75rem;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--surface-soft);
     padding: 0.75rem 0.85rem;
     display: grid;
     gap: 0.5rem;
@@ -53,7 +53,7 @@
   h3 {
     margin: 0;
     font-size: 0.96rem;
-    color: #102a43;
+    color: var(--text);
   }
 
   .sender-list {
@@ -69,9 +69,9 @@
     justify-content: space-between;
     align-items: baseline;
     gap: 0.6rem;
-    color: #334e68;
+    color: var(--text-subtle);
     font-size: 0.86rem;
-    border-bottom: 1px dashed #d9e2ec;
+    border-bottom: 1px dashed var(--border);
     padding-bottom: 0.2rem;
     min-width: 0;
   }
@@ -82,13 +82,13 @@
   }
 
   .sender-list li strong {
-    color: #102a43;
+    color: var(--text);
     line-height: 1.2;
   }
 
   .empty-message {
     margin: 0;
-    color: #627d98;
+    color: var(--text-muted);
     font-size: 0.88rem;
     line-height: 1.35;
   }

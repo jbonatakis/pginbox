@@ -36,9 +36,9 @@
 
   .metric-card {
     margin: 0;
-    border: 1px solid #d9e2ec;
+    border: 1px solid var(--border);
     border-radius: 0.75rem;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--surface-soft);
     padding: 0.75rem 0.85rem;
     display: grid;
     align-content: start;
@@ -52,14 +52,14 @@
     font-size: 0.77rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #627d98;
+    color: var(--text-muted);
   }
 
   .metric-value {
     margin: 0;
     font-size: 1.42rem;
     font-weight: 700;
-    color: #102a43;
+    color: var(--text);
     line-height: 1.1;
   }
 </style>

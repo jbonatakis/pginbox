@@ -52,9 +52,9 @@
 
 <style>
   .controls {
-    border: 1px solid #d9e2ec;
+    border: 1px solid var(--border);
     border-radius: 0.65rem;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--surface-soft);
     padding: 0.55rem 0.68rem;
     display: flex;
     align-items: center;
@@ -71,15 +71,15 @@
 
   .limit-control label {
     font-size: 0.82rem;
-    color: #486581;
+    color: var(--text-muted);
     font-weight: 600;
   }
 
   select {
-    border: 1px solid #c5d0da;
+    border: 1px solid var(--border);
     border-radius: 0.4rem;
     background: #fff;
-    color: #102a43;
+    color: var(--text);
     font-size: 0.84rem;
     font-weight: 600;
     padding: 0.26rem 0.4rem;
@@ -87,7 +87,7 @@
 
   .page-indicator {
     margin: 0;
-    color: #243b53;
+    color: var(--text-subtle);
     font-size: 0.84rem;
     font-weight: 650;
   }
@@ -99,10 +99,10 @@
   }
 
   button {
-    border: 1px solid #6f9fdd;
+    border: 1px solid rgba(111, 159, 221, 0.76);
     border-radius: 0.45rem;
-    background: #e8f2ff;
-    color: #0b4ea2;
+    background: var(--primary-soft);
+    color: var(--primary);
     font-weight: 650;
     font-size: 0.82rem;
     line-height: 1;

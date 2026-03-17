@@ -444,10 +444,10 @@
 
   .retry-button,
   .reset-button {
-    border: 1px solid #6f9fdd;
+    border: 1px solid rgba(111, 159, 221, 0.76);
     border-radius: 0.55rem;
-    background: #e8f2ff;
-    color: #0b4ea2;
+    background: var(--primary-soft);
+    color: var(--primary);
     font-weight: 650;
     font-size: 0.86rem;
     line-height: 1;
@@ -477,15 +477,15 @@
   }
 
   .reset-button {
-    border-color: #c5d0da;
+    border-color: var(--border);
     background: #f2f5f8;
-    color: #334e68;
+    color: var(--text-subtle);
   }
 
   .inline-status {
     margin: 0;
     font-size: 0.84rem;
-    color: #486581;
+    color: var(--text-muted);
   }
 
   .sr-only {
