@@ -84,10 +84,11 @@ type ThreadRow = {
   last_activity_at: Date | null;
   message_count: number;
   list_name: string;
+  is_followed?: boolean | null;
 };
 
 export function toThread(row: ThreadRow): Thread {
-  return {
+  const thread: Thread = {
     thread_id: row.thread_id,
     list_id: row.list_id,
     subject: row.subject,
@@ -96,6 +97,12 @@ export function toThread(row: ThreadRow): Thread {
     message_count: row.message_count,
     list_name: row.list_name,
   };
+
+  if (typeof row.is_followed === "boolean") {
+    thread.is_followed = row.is_followed;
+  }
+
+  return thread;
 }
 
 // Message: id and sent_at serialized

@@ -26,7 +26,7 @@
   let loginLink = loginPath;
   let nextRedirect = homePath;
   let password = "";
-  let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+  let redirectTimer: number | null = null;
   let resetError: ApiErrorShape | null = null;
   let status: "idle" | "success" | "missing-token" = "idle";
   let token = "";

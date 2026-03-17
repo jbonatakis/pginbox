@@ -99,7 +99,7 @@ jobs:
         run: bun test test/frontend
 
   frontend:
-    name: Frontend Build
+    name: Frontend Checks and Build
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -115,6 +115,10 @@ jobs:
       - name: Install frontend dependencies
         working-directory: src/frontend
         run: npm ci
+
+      - name: Run Svelte check
+        working-directory: src/frontend
+        run: npm run svelte-check
 
       - name: Build frontend
         working-directory: src/frontend

@@ -13,6 +13,54 @@ export type Int8 = ColumnType<string, bigint | number | string, bigint | number 
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
+export interface AnalyticsByDow {
+  dow: number | null;
+  messages: Int8 | null;
+}
+
+export interface AnalyticsByHour {
+  hour: number | null;
+  messages: Int8 | null;
+}
+
+export interface AnalyticsByMonth {
+  messages: Int8 | null;
+  month: number | null;
+  year: number | null;
+}
+
+export interface AnalyticsMessagesLast24h {
+  messages: Int8 | null;
+  singleton_id: number | null;
+}
+
+export interface AnalyticsSummary {
+  months_ingested: Int8 | null;
+  singleton_id: number | null;
+  total_messages: Int8 | null;
+  total_threads: Int8 | null;
+  unique_senders: Int8 | null;
+}
+
+export interface AnalyticsTopSenders {
+  from_email: string | null;
+  from_name: string | null;
+  message_count: Int8 | null;
+}
+
+export interface Attachments {
+  content: string | null;
+  content_type: string | null;
+  filename: string | null;
+  id: Generated<Int8>;
+  message_id: Int8;
+  /**
+   * Zero-based position of the extracted attachment within a message MIME part walk.
+   */
+  part_index: number;
+  size_bytes: number | null;
+}
+
 export interface AuthSessions {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
@@ -23,15 +71,6 @@ export interface AuthSessions {
   token_hash: string;
   user_agent: string | null;
   user_id: Int8;
-}
-
-export interface Attachments {
-  content: string | null;
-  content_type: string | null;
-  filename: string | null;
-  id: Generated<Int8>;
-  message_id: Int8;
-  size_bytes: number | null;
 }
 
 export interface EmailVerificationTokens {
@@ -89,6 +128,21 @@ export interface SchemaMigrations {
   version: string;
 }
 
+export interface ThreadFollows {
+  anchor_message_id: Int8;
+  created_at: Generated<Timestamp>;
+  thread_id: string;
+  updated_at: Generated<Timestamp>;
+  user_id: Int8;
+}
+
+export interface ThreadReadProgress {
+  last_read_message_id: Int8;
+  thread_id: string;
+  updated_at: Generated<Timestamp>;
+  user_id: Int8;
+}
+
 export interface Threads {
   last_activity_at: Timestamp | null;
   list_id: number;
@@ -113,8 +167,14 @@ export interface Users {
 }
 
 export interface DB {
-  auth_sessions: AuthSessions;
+  analytics_by_dow: AnalyticsByDow;
+  analytics_by_hour: AnalyticsByHour;
+  analytics_by_month: AnalyticsByMonth;
+  analytics_messages_last_24h: AnalyticsMessagesLast24h;
+  analytics_summary: AnalyticsSummary;
+  analytics_top_senders: AnalyticsTopSenders;
   attachments: Attachments;
+  auth_sessions: AuthSessions;
   email_verification_tokens: EmailVerificationTokens;
   lists: Lists;
   messages: Messages;
@@ -122,6 +182,8 @@ export interface DB {
   people: People;
   people_emails: PeopleEmails;
   schema_migrations: SchemaMigrations;
+  thread_follows: ThreadFollows;
+  thread_read_progress: ThreadReadProgress;
   threads: Threads;
   users: Users;
 }

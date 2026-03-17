@@ -25,7 +25,7 @@
   let forgotLink = forgotPasswordPath;
   let nextRedirect = homePath;
   let password = "";
-  let redirectTimer: ReturnType<typeof setTimeout> | null = null;
+  let redirectTimer: number | null = null;
   let registerLink = registerPath;
   let resendError: ApiErrorShape | null = null;
   let resendMessage: string | null = null;

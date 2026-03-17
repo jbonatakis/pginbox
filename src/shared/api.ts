@@ -18,6 +18,7 @@ export interface Thread {
   last_activity_at: string | null;
   message_count: number;
   list_name: string;
+  is_followed?: boolean;
 }
 
 export interface Message {
@@ -194,6 +195,33 @@ export interface ByHour {
 export interface ByDow {
   dow: number;
   messages: number;
+}
+
+// ---- Followed Threads ----
+export interface ThreadFollowState {
+  threadId: string;
+  isFollowed: boolean;
+}
+
+export interface ThreadProgress {
+  threadId: string;
+  isFollowed: boolean;
+  lastReadMessageId: string | null;
+  firstUnreadMessageId: string | null;
+  unreadCount: number;
+  hasUnread: boolean;
+  resumePage: number | null;
+  latestPage: number;
+}
+
+export interface FollowedThread extends Thread {
+  is_followed: boolean;
+  last_read_message_id: string | null;
+  first_unread_message_id: string | null;
+  unread_count: number;
+  has_unread: boolean;
+  resume_page: number | null;
+  latest_page: number;
 }
 
 // ---- Pagination ----

@@ -10,6 +10,8 @@ import { listsRoutes } from "./routes/lists";
 import { messagesRoutes } from "./routes/messages";
 import { peopleRoutes } from "./routes/people";
 import { threadsRoutes } from "./routes/threads";
+import { threadProgressRoutes } from "./routes/thread-progress";
+import { meRoutes } from "./routes/me";
 import { logError } from "./logging";
 
 function errorJson(message: string, code?: string) {
@@ -61,7 +63,9 @@ export function createApp(options: CreateAppOptions = {}) {
     .use(listsRoutes)
     .use(messagesRoutes)
     .use(peopleRoutes)
-    .use(threadsRoutes);
+    .use(threadsRoutes)
+    .use(threadProgressRoutes)
+    .use(meRoutes);
 }
 
 export const app = createApp();

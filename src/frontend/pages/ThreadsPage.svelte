@@ -8,6 +8,7 @@
   import ThreadsFilters from "../components/threads/ThreadsFilters.svelte";
   import ThreadsResultsTable from "../components/threads/ThreadsResultsTable.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import { authStore } from "../lib/state/auth";
   import {
     applyThreadsFilterPatch,
     THREADS_QUERY_DEFAULT_LIMIT,
@@ -45,6 +46,8 @@
   let pageCursors: Array<string | undefined> = [undefined];
   let pageIndex = 0;
   let pendingRestoreScrollY: number | null = null;
+  let followError: ApiErrorShape | null = null;
+  let pendingFollowThreadIds: string[] = [];
   let queryState: ThreadsQueryState = createDefaultThreadsQueryState();
   let requestSequence = 0;
   let status: ThreadsStatus = "idle";
@@ -209,6 +212,7 @@
     const hasThreads = threads.length > 0;
 
     threadsError = null;
+    followError = null;
     if (mode === "replace" || !hasThreads) {
       status = "loading";
       isRefreshing = false;
@@ -338,6 +342,47 @@
     });
   };
 
+  const updateThreadFollowState = (
+    requestedThreadId: string,
+    nextThreadId: string,
+    isFollowed: boolean
+  ): void => {
+    threads = threads.map((thread) => {
+      if (thread.thread_id !== requestedThreadId && thread.thread_id !== nextThreadId) {
+        return thread;
+      }
+
+      return {
+        ...thread,
+        thread_id: thread.thread_id === requestedThreadId ? nextThreadId : thread.thread_id,
+        is_followed: isFollowed,
+      };
+    });
+  };
+
+  const handleToggleFollow = async (
+    event: CustomEvent<{ isFollowed: boolean; threadId: string }>
+  ): Promise<void> => {
+    if (!$authStore.isAuthenticated) return;
+
+    const { isFollowed, threadId } = event.detail;
+    if (pendingFollowThreadIds.includes(threadId)) return;
+
+    followError = null;
+    pendingFollowThreadIds = [...pendingFollowThreadIds, threadId];
+
+    try {
+      const result = isFollowed
+        ? await api.threads.unfollow(threadId)
+        : await api.threads.follow(threadId);
+      updateThreadFollowState(threadId, result.threadId, result.isFollowed);
+    } catch (error) {
+      followError = toApiErrorShape(error);
+    } finally {
+      pendingFollowThreadIds = pendingFollowThreadIds.filter((id) => id !== threadId);
+    }
+  };
+
   onMount(() => {
     const initialState = syncStateFromLocation();
 
@@ -421,6 +466,14 @@
       />
     {/if}
 
+    {#if $authStore.isAuthenticated && followError}
+      <ErrorState
+        title="Unable to update follow state"
+        message={followError.message}
+        detail={formatErrorDetail(followError, "/api/threads/:threadId/follow")}
+      />
+    {/if}
+
     {#if status === "empty"}
       <div class="status-block">
         <EmptyState
@@ -430,7 +483,13 @@
         <button class="reset-button" type="button" on:click={clearFilters}>Clear filters</button>
       </div>
     {:else}
-      <ThreadsResultsTable items={threads} contextSearch={detailContextSearch} />
+      <ThreadsResultsTable
+        items={threads}
+        contextSearch={detailContextSearch}
+        canManageFollows={$authStore.isAuthenticated}
+        pendingThreadIds={pendingFollowThreadIds}
+        on:togglefollow={handleToggleFollow}
+      />
     {/if}
   {/if}
 </section>

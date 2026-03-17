@@ -1,10 +1,20 @@
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
   import type { Thread } from "shared/api";
   import { withThreadsRestoreScroll } from "../../lib/state/threadsQuery";
   import { isClientNavigationEvent, onLinkClick, threadDetailPath } from "../../router";
 
   export let contextSearch = "";
   export let items: Thread[] = [];
+  export let canManageFollows = false;
+  export let pendingThreadIds: string[] = [];
+
+  const dispatch = createEventDispatcher<{
+    togglefollow: {
+      isFollowed: boolean;
+      threadId: string;
+    };
+  }>();
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
@@ -60,6 +70,20 @@
     persistCurrentListContext();
     onLinkClick(event, threadPath(threadId, true));
   };
+
+  const isFollowPending = (threadId: string): boolean => pendingThreadIds.includes(threadId);
+
+  const handleFollowClick = (event: MouseEvent, thread: Thread): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    dispatch("togglefollow", {
+      threadId: thread.thread_id,
+      isFollowed: thread.is_followed === true,
+    });
+  };
+
+  const followButtonLabel = (thread: Thread): string =>
+    thread.is_followed === true ? "Unfollow thread" : "Follow thread";
 </script>
 
 <div class="table-wrap">
@@ -70,6 +94,9 @@
         <th scope="col">List</th>
         <th scope="col">Last activity</th>
         <th scope="col" class="numeric">Messages</th>
+        {#if canManageFollows}
+          <th scope="col" class="follow-column">Follow</th>
+        {/if}
       </tr>
     </thead>
 
@@ -78,13 +105,45 @@
         {@const path = threadPath(thread.thread_id)}
         <tr>
           <td class="subject" data-label="Subject">
-            <a href={path} on:click={(event) => handleThreadClick(event, thread.thread_id)}
-              >{subjectLabel(thread.subject)}</a
-            >
+            <div class="subject-row">
+              <a href={path} on:click={(event) => handleThreadClick(event, thread.thread_id)}
+                >{subjectLabel(thread.subject)}</a
+              >
+              {#if canManageFollows && thread.is_followed === true}
+                <span class="follow-badge">Followed</span>
+              {/if}
+            </div>
           </td>
           <td data-label="List">{listLabel(thread.list_name)}</td>
           <td data-label="Last activity">{formatDateTime(thread.last_activity_at)}</td>
           <td class="numeric" data-label="Messages">{messageCountFormatter.format(thread.message_count)}</td>
+          {#if canManageFollows}
+            <td class="follow-cell" data-label="Follow">
+              <button
+                type="button"
+                aria-pressed={thread.is_followed === true}
+                aria-label={followButtonLabel(thread)}
+                title={thread.is_followed === true ? "Following" : "Follow"}
+                class:followed={thread.is_followed === true}
+                class="follow-button"
+                disabled={isFollowPending(thread.thread_id)}
+                on:click={(event) => handleFollowClick(event, thread)}
+              >
+                {#if isFollowPending(thread.thread_id)}
+                  <span class="follow-pending" aria-hidden="true"></span>
+                {:else}
+                  <svg
+                    viewBox="0 0 20 20"
+                    class:filled={thread.is_followed === true}
+                    class="follow-icon"
+                    aria-hidden="true"
+                  >
+                    <path d="M10 2.3 12.4 7.1 17.7 7.9 13.9 11.6 14.8 16.9 10 14.4 5.2 16.9 6.1 11.6 2.3 7.9 7.6 7.1 10 2.3Z"></path>
+                  </svg>
+                {/if}
+              </button>
+            </td>
+          {/if}
         </tr>
       {/each}
     </tbody>
@@ -141,12 +200,35 @@
     min-width: 0;
   }
 
+  .subject-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
   .subject a {
     color: var(--primary);
     font-weight: 650;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
     overflow-wrap: anywhere;
+  }
+
+  .follow-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.35rem;
+    padding: 0.12rem 0.5rem;
+    border: 1px solid rgba(11, 78, 162, 0.22);
+    border-radius: 999px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
   }
 
   .subject a:focus-visible {
@@ -159,6 +241,91 @@
     text-align: right;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+  }
+
+  .follow-column,
+  .follow-cell {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .follow-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.95rem;
+    height: 1.95rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    line-height: 1;
+    cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .follow-button.followed {
+    border-color: rgba(11, 78, 162, 0.34);
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  .follow-button:hover {
+    border-color: var(--border);
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--primary);
+  }
+
+  .follow-button.followed:hover {
+    border-color: rgba(11, 78, 162, 0.34);
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  .follow-button:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+
+  .follow-button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .follow-icon {
+    width: 0.95rem;
+    height: 0.95rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.65;
+    stroke-linejoin: round;
+  }
+
+  .follow-icon.filled {
+    fill: currentColor;
+  }
+
+  .follow-pending {
+    width: 0.85rem;
+    height: 0.85rem;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 999px;
+    animation: follow-spin 720ms linear infinite;
+  }
+
+  @keyframes follow-spin {
+    from {
+      transform: rotate(0deg);
+    }
+
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   @media (max-width: 760px) {
@@ -215,6 +382,14 @@
     .results td.numeric {
       text-align: left;
       white-space: normal;
+    }
+
+    .results td.follow-cell {
+      text-align: left;
+    }
+
+    .follow-button {
+      justify-self: start;
     }
 
     .results tbody tr:hover td {
