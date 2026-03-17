@@ -32,6 +32,7 @@ function decodeCursorSafe(cursor: string): { lastActivityAt: string | null; thre
 interface ProgressStats {
   totalMessages: number;
   lastReadOrdinal: number;
+  lastReadMessageId: string | null;
   firstUnreadMessageId: string | null;
 }
 
@@ -50,9 +51,55 @@ async function getLatestMessageIdInCanonicalOrder(threadId: string): Promise<str
 
 async function computeProgressStats(
   threadId: string,
-  lastReadMessageId: string | null
+  lastReadMessageId: string | null,
+  createdAtBaseline?: Date | null
 ): Promise<ProgressStats> {
   if (lastReadMessageId === null) {
+    if (createdAtBaseline) {
+      const result = await sql<{
+        last_read_id: string | null;
+        last_read_ordinal: string | null;
+        first_unread_id: string | null;
+        total_messages: string;
+      }>`
+        WITH ordered AS (
+          SELECT
+            m.id,
+            m.sent_at,
+            row_number() OVER (ORDER BY m.sent_at ASC NULLS LAST, m.id ASC) AS ordinal,
+            count(*) OVER () AS total_messages
+          FROM messages m
+          WHERE m.thread_id = ${threadId}
+        ),
+        baseline AS (
+          SELECT o.id, o.ordinal
+          FROM ordered o
+          WHERE o.sent_at <= ${createdAtBaseline}
+          ORDER BY o.ordinal DESC
+          LIMIT 1
+        )
+        SELECT
+          (SELECT id::text FROM baseline) AS last_read_id,
+          (SELECT ordinal::text FROM baseline) AS last_read_ordinal,
+          (
+            SELECT id::text
+            FROM ordered
+            WHERE ordinal = COALESCE((SELECT ordinal FROM baseline), 0) + 1
+          ) AS first_unread_id,
+          COALESCE((SELECT total_messages FROM ordered LIMIT 1), 0)::text AS total_messages
+      `.execute(db);
+
+      const row = result.rows[0];
+      if (row) {
+        return {
+          totalMessages: Number(row.total_messages),
+          lastReadOrdinal: row.last_read_ordinal ? Number(row.last_read_ordinal) : 0,
+          lastReadMessageId: row.last_read_id ?? null,
+          firstUnreadMessageId: row.first_unread_id ?? null,
+        };
+      }
+    }
+
     const [countRow, firstMsgRow] = await Promise.all([
       db.selectFrom("messages")
         .select(sql<string>`count(*)`.as("count"))
@@ -69,6 +116,7 @@ async function computeProgressStats(
     return {
       totalMessages: Number(countRow?.count ?? 0),
       lastReadOrdinal: 0,
+      lastReadMessageId: null,
       firstUnreadMessageId: firstMsgRow ? msgIdStr(firstMsgRow.id) : null,
     };
   }
@@ -97,12 +145,13 @@ async function computeProgressStats(
 
   const row = result.rows[0];
   if (!row) {
-    return { totalMessages: 0, lastReadOrdinal: 0, firstUnreadMessageId: null };
+    return { totalMessages: 0, lastReadOrdinal: 0, lastReadMessageId: null, firstUnreadMessageId: null };
   }
 
   return {
     totalMessages: Number(row.total_messages),
     lastReadOrdinal: row.last_read_ordinal ? Number(row.last_read_ordinal) : 0,
+    lastReadMessageId,
     firstUnreadMessageId: row.first_unread_id ?? null,
   };
 }
@@ -110,11 +159,10 @@ async function computeProgressStats(
 function buildThreadProgress(
   threadId: string,
   isFollowed: boolean,
-  lastReadMessageId: string | null,
   stats: ProgressStats,
   pageSize: number
 ): ThreadProgress {
-  const { totalMessages, lastReadOrdinal, firstUnreadMessageId } = stats;
+  const { totalMessages, lastReadOrdinal, lastReadMessageId, firstUnreadMessageId } = stats;
   const latestPage = Math.max(1, Math.ceil(totalMessages / pageSize));
   const hasUnread = lastReadOrdinal < totalMessages;
   return {
@@ -389,12 +437,15 @@ export async function getProgress(
 ): Promise<ThreadProgress> {
   const userIdStr = toDbInt8(userId);
 
-  const [canonicalFollowThreadId, progressResult] = await Promise.all([
+  const [userRow, canonicalFollowThreadId, progressResult] = await Promise.all([
+    db.selectFrom("users")
+      .select("created_at")
+      .where("id", "=", userIdStr)
+      .executeTakeFirstOrThrow(),
     canonicalizeFollowRow(userId, threadId),
     canonicalizeProgressRow(userId, threadId),
   ]);
 
-  const lastReadMessageId = progressResult?.lastReadMessageId ?? null;
   const canonicalThreadId = progressResult?.threadId ?? canonicalFollowThreadId ?? threadId;
   const followRow = await db
     .selectFrom("thread_follows")
@@ -403,8 +454,12 @@ export async function getProgress(
     .where("thread_id", "=", canonicalThreadId)
     .executeTakeFirst();
 
-  const stats = await computeProgressStats(canonicalThreadId, lastReadMessageId);
-  return buildThreadProgress(canonicalThreadId, !!followRow, lastReadMessageId, stats, pageSize);
+  const stats = await computeProgressStats(
+    canonicalThreadId,
+    progressResult?.lastReadMessageId ?? null,
+    userRow.created_at
+  );
+  return buildThreadProgress(canonicalThreadId, !!followRow, stats, pageSize);
 }
 
 export async function advanceProgress(
@@ -501,6 +556,12 @@ export async function listFollowedThreads(
   const userIdStr = toDbInt8(userId);
   limit = Math.min(Math.max(1, limit), 100);
 
+  const userRow = await db
+    .selectFrom("users")
+    .select("created_at")
+    .where("id", "=", userIdStr)
+    .executeTakeFirstOrThrow();
+
   await canonicalizeAllFollowRowsForUser(userId);
   await canonicalizeAllProgressRowsForUser(userId);
 
@@ -556,10 +617,11 @@ export async function listFollowedThreads(
 
   const followedThreads: FollowedThread[] = await Promise.all(
     items.map(async (row) => {
-      const lastReadMessageId = row.last_read_message_id
-        ? msgIdStr(row.last_read_message_id)
-        : null;
-      const stats = await computeProgressStats(row.thread_id, lastReadMessageId);
+      const stats = await computeProgressStats(
+        row.thread_id,
+        row.last_read_message_id ? msgIdStr(row.last_read_message_id) : null,
+        userRow.created_at
+      );
       const latestPage = Math.max(1, Math.ceil(stats.totalMessages / pageSize));
       const hasUnread = stats.lastReadOrdinal < stats.totalMessages;
       return {
@@ -571,7 +633,7 @@ export async function listFollowedThreads(
         message_count: row.message_count,
         list_name: row.list_name,
         is_followed: true,
-        last_read_message_id: lastReadMessageId,
+        last_read_message_id: stats.lastReadMessageId,
         first_unread_message_id: hasUnread ? stats.firstUnreadMessageId : null,
         unread_count: stats.totalMessages - stats.lastReadOrdinal,
         has_unread: hasUnread,

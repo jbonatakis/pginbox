@@ -232,8 +232,8 @@
     <ol class="timeline-list">
       {#each timelineEntries as entry (entry.key)}
         {#if firstUnreadMessageId !== null && entry.message.id === firstUnreadMessageId}
-          <li class="unread-divider" aria-label="New since your last visit">
-            <span class="unread-divider-label">New since your last visit</span>
+          <li class="unread-divider" aria-label="New to you">
+            <span class="unread-divider-label">New to you</span>
           </li>
         {/if}
         <li use:observeMessage={entry}>

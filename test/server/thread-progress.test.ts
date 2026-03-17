@@ -24,7 +24,10 @@ interface TestSession {
 }
 
 async function createTestUser(): Promise<TestUser> {
-  const now = new Date();
+  return createTestUserWithCreatedAt(new Date(Date.UTC(2023, 0, 1, 0, 0, 0)));
+}
+
+async function createTestUserWithCreatedAt(createdAt: Date): Promise<TestUser> {
   const email = `test-progress-${uid()}@example.com`;
   const row = await db
     .insertInto("users")
@@ -32,11 +35,13 @@ async function createTestUser(): Promise<TestUser> {
       email,
       password_hash: "placeholder-not-verified",
       status: "active",
-      email_verified_at: now,
+      created_at: createdAt,
+      email_verified_at: createdAt,
       display_name: null,
       disabled_at: null,
       disable_reason: null,
       last_login_at: null,
+      updated_at: createdAt,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -601,6 +606,74 @@ describe("resume page calculation (pageSize=50, 100 messages)", () => {
     expect(body.hasUnread).toBe(false);
     expect(body.unreadCount).toBe(0);
     expect(body.resumePage).toBeNull();
+  });
+});
+
+describe("created_at baseline for users without thread progress", () => {
+  let listId: number;
+  let spanningThread: { threadId: string; msgIds: string[] };
+  let historicalThread: { threadId: string; msgIds: string[] };
+  let user: TestUser | null = null;
+  let session: TestSession;
+
+  beforeAll(async () => {
+    listId = await createList();
+    spanningThread = await createThreadWithSentAtValues(listId, [
+      new Date(Date.UTC(2024, 0, 1, 0, 0, 0)),
+      new Date(Date.UTC(2024, 0, 1, 0, 0, 1)),
+      new Date(Date.UTC(2024, 0, 3, 0, 0, 0)),
+      new Date(Date.UTC(2024, 0, 4, 0, 0, 0)),
+    ]);
+    historicalThread = await createThreadWithSentAtValues(listId, [
+      new Date(Date.UTC(2023, 11, 1, 0, 0, 0)),
+      new Date(Date.UTC(2023, 11, 2, 0, 0, 0)),
+    ]);
+  });
+
+  afterAll(async () => {
+    await deleteThread(spanningThread.threadId);
+    await deleteThread(historicalThread.threadId);
+    await deleteList(listId);
+  });
+
+  beforeEach(async () => {
+    user = await createTestUserWithCreatedAt(new Date(Date.UTC(2024, 0, 2, 12, 0, 0)));
+    session = await createTestSession(user.id);
+  });
+
+  afterEach(async () => {
+    if (user) {
+      await deleteUser(user.id);
+      user = null;
+    }
+  });
+
+  it("treats only post-created_at messages as unread when no progress row exists", async () => {
+    const res = await send(`/threads/${encodeURIComponent(spanningThread.threadId)}/progress`, {
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as Record<string, unknown>;
+
+    expect(body.lastReadMessageId).toBe(spanningThread.msgIds[1]);
+    expect(body.firstUnreadMessageId).toBe(spanningThread.msgIds[2]);
+    expect(body.unreadCount).toBe(2);
+    expect(body.resumePage).toBe(1);
+    expect(body.hasUnread).toBe(true);
+  });
+
+  it("does not mark a fully historical thread as unread for a new account", async () => {
+    const res = await send(`/threads/${encodeURIComponent(historicalThread.threadId)}/progress`, {
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as Record<string, unknown>;
+
+    expect(body.lastReadMessageId).toBe(historicalThread.msgIds[1]);
+    expect(body.firstUnreadMessageId).toBeNull();
+    expect(body.unreadCount).toBe(0);
+    expect(body.resumePage).toBeNull();
+    expect(body.hasUnread).toBe(false);
   });
 });
 
