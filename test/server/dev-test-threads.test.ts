@@ -5,6 +5,7 @@ import {
   parseCliArgs,
   type AddCommandOptions,
   type CreateCommandOptions,
+  type ListCommandOptions,
 } from "../../src/server/dev/test-threads";
 
 describe("dev test thread CLI parsing", () => {
@@ -37,6 +38,25 @@ describe("dev test thread CLI parsing", () => {
     expect(parsed.replyTo).toBe("dev-msg-1");
     expect(parsed.json).toBe(true);
     expect(parsed.useThreading).toBe(false);
+  });
+
+  it("parses list with dev-thread defaults", () => {
+    const parsed = parseCliArgs(["list"]) as ListCommandOptions;
+
+    expect(parsed.command).toBe("list");
+    expect(parsed.limit).toBe(25);
+    expect(parsed.prefix).toBe("dev-thread-");
+    expect(parsed.list).toBeNull();
+    expect(parsed.json).toBe(false);
+  });
+
+  it("parses list --all without a prefix filter", () => {
+    const parsed = parseCliArgs(["list", "--all", "--limit", "50", "--json"]) as ListCommandOptions;
+
+    expect(parsed.command).toBe("list");
+    expect(parsed.limit).toBe(50);
+    expect(parsed.prefix).toBeNull();
+    expect(parsed.json).toBe(true);
   });
 });
 

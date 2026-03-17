@@ -8,6 +8,8 @@ const DEFAULT_FROM_NAME = "Dev Utility";
 const DEFAULT_SPACING_SECONDS = 60;
 
 type CommandName = "add" | "create";
+const DEFAULT_LIST_LIMIT = 25;
+const DEFAULT_DEV_THREAD_PREFIX = "dev-thread-";
 
 export interface ParentMessageContext {
   messageId: string;
@@ -40,7 +42,15 @@ export interface AddCommandOptions extends BaseCommandOptions {
   threadId: string;
 }
 
-export type ParsedCommand = AddCommandOptions | CreateCommandOptions;
+export interface ListCommandOptions {
+  command: "list";
+  json: boolean;
+  limit: number;
+  list: string | null;
+  prefix: string | null;
+}
+
+export type ParsedCommand = AddCommandOptions | CreateCommandOptions | ListCommandOptions;
 
 export interface MessagePlan {
   body: string | null;
@@ -84,6 +94,23 @@ interface CommandResult {
   routePath: string;
   subject: string | null;
   threadId: string;
+}
+
+interface ListedThreadSummary {
+  lastActivityAt: string | null;
+  listId: number;
+  listName: string;
+  messageCount: number;
+  routePath: string;
+  subject: string | null;
+  threadId: string;
+}
+
+interface ListCommandResult {
+  items: ListedThreadSummary[];
+  limit: number;
+  listName: string | null;
+  prefix: string | null;
 }
 
 class UsageError extends Error {
@@ -142,10 +169,12 @@ function usageText(): string {
 Usage:
   bun run dev:threads create --list <list-id-or-name> [options]
   bun run dev:threads add --thread <thread-id> [options]
+  bun run dev:threads list [options]
 
 Commands:
   create   Create a new thread and insert one or more generated messages.
   add      Insert one or more generated messages into an existing thread.
+  list     Show matching dev threads with subjects and message counts.
 
 Common options:
   --count <n>             Number of messages to insert (default: 1)
@@ -169,11 +198,19 @@ Add options:
   --subject <text>        Subject for newly inserted messages (default: existing thread subject)
   --reply-to <message-id> External message_id to reply to (default: latest message in the thread)
 
+List options:
+  --limit <n>             Maximum number of threads to show (default: ${DEFAULT_LIST_LIMIT})
+  --prefix <text>         Only show thread_ids that start with this prefix (default: ${DEFAULT_DEV_THREAD_PREFIX})
+  --all                   Disable prefix filtering and show any thread
+  --list <value>          Restrict results to a single list id or list name
+
 Examples:
   bun run dev:threads create --list pgsql-hackers --subject "Test follow-up" --count 3
   bun run dev:threads create --list dev-list --create-list --body "Synthetic thread body"
   bun run dev:threads add --thread dev-thread-20260317-abc123 --count 2
   bun run dev:threads add --thread dev-thread-20260317-abc123 --reply-to dev-msg-123 --body "Manual follow-up"
+  bun run dev:threads list
+  bun run dev:threads list --all --limit 50
 `;
 }
 
@@ -187,11 +224,19 @@ export function parseCliArgs(argv: string[]): ParsedCommand {
   }
 
   const [commandName, ...rest] = argv;
-  if (commandName !== "create" && commandName !== "add") {
+  if (commandName !== "create" && commandName !== "add" && commandName !== "list") {
     throw new UsageError(`Unknown command "${commandName}".\n\n${usageText()}`);
   }
 
-  const allowedFlags = new Set(["--json", "--no-threading", ...(commandName === "create" ? ["--create-list"] : [])]);
+  const allowedFlags = new Set(["--json"]);
+  if (commandName === "create") {
+    allowedFlags.add("--create-list");
+    allowedFlags.add("--no-threading");
+  } else if (commandName === "add") {
+    allowedFlags.add("--no-threading");
+  } else {
+    allowedFlags.add("--all");
+  }
   const allowedValueOptions = new Set(
     commandName === "create"
       ? [
@@ -217,6 +262,11 @@ export function parseCliArgs(argv: string[]): ParsedCommand {
           "--thread",
         ],
   );
+  if (commandName === "list") {
+    allowedValueOptions.add("--limit");
+    allowedValueOptions.add("--list");
+    allowedValueOptions.add("--prefix");
+  }
 
   const values = new Map<string, string>();
   const flags = new Set<string>();
@@ -242,6 +292,26 @@ export function parseCliArgs(argv: string[]): ParsedCommand {
     }
     values.set(token, value);
     index += 1;
+  }
+
+  if (commandName === "list") {
+    if (flags.has("--all") && values.has("--prefix")) {
+      throw new UsageError("Use either --all or --prefix, not both");
+    }
+
+    return {
+      command: "list",
+      json: flags.has("--json"),
+      limit: values.has("--limit")
+        ? parsePositiveInteger("--limit", values.get("--limit") ?? "")
+        : DEFAULT_LIST_LIMIT,
+      list: values.has("--list") ? requireNonEmpty("--list", values.get("--list") ?? "") : null,
+      prefix: flags.has("--all")
+        ? null
+        : values.has("--prefix")
+          ? requireNonEmpty("--prefix", values.get("--prefix") ?? "")
+          : DEFAULT_DEV_THREAD_PREFIX,
+    };
   }
 
   const baseOptions: BaseCommandOptions = {
@@ -617,7 +687,50 @@ async function runAdd(command: AddCommandOptions): Promise<CommandResult> {
   };
 }
 
-function printHumanResult(command: ParsedCommand, result: CommandResult): void {
+async function runList(command: ListCommandOptions): Promise<ListCommandResult> {
+  const resolvedList = command.list === null ? null : await resolveList(command.list, false);
+
+  let query = db
+    .selectFrom("threads")
+    .innerJoin("lists", "lists.id", "threads.list_id")
+    .select([
+      "threads.thread_id",
+      "threads.subject",
+      "threads.message_count",
+      "threads.last_activity_at",
+      "threads.list_id",
+      "lists.name as list_name",
+    ])
+    .orderBy(sql`threads.last_activity_at DESC NULLS LAST`)
+    .orderBy("threads.thread_id", "asc")
+    .limit(command.limit);
+
+  if (command.prefix !== null) {
+    query = query.where("threads.thread_id", "like", `${command.prefix}%`);
+  }
+
+  if (resolvedList) {
+    query = query.where("threads.list_id", "=", resolvedList.id);
+  }
+
+  const rows = await query.execute();
+  return {
+    items: rows.map((row) => ({
+      lastActivityAt: row.last_activity_at ? row.last_activity_at.toISOString() : null,
+      listId: row.list_id,
+      listName: row.list_name,
+      messageCount: row.message_count,
+      routePath: `/threads/${encodeURIComponent(row.thread_id)}`,
+      subject: row.subject,
+      threadId: row.thread_id,
+    })),
+    limit: command.limit,
+    listName: resolvedList?.name ?? null,
+    prefix: command.prefix,
+  };
+}
+
+function printHumanMutationResult(command: CreateCommandOptions | AddCommandOptions, result: CommandResult): void {
   const verb = command.command === "create" ? "Created" : "Updated";
   console.log(`${verb} thread ${result.threadId}`);
   console.log(`List: ${result.listName ?? "(unknown)"} (#${result.listId})`);
@@ -631,7 +744,20 @@ function printHumanResult(command: ParsedCommand, result: CommandResult): void {
   }
 }
 
-function printJsonResult(command: ParsedCommand, result: CommandResult): void {
+function printHumanListResult(result: ListCommandResult): void {
+  console.log(
+    `Matched ${result.items.length} thread${result.items.length === 1 ? "" : "s"}`
+      + ` (limit ${result.limit}, prefix ${result.prefix ?? "(all)"})`
+      + (result.listName ? ` in list ${result.listName}` : ""),
+  );
+  for (const [index, item] of result.items.entries()) {
+    console.log(
+      `  ${index + 1}. ${item.threadId} count=${item.messageCount} list=${item.listName} subject=${item.subject ?? "(none)"}`
+    );
+  }
+}
+
+function printJsonMutationResult(command: CreateCommandOptions | AddCommandOptions, result: CommandResult): void {
   console.log(
     JSON.stringify(
       {
@@ -643,6 +769,10 @@ function printJsonResult(command: ParsedCommand, result: CommandResult): void {
       2,
     ),
   );
+}
+
+function printJsonListResult(result: ListCommandResult): void {
+  console.log(JSON.stringify(result, null, 2));
 }
 
 export async function runCli(argv: string[]): Promise<number> {
@@ -662,11 +792,20 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   try {
-    const result = parsed.command === "create" ? await runCreate(parsed) : await runAdd(parsed);
-    if (parsed.json) {
-      printJsonResult(parsed, result);
+    if (parsed.command === "list") {
+      const result = await runList(parsed);
+      if (parsed.json) {
+        printJsonListResult(result);
+      } else {
+        printHumanListResult(result);
+      }
     } else {
-      printHumanResult(parsed, result);
+      const result = parsed.command === "create" ? await runCreate(parsed) : await runAdd(parsed);
+      if (parsed.json) {
+        printJsonMutationResult(parsed, result);
+      } else {
+        printHumanMutationResult(parsed, result);
+      }
     }
     return 0;
   } catch (error) {
