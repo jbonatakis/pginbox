@@ -1,10 +1,8 @@
 import os
 import random
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 from urllib.parse import quote
-
-from gevent.lock import Semaphore
-from locust import HttpUser, between, task
-from locust.exception import StopUser
 
 # Main knobs:
 # - PGINBOX_LOCUST_WAIT_MIN_SECONDS / PGINBOX_LOCUST_WAIT_MAX_SECONDS
@@ -17,6 +15,34 @@ from locust.exception import StopUser
 # It avoids login bursts and auth rate limits while still exercising the
 # authenticated read path (`/api/auth/me`, `/api/me/thread-follow-states`,
 # `/api/threads/:threadId/progress`, and `/api/me/followed-threads`).
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+if TYPE_CHECKING:
+    class Semaphore:
+        def __init__(self, value: int = 1) -> None: ...
+        def __enter__(self) -> "Semaphore": ...
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None: ...
+
+    class HttpUser:
+        client: Any
+        host: str
+        wait_time: object
+
+        def on_start(self) -> None: ...
+
+    def between(min_wait: float, max_wait: float) -> object: ...
+    def task(weight: int) -> Callable[[F], F]: ...
+
+    class StopUser(Exception):
+        pass
+else:
+    Semaphore = import_module("gevent.lock").Semaphore
+    _locust = import_module("locust")
+    HttpUser = _locust.HttpUser
+    between = _locust.between
+    task = _locust.task
+    StopUser = import_module("locust.exception").StopUser
 
 
 def env_int(name: str, default: int) -> int:
