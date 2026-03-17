@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseThreadsFromDate, parseThreadsToDate } from "../src/server/routes/threads";
+import { parseThreadsFromDate, parseThreadsToDate } from "../../src/server/routes/threads";
 
 describe("thread route date parsing", () => {
   it("parses date-only from filters at the start of the UTC day", () => {

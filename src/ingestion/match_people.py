@@ -19,12 +19,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://pginbox:pginbox@localhost:5499/pginbox")
+DSN = os.environ.get(
+    "DATABASE_URL", "postgresql://pginbox:pginbox@localhost:5499/pginbox"
+)
 
 
 # ---------------------------------------------------------------------------
 # Pass runner
 # ---------------------------------------------------------------------------
+
 
 def run_pass(conn, name: str, candidates: list[tuple[int, str]], dry_run: bool):
     """Insert (person_id, email) candidates not already in people_emails."""
@@ -51,7 +54,9 @@ def run_pass(conn, name: str, candidates: list[tuple[int, str]], dry_run: bool):
         )
         inserted = cur.rowcount
     conn.commit()
-    print(f"  [{name}] {inserted} new aliases inserted ({len(candidates) - inserted} already known)")
+    print(
+        f"  [{name}] {inserted} new aliases inserted ({len(candidates) - inserted} already known)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +65,7 @@ def run_pass(conn, name: str, candidates: list[tuple[int, str]], dry_run: bool):
 # If a message's from_name exactly matches a person's name and the from_email
 # is not already linked to anyone, link it.
 # ---------------------------------------------------------------------------
+
 
 def pass_exact_name(conn) -> list[tuple[int, str]]:
     with conn.cursor() as cur:
@@ -85,7 +91,7 @@ def pass_exact_name(conn) -> list[tuple[int, str]]:
 
 MANUAL_OVERRIDES = [
     # Name variants — same person, display name differs from canonical
-    ("Jonathan Katz",   ["jkatz@postgresql.org"]),       # posts as "Jonathan S. Katz"
+    ("Jonathan Katz", ["jkatz@postgresql.org"]),  # posts as "Jonathan S. Katz"
 ]
 
 
@@ -96,7 +102,9 @@ def pass_manual_overrides(conn) -> list[tuple[int, str]]:
             cur.execute("SELECT id FROM people WHERE name = %s", (name,))
             row = cur.fetchone()
             if not row:
-                print(f"    [warn] manual override: person '{name}' not found in people table")
+                print(
+                    f"    [warn] manual override: person '{name}' not found in people table"
+                )
                 continue
             person_id = row[0]
             for email in emails:
@@ -109,15 +117,18 @@ def pass_manual_overrides(conn) -> list[tuple[int, str]]:
 # ---------------------------------------------------------------------------
 
 PASSES = [
-    ("exact-name",        pass_exact_name),
-    ("manual-overrides",  pass_manual_overrides),
+    ("exact-name", pass_exact_name),
+    ("manual-overrides", pass_manual_overrides),
 ]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Match email addresses to known people")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show candidates without inserting")
+    parser = argparse.ArgumentParser(
+        description="Match email addresses to known people"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show candidates without inserting"
+    )
     args = parser.parse_args()
 
     conn = psycopg2.connect(DSN)
@@ -141,7 +152,9 @@ def main():
             """)
             matched, total = cur.fetchone()
         pct = matched / total * 100 if total else 0
-        print(f"\n=== {matched:,}/{total:,} messages now matched to a person ({pct:.1f}%) ===")
+        print(
+            f"\n=== {matched:,}/{total:,} messages now matched to a person ({pct:.1f}%) ==="
+        )
 
     conn.close()
 

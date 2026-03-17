@@ -3,8 +3,8 @@ import {
   createAuthEmailSender,
   createDevelopmentAuthEmailSender,
   createSmtpAuthEmailSender,
-} from "../src/server/email";
-import { createAuthService } from "../src/server/services/auth.service";
+} from "../../src/server/email";
+import { createAuthService } from "../../src/server/services/auth.service";
 
 class CapturingLogger {
   readonly messages: string[] = [];

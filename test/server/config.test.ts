@@ -5,7 +5,7 @@ import {
   resolveAuthAppBaseUrl,
   resolveAuthEmailRuntimeConfig,
   resolveDatabaseUrl,
-} from "../src/server/config";
+} from "../../src/server/config";
 
 describe("server config", () => {
   it("defaults local auth config without requiring SMTP settings", () => {

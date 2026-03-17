@@ -1,0 +1,639 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from psycopg2.extras import execute_batch, execute_values
+
+from src.ingestion.ingest_parse import _decode_subject
+
+
+UPSERT_TOUCHED_THREADS_SQL = """
+    INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
+    SELECT
+        thread_id,
+        list_id,
+        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]),
+        min(sent_at),
+        max(sent_at),
+        count(*)
+    FROM messages
+    WHERE list_id = %s
+      AND thread_id = ANY(%s)
+    GROUP BY thread_id, list_id
+    ON CONFLICT (thread_id) DO UPDATE SET
+        list_id          = EXCLUDED.list_id,
+        subject          = EXCLUDED.subject,
+        started_at       = EXCLUDED.started_at,
+        last_activity_at = EXCLUDED.last_activity_at,
+        message_count    = EXCLUDED.message_count
+"""
+
+INSERT_MESSAGE_COLUMNS = (
+    "message_id",
+    "thread_id",
+    "list_id",
+    "sent_at",
+    "sent_at_approx",
+    "from_name",
+    "from_email",
+    "subject",
+    "in_reply_to",
+    "refs",
+    "body",
+)
+
+INSERT_MESSAGE_SQL = f"""
+    INSERT INTO messages
+        ({", ".join(INSERT_MESSAGE_COLUMNS)})
+    VALUES %s
+    ON CONFLICT (message_id) DO NOTHING
+    RETURNING id, message_id
+"""
+
+INSERT_MESSAGE_TEMPLATE = f"({', '.join(['%s'] * len(INSERT_MESSAGE_COLUMNS))})"
+
+OVERWRITE_MESSAGE_SQL = f"""
+    UPDATE messages AS m
+    SET
+        thread_id = v.thread_id,
+        list_id = v.list_id,
+        sent_at = v.sent_at,
+        sent_at_approx = v.sent_at_approx,
+        from_name = v.from_name,
+        from_email = v.from_email,
+        subject = v.subject,
+        in_reply_to = v.in_reply_to,
+        refs = v.refs,
+        body = v.body
+    FROM (VALUES %s) AS v ({", ".join(INSERT_MESSAGE_COLUMNS)})
+    WHERE m.message_id = v.message_id
+      AND m.list_id = v.list_id
+    RETURNING m.id, m.message_id
+"""
+
+INSERT_ATTACHMENT_SQL = """
+    INSERT INTO attachments (message_id, part_index, filename, content_type, size_bytes, content)
+    VALUES (%(message_id)s, %(part_index)s, %(filename)s, %(content_type)s, %(size_bytes)s, %(content)s)
+    ON CONFLICT (message_id, part_index) DO NOTHING
+"""
+
+DELETE_ATTACHMENTS_SQL = """
+    DELETE FROM attachments
+    WHERE message_id = ANY(%s)
+"""
+
+UPDATE_MESSAGE_THREAD_SQL = """
+    UPDATE messages
+    SET thread_id = %(thread_id)s
+    WHERE message_id = %(message_id)s
+"""
+
+UPDATE_MESSAGE_SUBJECT_SQL = """
+    UPDATE messages
+    SET subject = %(subject)s
+    WHERE message_id = %(message_id)s
+"""
+
+REBUILD_THREADS_SQL = """
+    INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
+    SELECT
+        thread_id,
+        list_id,
+        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]),
+        min(sent_at),
+        max(sent_at),
+        count(*)
+    FROM messages
+    GROUP BY thread_id, list_id
+"""
+
+
+def _fetch_thread_ids(cur, list_id: int, message_ids: list[str]) -> dict[str, str]:
+    if not message_ids:
+        return {}
+    cur.execute(
+        "SELECT message_id, thread_id FROM messages WHERE list_id = %s AND message_id = ANY(%s)",
+        (list_id, message_ids),
+    )
+    return {message_id: thread_id for message_id, thread_id in cur.fetchall()}
+
+
+def _last_known_reference(
+    message_id: str, refs: list[str] | None, known_message_ids: set[str]
+) -> str | None:
+    for ref in reversed(refs or []):
+        if ref != message_id and ref in known_message_ids:
+            return ref
+    return None
+
+
+def _effective_parent_id(
+    message_id: str,
+    record: dict,
+    known_message_ids: set[str],
+) -> str | None:
+    parent_id = record.get("in_reply_to")
+    if parent_id and parent_id != message_id and parent_id in known_message_ids:
+        return parent_id
+    return _last_known_reference(message_id, record.get("refs"), known_message_ids)
+
+
+def _resolve_thread_ids(
+    records: dict[str, dict],
+    known_thread_ids: dict[str, str] | None = None,
+) -> dict[str, str]:
+    known_thread_ids = known_thread_ids or {}
+    known_message_ids = set(records) | set(known_thread_ids)
+    resolved: dict[str, str] = {}
+    visiting: set[str] = set()
+
+    def resolve(message_id: str) -> str:
+        if message_id in resolved:
+            return resolved[message_id]
+        if message_id in visiting:
+            return message_id
+
+        record = records[message_id]
+        visiting.add(message_id)
+        refs = record.get("refs") or []
+        parent_id = _effective_parent_id(message_id, record, known_message_ids)
+        if parent_id:
+            if parent_id in records:
+                thread_id = resolve(parent_id)
+            else:
+                thread_id = known_thread_ids[parent_id]
+        elif refs:
+            thread_id = refs[0]
+        else:
+            thread_id = message_id
+        visiting.remove(message_id)
+        resolved[message_id] = thread_id
+        return thread_id
+
+    for message_id in records:
+        resolve(message_id)
+
+    return resolved
+
+
+def _resolve_batch_thread_ids(
+    conn,
+    batch: list,
+    *,
+    fetch_thread_ids=_fetch_thread_ids,
+):
+    if not batch:
+        return
+
+    list_id = batch[0]["list_id"]
+    batch_records = {
+        record["message_id"]: {
+            "in_reply_to": record.get("in_reply_to"),
+            "refs": record.get("refs"),
+        }
+        for record in batch
+    }
+    known_ids_to_fetch = set()
+    for record in batch:
+        parent_id = record.get("in_reply_to")
+        if parent_id and parent_id not in batch_records:
+            known_ids_to_fetch.add(parent_id)
+        for ref in record.get("refs") or []:
+            if ref not in batch_records:
+                known_ids_to_fetch.add(ref)
+
+    with conn.cursor() as cur:
+        known_thread_ids = fetch_thread_ids(cur, list_id, sorted(known_ids_to_fetch))
+
+    resolved = _resolve_thread_ids(batch_records, known_thread_ids)
+    for record in batch:
+        record["thread_id"] = resolved[record["message_id"]]
+
+
+def _message_sort_key(message_id: str, records: dict[str, dict]):
+    sent_at = records[message_id].get("sent_at")
+    return (
+        sent_at is None,
+        sent_at or datetime.max.replace(tzinfo=timezone.utc),
+        message_id,
+    )
+
+
+def _canonical_thread_ids_for_list(records: dict[str, dict]) -> dict[str, str]:
+    if not records:
+        return {}
+
+    known_message_ids = set(records)
+    parents: dict[str, str] = {}
+
+    class UnionFind:
+        def __init__(self, items: list[str]):
+            self.parent = {item: item for item in items}
+
+        def find(self, item: str) -> str:
+            while self.parent[item] != item:
+                self.parent[item] = self.parent[self.parent[item]]
+                item = self.parent[item]
+            return item
+
+        def union(self, left: str, right: str):
+            left_root = self.find(left)
+            right_root = self.find(right)
+            if left_root != right_root:
+                self.parent[right_root] = left_root
+
+    uf = UnionFind(list(records))
+    for message_id, record in records.items():
+        parent_id = _effective_parent_id(message_id, record, known_message_ids)
+        if not parent_id:
+            continue
+        parents[message_id] = parent_id
+        uf.union(message_id, parent_id)
+
+    components: dict[str, list[str]] = {}
+    for message_id in records:
+        root = uf.find(message_id)
+        components.setdefault(root, []).append(message_id)
+
+    canonical: dict[str, str] = {}
+    for members in components.values():
+        member_set = set(members)
+        root_candidates = [
+            message_id
+            for message_id in members
+            if parents.get(message_id) not in member_set
+        ]
+        candidates = root_candidates or members
+        thread_id = min(
+            candidates, key=lambda message_id: _message_sort_key(message_id, records)
+        )
+        for message_id in members:
+            canonical[message_id] = thread_id
+
+    return canonical
+
+
+def _insert_messages(cur, batch: list) -> dict[str, int]:
+    """Insert a batch of messages and return DB ids for rows inserted in this batch."""
+    if not batch:
+        return {}
+
+    rows = [
+        tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch
+    ]
+    inserted_rows = execute_values(
+        cur,
+        INSERT_MESSAGE_SQL,
+        rows,
+        template=INSERT_MESSAGE_TEMPLATE,
+        page_size=500,
+        fetch=True,
+    )
+    return {message_id: db_id for db_id, message_id in inserted_rows}
+
+
+def _update_messages(cur, batch: list) -> dict[str, int]:
+    """Overwrite existing message rows in the current list and return their DB ids."""
+    if not batch:
+        return {}
+
+    rows = [
+        tuple(record[column] for column in INSERT_MESSAGE_COLUMNS) for record in batch
+    ]
+    updated_rows = execute_values(
+        cur,
+        OVERWRITE_MESSAGE_SQL,
+        rows,
+        template=INSERT_MESSAGE_TEMPLATE,
+        page_size=500,
+        fetch=True,
+    )
+    return {message_id: db_id for db_id, message_id in updated_rows}
+
+
+def _fetch_existing_message_ids(cur, batch: list) -> dict[str, int]:
+    if not batch:
+        return {}
+
+    msg_ids = [record["message_id"] for record in batch]
+    list_id = batch[0]["list_id"]
+    cur.execute(
+        "SELECT id, message_id FROM messages WHERE list_id = %s AND message_id = ANY(%s)",
+        (list_id, msg_ids),
+    )
+    return {message_id: db_id for db_id, message_id in cur.fetchall()}
+
+
+def _attachment_rows_for_batch(
+    batch: list,
+    id_map: dict[str, int],
+    allowed_db_ids: set[int] | None = None,
+) -> list[dict]:
+    att_rows = []
+    for record in batch:
+        db_id = id_map.get(record["message_id"])
+        if db_id is None:
+            continue
+        if allowed_db_ids is not None and db_id not in allowed_db_ids:
+            continue
+        for part_index, att in enumerate(record.get("_attachments", [])):
+            att_rows.append({**att, "message_id": db_id, "part_index": part_index})
+    return att_rows
+
+
+def _insert_attachments(
+    cur,
+    batch: list,
+    inserted_message_ids: dict[str, int] | None = None,
+    *,
+    fetch_existing_message_ids=_fetch_existing_message_ids,
+    attachment_rows_for_batch=_attachment_rows_for_batch,
+    execute_batch_fn=execute_batch,
+    insert_attachment_sql=INSERT_ATTACHMENT_SQL,
+):
+    """Insert attachments only for messages inserted in the current batch."""
+    if inserted_message_ids is None:
+        id_map = fetch_existing_message_ids(cur, batch)
+    else:
+        id_map = inserted_message_ids
+
+    att_rows = attachment_rows_for_batch(batch, id_map)
+    if att_rows:
+        execute_batch_fn(cur, insert_attachment_sql, att_rows, page_size=500)
+
+
+def _replace_attachments_for_ids(
+    cur,
+    batch: list,
+    id_map: dict[str, int],
+    target_db_ids: set[int] | None = None,
+    *,
+    attachment_rows_for_batch=_attachment_rows_for_batch,
+    execute_batch_fn=execute_batch,
+    delete_attachments_sql=DELETE_ATTACHMENTS_SQL,
+    insert_attachment_sql=INSERT_ATTACHMENT_SQL,
+) -> dict[str, int]:
+    if not id_map:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    resolved_target_ids = (
+        set(id_map.values()) if target_db_ids is None else set(target_db_ids)
+    )
+    if not resolved_target_ids:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    cur.execute(delete_attachments_sql, (sorted(resolved_target_ids),))
+    deleted_rows = cur.rowcount
+
+    att_rows = attachment_rows_for_batch(batch, id_map, resolved_target_ids)
+    if att_rows:
+        execute_batch_fn(cur, insert_attachment_sql, att_rows, page_size=500)
+
+    return {
+        "attachments_deleted": deleted_rows,
+        "attachments_inserted": len(att_rows),
+        "messages_repaired": len(resolved_target_ids),
+    }
+
+
+def _replace_attachments(
+    cur,
+    batch: list,
+    *,
+    fetch_existing_message_ids=_fetch_existing_message_ids,
+    replace_attachments_for_ids=_replace_attachments_for_ids,
+) -> dict[str, int]:
+    """Replace attachments for existing messages represented in the current batch."""
+    id_map = fetch_existing_message_ids(cur, batch)
+    if not id_map:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    db_ids = sorted(set(id_map.values()))
+    cur.execute(
+        "SELECT DISTINCT message_id FROM attachments WHERE message_id = ANY(%s)",
+        (db_ids,),
+    )
+    existing_attachment_ids = {message_id for (message_id,) in cur.fetchall()}
+
+    target_db_ids = {
+        db_id
+        for record in batch
+        if (db_id := id_map.get(record["message_id"])) is not None
+        and (record.get("_attachments") or db_id in existing_attachment_ids)
+    }
+    return replace_attachments_for_ids(cur, batch, id_map, target_db_ids)
+
+
+def _overwrite_messages(
+    cur,
+    batch: list,
+    *,
+    fetch_existing_message_ids=_fetch_existing_message_ids,
+    update_messages=_update_messages,
+    insert_messages=_insert_messages,
+) -> dict[str, int]:
+    """Insert new messages and overwrite existing rows in-place for the current list."""
+    if not batch:
+        return {}
+
+    existing_message_ids = fetch_existing_message_ids(cur, batch)
+    update_batch = [
+        record for record in batch if record["message_id"] in existing_message_ids
+    ]
+    insert_batch = [
+        record for record in batch if record["message_id"] not in existing_message_ids
+    ]
+
+    id_map = {}
+    id_map.update(update_messages(cur, update_batch))
+    id_map.update(insert_messages(cur, insert_batch))
+    return id_map
+
+
+def _refresh_threads_for_message_ids(
+    cur,
+    list_id: int,
+    message_ids: list[str],
+    *,
+    fetch_thread_ids=_fetch_thread_ids,
+    upsert_touched_threads_sql=UPSERT_TOUCHED_THREADS_SQL,
+):
+    thread_ids = sorted(set(fetch_thread_ids(cur, list_id, message_ids).values()))
+    if not thread_ids:
+        return
+    cur.execute(upsert_touched_threads_sql, (list_id, thread_ids))
+
+
+def store_batch_live(
+    conn,
+    batch: list,
+    *,
+    resolve_batch_thread_ids=_resolve_batch_thread_ids,
+    insert_messages=_insert_messages,
+    refresh_threads_for_message_ids=_refresh_threads_for_message_ids,
+    insert_attachments=_insert_attachments,
+):
+    """Insert messages and refresh affected thread aggregates in one transaction."""
+    if not batch:
+        return
+
+    resolve_batch_thread_ids(conn, batch)
+    list_id = batch[0]["list_id"]
+    message_ids = [record["message_id"] for record in batch]
+    with conn.cursor() as cur:
+        inserted_message_ids = insert_messages(cur, batch)
+        refresh_threads_for_message_ids(cur, list_id, message_ids)
+        insert_attachments(cur, batch, inserted_message_ids)
+    conn.commit()
+
+
+def store_batch_backfill(
+    conn,
+    batch: list,
+    *,
+    resolve_batch_thread_ids=_resolve_batch_thread_ids,
+    insert_messages=_insert_messages,
+    insert_attachments=_insert_attachments,
+):
+    """Insert messages only; threads derived separately at the end."""
+    resolve_batch_thread_ids(conn, batch)
+    with conn.cursor() as cur:
+        inserted_message_ids = insert_messages(cur, batch)
+        insert_attachments(cur, batch, inserted_message_ids)
+    conn.commit()
+
+
+def store_batch_overwrite(
+    conn,
+    batch: list,
+    *,
+    resolve_batch_thread_ids=_resolve_batch_thread_ids,
+    overwrite_messages=_overwrite_messages,
+    replace_attachments_for_ids=_replace_attachments_for_ids,
+):
+    """Overwrite parsed message fields and attachments for the current batch."""
+    if not batch:
+        return
+
+    resolve_batch_thread_ids(conn, batch)
+    with conn.cursor() as cur:
+        id_map = overwrite_messages(cur, batch)
+        replace_attachments_for_ids(cur, batch, id_map)
+    conn.commit()
+
+
+def repair_batch_attachments(
+    conn,
+    batch: list,
+    *,
+    replace_attachments=_replace_attachments,
+) -> dict[str, int]:
+    """Replace attachments for existing messages in a parsed batch."""
+    if not batch:
+        return {
+            "attachments_deleted": 0,
+            "attachments_inserted": 0,
+            "messages_repaired": 0,
+        }
+
+    with conn.cursor() as cur:
+        stats = replace_attachments(cur, batch)
+    conn.commit()
+    return stats
+
+
+def rethread_messages(conn):
+    """Recompute messages.thread_id as canonical conversation IDs per list."""
+    print("  [rethread messages]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT list_id, message_id, sent_at, in_reply_to, refs, thread_id FROM messages"
+        )
+        rows = cur.fetchall()
+
+    records_by_list: dict[int, dict[str, dict]] = {}
+    current_thread_ids: dict[tuple[int, str], str] = {}
+    for list_id, message_id, sent_at, in_reply_to, refs, thread_id in rows:
+        records_by_list.setdefault(list_id, {})[message_id] = {
+            "sent_at": sent_at,
+            "in_reply_to": in_reply_to,
+            "refs": refs,
+        }
+        current_thread_ids[(list_id, message_id)] = thread_id
+
+    updates = []
+    for list_id, records in records_by_list.items():
+        canonical_thread_ids = _canonical_thread_ids_for_list(records)
+        for message_id, thread_id in canonical_thread_ids.items():
+            if current_thread_ids[(list_id, message_id)] != thread_id:
+                updates.append({"message_id": message_id, "thread_id": thread_id})
+
+    with conn.cursor() as cur:
+        if updates:
+            execute_batch(cur, UPDATE_MESSAGE_THREAD_SQL, updates, page_size=1000)
+    conn.commit()
+    print(f" {len(updates)} messages updated")
+
+
+def decode_message_subjects(
+    conn,
+    *,
+    decode_subject=_decode_subject,
+    execute_batch_fn=execute_batch,
+    update_message_subject_sql=UPDATE_MESSAGE_SUBJECT_SQL,
+):
+    """Decode stored RFC 2047 encoded-word subjects in messages."""
+    print("  [decode subjects]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute("SELECT message_id, subject FROM messages")
+        rows = cur.fetchall()
+
+    updates = []
+    for message_id, subject in rows:
+        decoded = decode_subject(subject)
+        if decoded != subject:
+            updates.append({"message_id": message_id, "subject": decoded})
+
+    with conn.cursor() as cur:
+        if updates:
+            execute_batch_fn(cur, update_message_subject_sql, updates, page_size=1000)
+    conn.commit()
+    print(f" {len(updates)} messages updated")
+
+
+def derive_threads(
+    conn,
+    *,
+    rethread_messages_fn=rethread_messages,
+    rebuild_threads_sql=REBUILD_THREADS_SQL,
+):
+    """Rethread messages, then rebuild the derived threads table from messages."""
+    rethread_messages_fn(conn)
+    print("  [derive threads]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute("TRUNCATE threads")
+        cur.execute(rebuild_threads_sql)
+        count = cur.rowcount
+    conn.commit()
+    print(f" {count} threads rebuilt")
+
+
+def refresh_analytics_views(conn):
+    """Refresh analytics materialized views after archive data changes."""
+    print("  [refresh analytics]", end="", flush=True)
+    with conn.cursor() as cur:
+        cur.execute("SELECT refresh_analytics_views()")
+    conn.commit()
+    print(" done")

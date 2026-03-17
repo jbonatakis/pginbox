@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createApp } from "../src/server/app";
+import { createApp } from "../../src/server/app";
 import {
   SESSION_TTL_MS,
   hashOpaqueToken,
   verifyPassword,
-} from "../src/server/auth";
+} from "../../src/server/auth";
 import {
   createDevelopmentAuthEmailSender,
   type AuthEmailSender,
   type PasswordResetEmailDelivery,
   type VerificationEmailDelivery,
-} from "../src/server/email";
-import { createAuthRoutes } from "../src/server/routes/auth";
-import { createAuthService } from "../src/server/services/auth.service";
+} from "../../src/server/email";
+import { createAuthRoutes } from "../../src/server/routes/auth";
+import { createAuthService } from "../../src/server/services/auth.service";
 import { getTestDatabaseContext } from "./test-db";
 
 const apiBaseUrl = "http://localhost";

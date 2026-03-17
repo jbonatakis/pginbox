@@ -17,7 +17,7 @@ import {
   setSessionCookie,
   tokenHashMatches,
   verifyPassword,
-} from "../src/server/auth";
+} from "../../src/server/auth";
 
 function withNodeEnv<T>(value: string | undefined, callback: () => T): T {
   const previous = process.env.NODE_ENV;

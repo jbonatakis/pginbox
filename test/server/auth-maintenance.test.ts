@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { hashOpaqueToken, hashPassword } from "../src/server/auth";
-import { runAuthCleanup } from "../src/server/services/auth-maintenance.service";
+import { hashOpaqueToken, hashPassword } from "../../src/server/auth";
+import { runAuthCleanup } from "../../src/server/services/auth-maintenance.service";
 import { getTestDatabaseContext } from "./test-db";
 
 const testDatabaseContext = getTestDatabaseContext();

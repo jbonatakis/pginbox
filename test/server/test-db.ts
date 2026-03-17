@@ -1,6 +1,6 @@
 import { Kysely, PostgresDialect } from "kysely";
 import pg from "pg";
-import type { DB } from "../src/server/types/db.d.ts";
+import type { DB } from "../../src/server/types/db.d.ts";
 
 export interface TestDatabaseContext {
   databaseName: string;

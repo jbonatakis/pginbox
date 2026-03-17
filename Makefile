@@ -6,7 +6,7 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup codegen test test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
+.PHONY: up down reset psql logs ingest backfill backfill-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup codegen test test-server test-frontend test-ingestion test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
 
 up:
 	docker compose up -d
@@ -95,11 +95,22 @@ codegen:
 	bun x kysely-codegen --dialect postgres --url $(DATABASE_URL) --out-file src/server/types/db.d.ts
 
 test:
-	bun test test
+	$(MAKE) test-server
+	$(MAKE) test-frontend
+	$(MAKE) test-ingestion
+
+test-server:
+	bun test test/server
+
+test-frontend:
+	bun test test/frontend
+
+test-ingestion:
+	uv run pytest -q test/ingestion
 
 test-db:
 	@test -n "$(TEST_DATABASE_URL)" || (echo "set TEST_DATABASE_URL" && exit 1)
-	bun test test/auth.test.ts test/auth-routes.test.ts test/auth-maintenance.test.ts
+	bun test test/server/auth.test.ts test/server/auth-routes.test.ts test/server/auth-maintenance.test.ts
 
 install-web:
 	cd src/frontend && npm install

@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   bun:
-    name: Bun Typecheck and Tests
+    name: Bun Typecheck and Backend Tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -75,8 +75,28 @@ jobs:
       - name: Typecheck
         run: bun x tsc --noEmit
 
-      - name: Run Bun test suite
-        run: bun test test
+      - name: Run Bun backend/shared test suite
+        run: bun test test/server
+
+  frontend-tests:
+    name: Frontend Bun Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install frontend dependencies
+        working-directory: src/frontend
+        run: npm ci
+
+      - name: Run frontend test suite
+        run: bun test test/frontend
 
   frontend:
     name: Frontend Build
@@ -101,7 +121,7 @@ jobs:
         run: npm run build
 
   python:
-    name: Python Tests
+    name: Python Lint, Typecheck, and Tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -118,8 +138,14 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
+      - name: Run typecheck
+        run: uv run ty check --no-progress --output-format github
+
+      - name: Run ruff
+        run: uv run ruff check --output-format github
+
       - name: Run pytest
-        run: uv run --with pytest pytest test/test_ingestion_threading.py
+        run: uv run pytest -q
 
   docker:
     name: Docker Builds

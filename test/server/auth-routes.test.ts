@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { sql } from "kysely";
-import { createApp } from "../src/server/app";
+import { createApp } from "../../src/server/app";
 import type {
   AuthEmailSender,
   PasswordResetEmailDelivery,
   VerificationEmailDelivery,
-} from "../src/server/email";
-import { createAccountRoutes } from "../src/server/routes/account";
+} from "../../src/server/email";
+import { createAccountRoutes } from "../../src/server/routes/account";
 import {
   DEFAULT_AUTH_RATE_LIMITS,
   createAuthRoutes,
   type AuthRateLimitConfig,
-} from "../src/server/routes/auth";
-import { createAuthService } from "../src/server/services/auth.service";
+} from "../../src/server/routes/auth";
+import { createAuthService } from "../../src/server/services/auth.service";
 import { getTestDatabaseContext } from "./test-db";
 
 const apiBaseUrl = "http://localhost";
