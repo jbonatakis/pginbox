@@ -6,13 +6,11 @@ Safe to re-run — all inserts use ON CONFLICT DO NOTHING.
 
 import os
 import re
-import sys
 
 import psycopg2
 from dotenv import load_dotenv
 
 load_dotenv()
-from psycopg2.extras import execute_batch
 
 DSN = os.environ.get(
     "DATABASE_URL", "postgresql://pginbox:pginbox@localhost:5499/pginbox"

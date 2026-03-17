@@ -121,8 +121,11 @@ jobs:
       - name: Run typecheck
         run: uv run ty check --no-progress --output-format github
 
+      - name: Run ruff
+        run: uv run ruff check --output-format github
+
       - name: Run pytest
-        run: uv run pytest
+        run: uv run pytest -q
 
   docker:
     name: Docker Builds

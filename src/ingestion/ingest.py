@@ -23,6 +23,7 @@ Usage:
 """
 
 import argparse
+import importlib
 import os
 import sys
 import time
@@ -38,28 +39,29 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.ingestion.ingest_archive import (
-    ArchiveAuthError,
-    DEFAULT_LIST_NAME,
-    MonthNotFound,
-    download_mbox,
-    ensure_archive_access,
-    ensure_list,
-    is_cached,
-    make_session,
-    mbox_cache_path,
-)
-from src.ingestion.ingest_parse import (
-    _decode_subject,
-    _extract_message_id,
-    _extract_message_ids,
-    _normalize_email,
-    _normalize_subject,
-    _strip_nul,
-    parse_mbox,
-)
-from src.ingestion import ingest_pipeline as pipeline_lib
-from src.ingestion import ingest_store as store_lib
+PACKAGE_NAME = __package__ or "src.ingestion"
+ingest_archive = importlib.import_module(f"{PACKAGE_NAME}.ingest_archive")
+ingest_parse = importlib.import_module(f"{PACKAGE_NAME}.ingest_parse")
+pipeline_lib = importlib.import_module(f"{PACKAGE_NAME}.ingest_pipeline")
+store_lib = importlib.import_module(f"{PACKAGE_NAME}.ingest_store")
+
+ArchiveAuthError = ingest_archive.ArchiveAuthError
+DEFAULT_LIST_NAME = ingest_archive.DEFAULT_LIST_NAME
+MonthNotFound = ingest_archive.MonthNotFound
+download_mbox = ingest_archive.download_mbox
+ensure_archive_access = ingest_archive.ensure_archive_access
+ensure_list = ingest_archive.ensure_list
+is_cached = ingest_archive.is_cached
+make_session = ingest_archive.make_session
+mbox_cache_path = ingest_archive.mbox_cache_path
+
+_decode_subject = ingest_parse._decode_subject
+_extract_message_id = ingest_parse._extract_message_id
+_extract_message_ids = ingest_parse._extract_message_ids
+_normalize_email = ingest_parse._normalize_email
+_normalize_subject = ingest_parse._normalize_subject
+_strip_nul = ingest_parse._strip_nul
+parse_mbox = ingest_parse.parse_mbox
 
 load_dotenv()
 
