@@ -111,6 +111,44 @@ async function createThread(
   return { threadId, msgIds: ordered.map((r) => String(r.id)) };
 }
 
+async function createThreadWithSentAtValues(
+  listId: number,
+  sentAtValues: Array<Date | null>
+): Promise<{ threadId: string; msgIds: string[] }> {
+  const threadId = `test-thread-${uid()}`;
+  await db
+    .insertInto("threads")
+    .values({ thread_id: threadId, list_id: listId, subject: "Test", started_at: null, last_activity_at: null })
+    .execute();
+  await db
+    .insertInto("messages")
+    .values(
+      sentAtValues.map((sentAt, i) => ({
+        message_id: `tmsg-${uid()}`,
+        thread_id: threadId,
+        list_id: listId,
+        sent_at: sentAt,
+        from_name: "Test",
+        from_email: "test@test.com",
+        subject: `Msg ${i}`,
+        body: null,
+        in_reply_to: null,
+        refs: null,
+      }))
+    )
+    .execute();
+
+  const ordered = await db
+    .selectFrom("messages")
+    .select("id")
+    .where("thread_id", "=", threadId)
+    .orderBy(sql`sent_at ASC NULLS LAST`)
+    .orderBy("id", "asc")
+    .execute();
+
+  return { threadId, msgIds: ordered.map((r) => String(r.id)) };
+}
+
 async function deleteThread(threadId: string): Promise<void> {
   // Deletes messages first (FK: thread_follows.anchor_message_id → messages.id RESTRICT)
   // The user must already be deleted before this is called so follows are gone.
@@ -311,6 +349,73 @@ describe("follow/unfollow behavior", () => {
       .where("thread_id", "=", thread.threadId)
       .executeTakeFirst();
     expect(progress).toBeDefined();
+  });
+});
+
+describe("canonical latest-message ordering", () => {
+  let listId: number;
+  let thread: { threadId: string; msgIds: string[] };
+  let user: TestUser | null = null;
+  let session: TestSession;
+
+  beforeAll(async () => {
+    listId = await createList();
+    thread = await createThreadWithSentAtValues(listId, [
+      new Date(Date.UTC(2024, 0, 1, 0, 0, 0)),
+      new Date(Date.UTC(2024, 0, 1, 0, 0, 1)),
+      null,
+    ]);
+  });
+
+  afterAll(async () => {
+    await deleteThread(thread.threadId);
+    await deleteList(listId);
+  });
+
+  beforeEach(async () => {
+    user = await createTestUser();
+    session = await createTestSession(user.id);
+  });
+
+  afterEach(async () => {
+    if (user) {
+      await deleteUser(user.id);
+      user = null;
+    }
+  });
+
+  it("following without a seed uses the last message in canonical thread order", async () => {
+    const res = await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+
+    expect(String(progress.last_read_message_id)).toBe(thread.msgIds[2]);
+  });
+
+  it("mark-read also uses the last message in canonical thread order", async () => {
+    const res = await send(`/threads/${encodeURIComponent(thread.threadId)}/progress/mark-read`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+
+    expect(String(progress.last_read_message_id)).toBe(thread.msgIds[2]);
   });
 });
 
@@ -715,6 +820,7 @@ describe("canonicalization after thread_id drift", () => {
     expect(res.status).toBe(200);
     const body = (await parseJson(res)) as Record<string, unknown>;
     // The last-read message is the same, just in the new thread context
+    expect(body.threadId).toBe(newThreadId);
     expect(body.lastReadMessageId).toBe(progressMsgId);
 
     // Progress row should now be for newThreadId
@@ -734,5 +840,25 @@ describe("canonicalization after thread_id drift", () => {
       .where("thread_id", "=", oldThreadId)
       .executeTakeFirst();
     expect(oldProgress).toBeUndefined();
+  });
+
+  it("followed-thread listing uses canonicalized follow and progress rows", async () => {
+    await send(`/threads/${encodeURIComponent(oldThreadId)}/follow`, {
+      method: "POST",
+      body: { seedLastReadMessageId: msgIds[1] },
+      cookie: session.cookie,
+    });
+
+    await simulateDrift();
+
+    const res = await send("/me/followed-threads", { cookie: session.cookie });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as {
+      items: Array<{ thread_id: string; last_read_message_id: string | null }>;
+    };
+
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]?.thread_id).toBe(newThreadId);
+    expect(body.items[0]?.last_read_message_id).toBe(msgIds[1]);
   });
 });

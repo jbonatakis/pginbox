@@ -15,7 +15,7 @@
     serializeThreadsDetailContext,
     withThreadDetailPage,
   } from "../lib/state/threadsQuery";
-  import { onLinkClick, threadsPath } from "../router";
+  import { navigate, onLinkClick, threadDetailPath, threadsPath } from "../router";
 
   type ThreadDetailStatus = "idle" | "loading" | "success" | "error";
   type LoadMode = "navigate" | "refresh" | "replace";
@@ -30,6 +30,7 @@
   const numberFormatter = new Intl.NumberFormat("en-US");
 
   let activeRequestController: AbortController | null = null;
+  let activeProgressRequestController: AbortController | null = null;
   let error: ApiErrorShape | null = null;
   let errorMode: LoadMode | null = null;
   let errorPage: number | null = null;
@@ -43,6 +44,7 @@
   let status: ThreadDetailStatus = "idle";
   let thread: ThreadDetail | null = null;
   let progress: ThreadProgress | null = null;
+  let progressRequestedThreadId: string | null = null;
   let backToThreadsPath = threadsPath;
   let lastAppliedHashAnchorKey: string | null = null;
 
@@ -99,6 +101,41 @@
     if (!activeRequestController) return;
     activeRequestController.abort();
     activeRequestController = null;
+  };
+
+  const clearProgressRequest = (): void => {
+    if (!activeProgressRequestController) return;
+    activeProgressRequestController.abort();
+    activeProgressRequestController = null;
+  };
+
+  const fetchProgress = async (
+    targetThreadId: string,
+    signal?: AbortSignal
+  ): Promise<ThreadProgress | null> => {
+    clearProgressRequest();
+    const requestController = new AbortController();
+    activeProgressRequestController = requestController;
+    progressRequestedThreadId = targetThreadId;
+
+    const abortProgressRequest = (): void => {
+      requestController.abort();
+    };
+
+    signal?.addEventListener("abort", abortProgressRequest, { once: true });
+
+    try {
+      return await api.threads.getProgress(targetThreadId, {}, { signal: requestController.signal });
+    } catch (rawError) {
+      const apiError = toApiErrorShape(rawError);
+      if (apiError.code === "ABORTED") return null;
+      return null;
+    } finally {
+      signal?.removeEventListener("abort", abortProgressRequest);
+      if (activeProgressRequestController === requestController) {
+        activeProgressRequestController = null;
+      }
+    }
   };
 
   const locationPage = (): number | undefined => {
@@ -165,8 +202,10 @@
     requestedPage = targetPage ?? null;
 
     if (mode === "replace" || !hasThread) {
+      clearProgressRequest();
       thread = null;
       progress = null;
+      progressRequestedThreadId = null;
       status = "loading";
       isNavigatingPage = false;
       isRefreshing = false;
@@ -179,7 +218,8 @@
     }
 
     try {
-      const isAuthenticated = get(authStore).isAuthenticated;
+      const authState = get(authStore);
+      const shouldLoadProgress = authState.isBootstrapped && authState.isAuthenticated;
 
       const [response, progressResponse] = await Promise.all([
         api.threads.get(
@@ -187,8 +227,8 @@
           { limit: THREAD_MESSAGES_PAGE_LIMIT, page: targetPage },
           { signal: requestController.signal }
         ),
-        isAuthenticated
-          ? api.threads.getProgress(targetThreadId, {}, { signal: requestController.signal }).catch(() => null)
+        shouldLoadProgress
+          ? fetchProgress(targetThreadId, requestController.signal)
           : Promise.resolve(null),
       ]);
       if (requestId !== requestSequence) return;
@@ -245,8 +285,19 @@
     event.preventDefault();
     if (!progress?.firstUnreadMessageId) return;
 
+    const targetThreadId = progress.threadId;
     const targetPage = progress.resumePage ?? progress.latestPage;
     const anchorId = `message-${progress.firstUnreadMessageId}`;
+    const targetPath = threadDetailPath(targetThreadId);
+    const targetUrl =
+      targetPage < progress.latestPage
+        ? `${targetPath}?page=${targetPage}#${anchorId}`
+        : `${targetPath}#${anchorId}`;
+
+    if (targetThreadId !== threadId) {
+      navigate(targetUrl);
+      return;
+    }
 
     if (typeof window !== "undefined") {
       const urlWithHash = `${window.location.pathname}${window.location.search}#${anchorId}`;
@@ -268,7 +319,8 @@
     if (isBannerBusy) return;
     isBannerBusy = true;
     try {
-      progress = await api.threads.markRead(threadId);
+      progress = await api.threads.markRead(progress?.threadId ?? threadId);
+      progressRequestedThreadId = threadId;
     } catch {
       // silently ignore
     } finally {
@@ -281,9 +333,11 @@
     isBannerBusy = true;
     try {
       const result = progress.isFollowed
-        ? await api.threads.unfollow(threadId)
-        : await api.threads.follow(threadId);
-      progress = { ...progress, isFollowed: result.isFollowed };
+        ? await api.threads.unfollow(progress.threadId)
+        : await api.threads.follow(progress.threadId, progress.lastReadMessageId);
+      const refreshedProgress = await fetchProgress(threadId);
+      progress = refreshedProgress ?? { ...progress, isFollowed: result.isFollowed };
+      progressRequestedThreadId = threadId;
     } catch {
       // silently ignore
     } finally {
@@ -350,6 +404,7 @@
   $: if (!hasThreadId) {
     requestSequence += 1;
     clearActiveRequest();
+    clearProgressRequest();
 
     error = null;
     errorMode = null;
@@ -358,12 +413,28 @@
     isRefreshing = false;
     lastLoadedThreadId = null;
     progress = null;
+    progressRequestedThreadId = null;
     requestedPage = null;
     thread = null;
     status = "error";
   } else if (threadId !== lastLoadedThreadId) {
     lastLoadedThreadId = threadId;
     void loadThread(threadId, "replace", locationPage());
+  }
+
+  $: if (thread && $authStore.isBootstrapped) {
+    if ($authStore.isAuthenticated) {
+      if (progressRequestedThreadId !== threadId) {
+        void fetchProgress(threadId).then((response) => {
+          if (threadId !== lastLoadedThreadId) return;
+          progress = response;
+        });
+      }
+    } else {
+      clearProgressRequest();
+      progress = null;
+      progressRequestedThreadId = null;
+    }
   }
 
   $: isBusy = status === "loading" || isNavigatingPage || isRefreshing;
@@ -384,6 +455,7 @@
   onDestroy(() => {
     requestSequence += 1;
     clearActiveRequest();
+    clearProgressRequest();
   });
 </script>
 
@@ -522,7 +594,7 @@
       startIndex={startIndex}
       totalCount={thread.message_count}
       firstUnreadMessageId={progress?.firstUnreadMessageId ?? null}
-      threadId={threadId}
+      threadId={progress?.threadId ?? threadId}
       isAuthenticated={$authStore.isAuthenticated}
     />
 

@@ -3,7 +3,6 @@
   import { onDestroy, onMount } from "svelte";
   import ThreadTimelineItem from "./ThreadTimelineItem.svelte";
   import { api } from "../../lib/api";
-  import { currentRoute } from "../../router";
 
   type TimelineEntry = {
     key: string;
@@ -36,7 +35,11 @@
     if (hwmMessageId === lastFlushedMessageId) return;
     const messageId = hwmMessageId;
     lastFlushedMessageId = messageId;
-    void api.threads.advanceProgress(threadId, messageId).catch(() => {});
+    try {
+      void api.threads.advanceProgress(threadId, messageId).catch(() => {});
+    } catch {
+      // Ignore transport setup failures so route transitions do not get stuck.
+    }
   };
 
   const clearFlushTimer = (): void => {
@@ -83,6 +86,25 @@
         observer?.unobserve(node);
       },
     };
+  };
+
+  const disconnectObserver = (): void => {
+    observer?.disconnect();
+    observer = null;
+  };
+
+  const syncObserver = (): void => {
+    if (!isAuthenticated || typeof IntersectionObserver === "undefined") {
+      disconnectObserver();
+      return;
+    }
+
+    if (observer) return;
+
+    observer = new IntersectionObserver(onIntersect, { threshold: 0.5 });
+    for (const el of observedEntries.keys()) {
+      observer.observe(el);
+    }
   };
 
   const messageCountLabel = (count: number): string => {
@@ -134,12 +156,7 @@
   };
 
   onMount(() => {
-    if (isAuthenticated && typeof IntersectionObserver !== "undefined") {
-      observer = new IntersectionObserver(onIntersect, { threshold: 0.5 });
-      for (const el of observedEntries.keys()) {
-        observer.observe(el);
-      }
-    }
+    syncObserver();
 
     const handleVisibilityChange = (): void => {
       if (document.visibilityState === "hidden") {
@@ -156,23 +173,11 @@
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("beforeunload", handleBeforeUnload);
 
-    let initialRouteSkipped = false;
-    const unsubscribeRoute = currentRoute.subscribe(() => {
-      if (!initialRouteSkipped) {
-        initialRouteSkipped = true;
-        return;
-      }
-      clearFlushTimer();
-      flushProgress();
-    });
-
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("beforeunload", handleBeforeUnload);
-      unsubscribeRoute();
       clearFlushTimer();
-      observer?.disconnect();
-      observer = null;
+      disconnectObserver();
       observedEntries.clear();
     };
   });
@@ -180,6 +185,10 @@
   onDestroy(() => {
     flushProgress();
   });
+
+  $: if (typeof window !== "undefined") {
+    syncObserver();
+  }
 
   $: timelineEntries = messages.map((message, index) => {
     const absoluteIndex = startIndex + index;
