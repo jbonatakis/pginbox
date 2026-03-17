@@ -1,12 +1,14 @@
 <script lang="ts">
-  import type { ThreadDetail } from "shared/api";
+  import type { ThreadDetail, ThreadProgress } from "shared/api";
   import { onDestroy, tick } from "svelte";
+  import { get } from "svelte/store";
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
   import ThreadPageControls from "../components/thread/ThreadPageControls.svelte";
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
   import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
+  import { authStore } from "../lib/state/auth";
   import {
     parseThreadDetailPage,
     parseThreadsDetailContext,
@@ -32,6 +34,7 @@
   let errorMode: LoadMode | null = null;
   let errorPage: number | null = null;
   let hasThreadId = false;
+  let isBannerBusy = false;
   let isNavigatingPage = false;
   let isRefreshing = false;
   let lastLoadedThreadId: string | null = null;
@@ -39,6 +42,7 @@
   let requestSequence = 0;
   let status: ThreadDetailStatus = "idle";
   let thread: ThreadDetail | null = null;
+  let progress: ThreadProgress | null = null;
   let backToThreadsPath = threadsPath;
   let lastAppliedHashAnchorKey: string | null = null;
 
@@ -162,6 +166,7 @@
 
     if (mode === "replace" || !hasThread) {
       thread = null;
+      progress = null;
       status = "loading";
       isNavigatingPage = false;
       isRefreshing = false;
@@ -174,14 +179,22 @@
     }
 
     try {
-      const response = await api.threads.get(
-        targetThreadId,
-        { limit: THREAD_MESSAGES_PAGE_LIMIT, page: targetPage },
-        { signal: requestController.signal }
-      );
+      const isAuthenticated = get(authStore).isAuthenticated;
+
+      const [response, progressResponse] = await Promise.all([
+        api.threads.get(
+          targetThreadId,
+          { limit: THREAD_MESSAGES_PAGE_LIMIT, page: targetPage },
+          { signal: requestController.signal }
+        ),
+        isAuthenticated
+          ? api.threads.getProgress(targetThreadId, {}, { signal: requestController.signal }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
       if (requestId !== requestSequence) return;
 
       thread = response;
+      progress = progressResponse;
       status = "success";
       syncLocationPage(response.messagePagination.page, response.messagePagination.totalPages);
     } catch (rawError) {
@@ -226,6 +239,56 @@
     const nextPage = Math.max(1, Math.min(page, totalPages));
     if (nextPage === thread.messagePagination.page) return;
     void loadThread(threadId, "navigate", nextPage);
+  };
+
+  const resumeReading = (event: MouseEvent): void => {
+    event.preventDefault();
+    if (!progress?.firstUnreadMessageId) return;
+
+    const targetPage = progress.resumePage ?? progress.latestPage;
+    const anchorId = `message-${progress.firstUnreadMessageId}`;
+
+    if (typeof window !== "undefined") {
+      const urlWithHash = `${window.location.pathname}${window.location.search}#${anchorId}`;
+      window.history.replaceState(window.history.state, "", urlWithHash);
+    }
+
+    if (!thread || targetPage !== thread.messagePagination.page) {
+      void loadThread(threadId, "navigate", targetPage);
+    } else {
+      lastAppliedHashAnchorKey = null;
+      const anchorKey = currentHashAnchorKey(thread.messagePagination.page);
+      if (anchorKey) {
+        void scrollToCurrentHashAnchor(anchorKey);
+      }
+    }
+  };
+
+  const markRead = async (): Promise<void> => {
+    if (isBannerBusy) return;
+    isBannerBusy = true;
+    try {
+      progress = await api.threads.markRead(threadId);
+    } catch {
+      // silently ignore
+    } finally {
+      isBannerBusy = false;
+    }
+  };
+
+  const toggleFollow = async (): Promise<void> => {
+    if (isBannerBusy || !progress) return;
+    isBannerBusy = true;
+    try {
+      const result = progress.isFollowed
+        ? await api.threads.unfollow(threadId)
+        : await api.threads.follow(threadId);
+      progress = { ...progress, isFollowed: result.isFollowed };
+    } catch {
+      // silently ignore
+    } finally {
+      isBannerBusy = false;
+    }
   };
 
   const goToFirstPage = (): void => {
@@ -294,6 +357,7 @@
     isNavigatingPage = false;
     isRefreshing = false;
     lastLoadedThreadId = null;
+    progress = null;
     requestedPage = null;
     thread = null;
     status = "error";
@@ -404,6 +468,41 @@
       </dl>
     </article>
 
+    {#if $authStore.isAuthenticated && progress !== null}
+      <div class="progress-banner">
+        <span class="progress-banner-status">
+          {#if progress.hasUnread}
+            {numberFormatter.format(progress.unreadCount)}
+            {progress.unreadCount === 1 ? "unread message" : "unread messages"}
+          {:else}
+            All caught up
+          {/if}
+        </span>
+        <div class="progress-banner-actions">
+          {#if progress.hasUnread && progress.firstUnreadMessageId !== null}
+            <button
+              class="banner-button banner-button--primary"
+              type="button"
+              disabled={isBusy || isBannerBusy}
+              on:click={resumeReading}
+            >Resume reading</button>
+          {/if}
+          <button
+            class="banner-button"
+            type="button"
+            disabled={isBusy || isBannerBusy}
+            on:click={markRead}
+          >Mark as read</button>
+          <button
+            class="banner-button banner-button--follow"
+            type="button"
+            disabled={isBusy || isBannerBusy}
+            on:click={toggleFollow}
+          >{progress.isFollowed ? "Unfollow" : "Follow"}</button>
+        </div>
+      </div>
+    {/if}
+
     <ThreadPageControls
       {currentPage}
       {isBusy}
@@ -418,7 +517,14 @@
       on:last={goToLastPage}
     />
 
-    <ThreadTimeline messages={thread.messages} startIndex={startIndex} totalCount={thread.message_count} />
+    <ThreadTimeline
+      messages={thread.messages}
+      startIndex={startIndex}
+      totalCount={thread.message_count}
+      firstUnreadMessageId={progress?.firstUnreadMessageId ?? null}
+      threadId={threadId}
+      isAuthenticated={$authStore.isAuthenticated}
+    />
 
     <ThreadPageControls
       {currentPage}
@@ -533,6 +639,63 @@
     font-size: 0.86rem;
     line-height: 1.3;
     overflow-wrap: anywhere;
+  }
+
+  .progress-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    border: 1px solid #b3cde8;
+    border-radius: 0.75rem;
+    background: #e8f2ff;
+    padding: 0.65rem 0.85rem;
+    min-width: 0;
+  }
+
+  .progress-banner-status {
+    flex: 1 1 auto;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #102a43;
+  }
+
+  .progress-banner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .banner-button {
+    border: 1px solid #6f9fdd;
+    border-radius: 0.55rem;
+    background: #ffffff;
+    color: #0b4ea2;
+    font-weight: 650;
+    font-size: 0.83rem;
+    line-height: 1;
+    padding: 0.4rem 0.6rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .banner-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .banner-button--primary {
+    background: #0b4ea2;
+    color: #ffffff;
+    border-color: #0b4ea2;
+  }
+
+  .banner-button--primary:not(:disabled):hover {
+    background: #0d5bc0;
+  }
+
+  .banner-button:not(.banner-button--primary):not(:disabled):hover {
+    background: #d0e4f7;
   }
 
   .route-link {

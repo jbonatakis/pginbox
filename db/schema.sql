@@ -496,6 +496,31 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: thread_follows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.thread_follows (
+    user_id bigint NOT NULL,
+    thread_id text NOT NULL,
+    anchor_message_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: thread_read_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.thread_read_progress (
+    user_id bigint NOT NULL,
+    thread_id text NOT NULL,
+    last_read_message_id bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -711,6 +736,22 @@ ALTER TABLE ONLY public.people
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: thread_follows thread_follows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_follows
+    ADD CONSTRAINT thread_follows_pkey PRIMARY KEY (user_id, thread_id);
+
+
+--
+-- Name: thread_read_progress thread_read_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_read_progress
+    ADD CONSTRAINT thread_read_progress_pkey PRIMARY KEY (user_id, thread_id);
 
 
 --
@@ -982,6 +1023,38 @@ ALTER TABLE ONLY public.people_emails
 
 
 --
+-- Name: thread_follows thread_follows_anchor_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_follows
+    ADD CONSTRAINT thread_follows_anchor_message_id_fkey FOREIGN KEY (anchor_message_id) REFERENCES public.messages(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: thread_follows thread_follows_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_follows
+    ADD CONSTRAINT thread_follows_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: thread_read_progress thread_read_progress_last_read_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_read_progress
+    ADD CONSTRAINT thread_read_progress_last_read_message_id_fkey FOREIGN KEY (last_read_message_id) REFERENCES public.messages(id) ON DELETE CASCADE;
+
+
+--
+-- Name: thread_read_progress thread_read_progress_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_read_progress
+    ADD CONSTRAINT thread_read_progress_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: threads threads_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1011,4 +1084,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260314000008'),
     ('20260315000009'),
     ('20260315000010'),
-    ('20260317000011');
+    ('20260317000011'),
+    ('20260317000012'),
+    ('20260317000013');

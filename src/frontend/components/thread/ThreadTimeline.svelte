@@ -1,6 +1,9 @@
 <script lang="ts">
   import type { MessageWithAttachments } from "shared/api";
+  import { onDestroy, onMount } from "svelte";
   import ThreadTimelineItem from "./ThreadTimelineItem.svelte";
+  import { api } from "../../lib/api";
+  import { currentRoute } from "../../router";
 
   type TimelineEntry = {
     key: string;
@@ -13,8 +16,74 @@
   export let messages: MessageWithAttachments[] = [];
   export let startIndex = 0;
   export let totalCount: number | null = null;
+  export let firstUnreadMessageId: string | null = null;
+  export let threadId: string | null = null;
+  export let isAuthenticated: boolean = false;
+
   const numberFormatter = new Intl.NumberFormat("en-US");
   let collapsedMessages: Record<string, boolean> = {};
+
+  // Read tracking
+  let hwmMessageId: string | null = null;
+  let hwmAbsoluteIndex = -1;
+  let lastFlushedMessageId: string | null = null;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  let observer: IntersectionObserver | null = null;
+  const observedEntries = new Map<Element, TimelineEntry>();
+
+  const flushProgress = (): void => {
+    if (!threadId || !isAuthenticated || !hwmMessageId) return;
+    if (hwmMessageId === lastFlushedMessageId) return;
+    const messageId = hwmMessageId;
+    lastFlushedMessageId = messageId;
+    void api.threads.advanceProgress(threadId, messageId).catch(() => {});
+  };
+
+  const clearFlushTimer = (): void => {
+    if (flushTimer !== null) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+  };
+
+  const scheduleFlush = (): void => {
+    if (flushTimer !== null) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      flushProgress();
+    }, 2000);
+  };
+
+  const maybeAdvanceHwm = (messageId: string, absoluteIndex: number): void => {
+    if (absoluteIndex > hwmAbsoluteIndex) {
+      hwmMessageId = messageId;
+      hwmAbsoluteIndex = absoluteIndex;
+      scheduleFlush();
+    }
+  };
+
+  const onIntersect = (ioEntries: IntersectionObserverEntry[]): void => {
+    for (const ioEntry of ioEntries) {
+      if (!ioEntry.isIntersecting) continue;
+      const entry = observedEntries.get(ioEntry.target);
+      if (!entry || entry.isCollapsed) continue;
+      maybeAdvanceHwm(entry.message.id, entry.absoluteIndex);
+    }
+  };
+
+  const observeMessage = (node: HTMLElement, entry: TimelineEntry) => {
+    observedEntries.set(node, entry);
+    observer?.observe(node);
+    return {
+      update(newEntry: TimelineEntry) {
+        observedEntries.set(node, newEntry);
+      },
+      destroy() {
+        observedEntries.delete(node);
+        observer?.unobserve(node);
+      },
+    };
+  };
 
   const messageCountLabel = (count: number): string => {
     if (count === 0) return "No messages are available for this page.";
@@ -31,27 +100,27 @@
     return `${numberFormatter.format(count)} messages in chronological order.`;
   };
 
-  const anchorToken = (value: string): string =>
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-
-  const messageAnchorId = (message: MessageWithAttachments, index: number): string => {
-    const token = anchorToken(message.id);
-    if (token.length > 0) return `message-${token}-${index + 1}`;
-    return `message-${index + 1}`;
-  };
+  const messageAnchorId = (message: MessageWithAttachments): string => `message-${message.id}`;
 
   const messageEntryKey = (message: MessageWithAttachments, absoluteIndex: number): string =>
     `${message.id}:${absoluteIndex}`;
 
   const toggleMessageCollapsed = (entry: TimelineEntry): void => {
+    const wasCollapsed = entry.isCollapsed;
     collapsedMessages = {
       ...collapsedMessages,
-      [entry.key]: !entry.isCollapsed,
+      [entry.key]: !wasCollapsed,
     };
+    // If expanding and isAuthenticated, check if element is already in viewport
+    if (wasCollapsed && isAuthenticated) {
+      const el = document.getElementById(entry.anchorId);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        if (rect.top < window.innerHeight && rect.bottom > 0) {
+          maybeAdvanceHwm(entry.message.id, entry.absoluteIndex);
+        }
+      }
+    }
   };
 
   const setAllMessagesCollapsed = (entries: TimelineEntry[], collapsed: boolean): void => {
@@ -64,6 +133,54 @@
     collapsedMessages = nextState;
   };
 
+  onMount(() => {
+    if (isAuthenticated && typeof IntersectionObserver !== "undefined") {
+      observer = new IntersectionObserver(onIntersect, { threshold: 0.5 });
+      for (const el of observedEntries.keys()) {
+        observer.observe(el);
+      }
+    }
+
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState === "hidden") {
+        clearFlushTimer();
+        flushProgress();
+      }
+    };
+
+    const handleBeforeUnload = (): void => {
+      clearFlushTimer();
+      flushProgress();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    let initialRouteSkipped = false;
+    const unsubscribeRoute = currentRoute.subscribe(() => {
+      if (!initialRouteSkipped) {
+        initialRouteSkipped = true;
+        return;
+      }
+      clearFlushTimer();
+      flushProgress();
+    });
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      unsubscribeRoute();
+      clearFlushTimer();
+      observer?.disconnect();
+      observer = null;
+      observedEntries.clear();
+    };
+  });
+
+  onDestroy(() => {
+    flushProgress();
+  });
+
   $: timelineEntries = messages.map((message, index) => {
     const absoluteIndex = startIndex + index;
     const key = messageEntryKey(message, absoluteIndex);
@@ -71,7 +188,7 @@
       key,
       message,
       absoluteIndex,
-      anchorId: messageAnchorId(message, absoluteIndex),
+      anchorId: messageAnchorId(message),
       isCollapsed: collapsedMessages[key] ?? false,
     } satisfies TimelineEntry;
   });
@@ -105,7 +222,12 @@
   {:else}
     <ol class="timeline-list">
       {#each timelineEntries as entry (entry.key)}
-        <li>
+        {#if firstUnreadMessageId !== null && entry.message.id === firstUnreadMessageId}
+          <li class="unread-divider" aria-label="New since your last visit">
+            <span class="unread-divider-label">New since your last visit</span>
+          </li>
+        {/if}
+        <li use:observeMessage={entry}>
           <ThreadTimelineItem
             message={entry.message}
             index={entry.absoluteIndex}
@@ -205,5 +327,26 @@
     display: grid;
     gap: 0.55rem;
     min-width: 0;
+  }
+
+  .unread-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: #0b4ea2;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .unread-divider::before,
+  .unread-divider::after {
+    content: "";
+    flex: 1;
+    height: 2px;
+    background: #0b4ea2;
+    border-radius: 1px;
+    opacity: 0.35;
   }
 </style>

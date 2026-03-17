@@ -23,12 +23,15 @@ import type {
   ByDow,
   ByHour,
   ByMonth,
+  FollowedThread,
   List,
   Paginated,
   Person,
   PersonListItem,
   Thread,
   ThreadDetail,
+  ThreadFollowState,
+  ThreadProgress,
   TopSender,
 } from "shared/api";
 
@@ -510,6 +513,82 @@ export async function getAnalyticsMessagesLast24h(
   return requestJson<AnalyticsMessagesLast24h>(withApiBase("/analytics/messages-last-24h"), options);
 }
 
+export interface GetThreadProgressParams {
+  pageSize?: number;
+}
+
+export interface ListFollowedThreadsParams {
+  limit?: number;
+  cursor?: string;
+}
+
+export async function followThread(
+  threadId: string,
+  seedLastReadMessageId?: string | null,
+  options: RequestOptions = {}
+): Promise<ThreadFollowState> {
+  return postAuthJson<ThreadFollowState>(
+    withApiBase(`/threads/${encodePathParam(threadId)}/follow`),
+    seedLastReadMessageId != null ? { seedLastReadMessageId } : {},
+    options
+  );
+}
+
+export async function unfollowThread(
+  threadId: string,
+  options: RequestOptions = {}
+): Promise<ThreadFollowState> {
+  return requestAuthJson<ThreadFollowState>(
+    withApiBase(`/threads/${encodePathParam(threadId)}/follow`),
+    { ...options, method: "DELETE" }
+  );
+}
+
+export async function getThreadProgress(
+  threadId: string,
+  params: GetThreadProgressParams = {},
+  options: RequestOptions = {}
+): Promise<ThreadProgress> {
+  const path = withApiBase(`/threads/${encodePathParam(threadId)}/progress`, {
+    pageSize: params.pageSize,
+  });
+  return requestAuthJson<ThreadProgress>(path, options);
+}
+
+export async function advanceThreadProgress(
+  threadId: string,
+  lastReadMessageId: string,
+  options: RequestOptions = {}
+): Promise<ThreadProgress> {
+  return postAuthJson<ThreadProgress>(
+    withApiBase(`/threads/${encodePathParam(threadId)}/progress`),
+    { lastReadMessageId },
+    options
+  );
+}
+
+export async function markThreadRead(
+  threadId: string,
+  options: RequestOptions = {}
+): Promise<ThreadProgress> {
+  return postAuthJson<ThreadProgress>(
+    withApiBase(`/threads/${encodePathParam(threadId)}/progress/mark-read`),
+    {},
+    options
+  );
+}
+
+export async function listFollowedThreads(
+  params: ListFollowedThreadsParams = {},
+  options: RequestOptions = {}
+): Promise<Paginated<FollowedThread>> {
+  const path = withApiBase("/me/followed-threads", {
+    limit: params.limit,
+    cursor: params.cursor,
+  });
+  return requestAuthJson<Paginated<FollowedThread>>(path, options);
+}
+
 export const api = {
   attachments: {
     get: getAttachment,
@@ -542,8 +621,16 @@ export const api = {
     get: getPerson,
     list: listPeople,
   },
+  me: {
+    followedThreads: listFollowedThreads,
+  },
   threads: {
+    advanceProgress: advanceThreadProgress,
+    follow: followThread,
     get: getThread,
+    getProgress: getThreadProgress,
     list: listThreads,
+    markRead: markThreadRead,
+    unfollow: unfollowThread,
   },
 };
