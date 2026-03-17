@@ -4,7 +4,7 @@ import {
   toAuthMessageResponse,
   toAuthUser,
   toAuthUserResponse,
-} from "../src/server/serialize";
+} from "../../src/server/serialize";
 
 describe("auth serialization", () => {
   it("serializes auth users into the shared wire shape without sensitive fields", () => {

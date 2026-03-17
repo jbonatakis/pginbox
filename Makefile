@@ -99,7 +99,7 @@ test:
 
 test-db:
 	@test -n "$(TEST_DATABASE_URL)" || (echo "set TEST_DATABASE_URL" && exit 1)
-	bun test test/auth.test.ts test/auth-routes.test.ts test/auth-maintenance.test.ts
+	bun test test/server/auth.test.ts test/server/auth-routes.test.ts test/server/auth-maintenance.test.ts
 
 install-web:
 	cd src/frontend && npm install

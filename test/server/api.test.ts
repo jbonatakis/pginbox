@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { app } from "../src/server/app";
-import { db } from "../src/server/db";
+import { app } from "../../src/server/app";
+import { db } from "../../src/server/db";
 
 const base = "http://localhost";
 

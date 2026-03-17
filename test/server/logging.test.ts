@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { createApp } from "../src/server/app";
-import { handleLoggedRequest } from "../src/server/logging";
+import { createApp } from "../../src/server/app";
+import { handleLoggedRequest } from "../../src/server/logging";
 
 const base = "http://localhost";
 const isoTimestamp = "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z";

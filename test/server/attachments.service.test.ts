@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { dedupeAttachmentRows, type AttachmentSummaryRow } from "../src/server/services/attachments.service";
+import { dedupeAttachmentRows, type AttachmentSummaryRow } from "../../src/server/services/attachments.service";
 
 describe("dedupeAttachmentRows", () => {
   it("collapses duplicate attachment metadata within a message", () => {
