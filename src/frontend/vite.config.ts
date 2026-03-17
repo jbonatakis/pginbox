@@ -1,6 +1,8 @@
-import { resolve } from "path";
 import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+
+const fromConfig = (relativePath: string): string =>
+  decodeURIComponent(new URL(relativePath, import.meta.url).pathname);
 
 export default defineConfig({
   plugins: [
@@ -8,10 +10,10 @@ export default defineConfig({
       hot: false, // avoid svelte-hmr resolution (plugin 6 + Svelte 5)
     }),
   ],
-  root: __dirname,
+  root: fromConfig("."),
   resolve: {
     alias: {
-      shared: resolve(__dirname, "../shared"),
+      shared: fromConfig("../shared"),
     },
   },
   server: {
