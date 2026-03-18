@@ -1,4 +1,6 @@
 import { db } from "../db";
+import { InvalidCacheTtlError, serverCache } from "../cache";
+import { resolveAnalyticsMessagesLast24hTtlMs } from "../config";
 import { sql } from "kysely";
 
 type IntLike = bigint | number | string;
@@ -35,6 +37,9 @@ type ByDowRow = {
 type MessagesLast24hRow = {
   messages: IntLike;
 };
+
+const MESSAGES_LAST_24H_CACHE_KEY = "analytics:messages-last-24h";
+const MESSAGES_LAST_24H_TTL_MS = resolveAnalyticsMessagesLast24hTtlMs();
 
 function toNumber(value: IntLike): number {
   if (typeof value === "number") return value;
@@ -121,6 +126,23 @@ export async function getByDow() {
 }
 
 export async function getMessagesLast24h() {
+  try {
+    return await serverCache.getOrLoad(
+      MESSAGES_LAST_24H_CACHE_KEY,
+      MESSAGES_LAST_24H_TTL_MS,
+      queryMessagesLast24h,
+    );
+  } catch (error) {
+    if (error instanceof InvalidCacheTtlError) {
+      console.error(`[cache] ${error.message}`);
+      return queryMessagesLast24h();
+    }
+
+    throw error;
+  }
+}
+
+async function queryMessagesLast24h() {
   const result = await sql<MessagesLast24hRow>`
     SELECT count(*)::bigint AS messages
     FROM messages

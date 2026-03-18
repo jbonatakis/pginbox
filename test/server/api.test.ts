@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { app } from "../../src/server/app";
+import { serverCache } from "../../src/server/cache";
 import { db } from "../../src/server/db";
 
 const base = "http://localhost";
@@ -242,7 +243,8 @@ describe("API not-found and success (require DB)", () => {
     expect(typeof (json as { messages: unknown }).messages).toBe("number");
   });
 
-  it("GET /analytics/messages-last-24h reflects newly inserted recent messages without a MV refresh", async () => {
+  it("GET /analytics/messages-last-24h serves a cached value until the cache is cleared", async () => {
+    serverCache.clear();
     const before = await get("/analytics/messages-last-24h");
     expect(before.status).toBe(200);
     const beforeCount = (before.json as { messages: number }).messages;
@@ -287,10 +289,17 @@ describe("API not-found and success (require DB)", () => {
         })
         .execute();
 
-      const after = await get("/analytics/messages-last-24h");
-      expect(after.status).toBe(200);
-      expect((after.json as { messages: number }).messages).toBe(beforeCount + 1);
+      const cached = await get("/analytics/messages-last-24h");
+      expect(cached.status).toBe(200);
+      expect((cached.json as { messages: number }).messages).toBe(beforeCount);
+
+      serverCache.clear();
+
+      const refreshed = await get("/analytics/messages-last-24h");
+      expect(refreshed.status).toBe(200);
+      expect((refreshed.json as { messages: number }).messages).toBe(beforeCount + 1);
     } finally {
+      serverCache.clear();
       await db.deleteFrom("messages").where("thread_id", "=", threadId).execute();
       await db.deleteFrom("threads").where("thread_id", "=", threadId).execute();
       await db.deleteFrom("lists").where("id", "=", listRow.id).execute();
