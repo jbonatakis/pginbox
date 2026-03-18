@@ -1,5 +1,7 @@
 export const DEFAULT_DATABASE_URL = "postgresql://pginbox:pginbox@localhost:5499/pginbox";
 export const DEFAULT_AUTH_APP_BASE_URL = "http://localhost:5173/";
+export const DEFAULT_ANALYTICS_PAGE_CACHE_TTL_MINUTES = 60;
+export const DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES = 5;
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -63,6 +65,18 @@ function readPortEnv(env: EnvSource, name: string): number {
   return port;
 }
 
+function readPositiveIntegerEnv(env: EnvSource, name: string, defaultValue: number): number {
+  const value = readEnv(env, name);
+  if (!value) return defaultValue;
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+
+  return parsed;
+}
+
 export function resolveDatabaseUrl(env: EnvSource = process.env): string {
   return readEnv(env, "DATABASE_URL") ?? DEFAULT_DATABASE_URL;
 }
@@ -104,4 +118,24 @@ export function resolveAuthEmailRuntimeConfig(
   }
 
   return { mode: "log" };
+}
+
+export function resolveAnalyticsMessagesLast24hTtlMs(env: EnvSource = process.env): number {
+  const minutes = readPositiveIntegerEnv(
+    env,
+    "ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES",
+    DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES,
+  );
+
+  return minutes * 60 * 1000;
+}
+
+export function resolveAnalyticsPageCacheTtlMs(env: EnvSource = process.env): number {
+  const minutes = readPositiveIntegerEnv(
+    env,
+    "ANALYTICS_PAGE_CACHE_TTL_MINUTES",
+    DEFAULT_ANALYTICS_PAGE_CACHE_TTL_MINUTES,
+  );
+
+  return minutes * 60 * 1000;
 }
