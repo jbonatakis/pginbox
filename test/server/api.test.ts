@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { app } from "../../src/server/app";
 import { db } from "../../src/server/db";
 
@@ -14,6 +15,10 @@ async function get(path: string): Promise<{ status: number; json: unknown }> {
     ? ((await res.json()) as unknown)
     : await res.text();
   return { status: res.status, json };
+}
+
+function uid(): string {
+  return randomBytes(6).toString("hex");
 }
 
 describe("API validation (4xx)", () => {
@@ -235,5 +240,60 @@ describe("API not-found and success (require DB)", () => {
     expect(status).toBe(200);
     expect(json).toHaveProperty("messages");
     expect(typeof (json as { messages: unknown }).messages).toBe("number");
+  });
+
+  it("GET /analytics/messages-last-24h reflects newly inserted recent messages without a MV refresh", async () => {
+    const before = await get("/analytics/messages-last-24h");
+    expect(before.status).toBe(200);
+    const beforeCount = (before.json as { messages: number }).messages;
+
+    const listName = `test-analytics-${uid()}`;
+    const threadId = `test-thread-${uid()}`;
+    const recentTime = new Date();
+
+    const listRow = await db
+      .insertInto("lists")
+      .values({ name: listName })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    try {
+      await db
+        .insertInto("threads")
+        .values({
+          thread_id: threadId,
+          list_id: listRow.id,
+          subject: "Recent analytics test message",
+          started_at: recentTime,
+          last_activity_at: recentTime,
+          message_count: 1,
+        })
+        .execute();
+
+      await db
+        .insertInto("messages")
+        .values({
+          message_id: `test-message-${uid()}@example.com`,
+          thread_id: threadId,
+          list_id: listRow.id,
+          sent_at: recentTime,
+          from_name: "Analytics Test",
+          from_email: `analytics-${uid()}@example.com`,
+          subject: "Recent analytics test message",
+          body: "test body",
+          in_reply_to: null,
+          refs: null,
+          sent_at_approx: false,
+        })
+        .execute();
+
+      const after = await get("/analytics/messages-last-24h");
+      expect(after.status).toBe(200);
+      expect((after.json as { messages: number }).messages).toBe(beforeCount + 1);
+    } finally {
+      await db.deleteFrom("messages").where("thread_id", "=", threadId).execute();
+      await db.deleteFrom("threads").where("thread_id", "=", threadId).execute();
+      await db.deleteFrom("lists").where("id", "=", listRow.id).execute();
+    }
   });
 });

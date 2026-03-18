@@ -122,8 +122,10 @@ export async function getByDow() {
 
 export async function getMessagesLast24h() {
   const result = await sql<MessagesLast24hRow>`
-    SELECT messages
-    FROM analytics_messages_last_24h
+    SELECT count(*)::bigint AS messages
+    FROM messages
+    WHERE sent_at IS NOT NULL
+      AND sent_at >= now() - interval '24 hours'
   `.execute(db);
 
   const row = result.rows[0];
