@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { InvalidCacheTtlError, serverCache } from "../cache";
-import { resolveAnalyticsMessagesLast24hTtlMs } from "../config";
+import { resolveAnalyticsMessagesLast24hTtlMs, resolveAnalyticsPageCacheTtlMs } from "../config";
 import { sql } from "kysely";
 
 type IntLike = bigint | number | string;
@@ -39,6 +39,12 @@ type MessagesLast24hRow = {
 };
 
 const MESSAGES_LAST_24H_CACHE_KEY = "analytics:messages-last-24h";
+const SUMMARY_CACHE_KEY = "analytics:summary";
+const BY_MONTH_CACHE_KEY = "analytics:by-month";
+const TOP_SENDERS_CACHE_KEY = "analytics:top-senders";
+const BY_HOUR_CACHE_KEY = "analytics:by-hour";
+const BY_DOW_CACHE_KEY = "analytics:by-dow";
+const ANALYTICS_PAGE_CACHE_TTL_MS = resolveAnalyticsPageCacheTtlMs();
 const MESSAGES_LAST_24H_TTL_MS = resolveAnalyticsMessagesLast24hTtlMs();
 
 function toNumber(value: IntLike): number {
@@ -48,81 +54,91 @@ function toNumber(value: IntLike): number {
 }
 
 export async function getSummary() {
-  const result = await sql<SummaryRow>`
-    SELECT total_messages, total_threads, unique_senders, months_ingested
-    FROM analytics_summary
-  `.execute(db);
-  const row = result.rows[0];
-  if (!row) {
-    return {
-      totalMessages: 0,
-      totalThreads: 0,
-      uniqueSenders: 0,
-      monthsIngested: 0,
-    };
-  }
+  return serverCache.getOrLoad(SUMMARY_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
+    const result = await sql<SummaryRow>`
+      SELECT total_messages, total_threads, unique_senders, months_ingested
+      FROM analytics_summary
+    `.execute(db);
+    const row = result.rows[0];
+    if (!row) {
+      return {
+        totalMessages: 0,
+        totalThreads: 0,
+        uniqueSenders: 0,
+        monthsIngested: 0,
+      };
+    }
 
-  return {
-    totalMessages: toNumber(row.total_messages),
-    totalThreads: toNumber(row.total_threads),
-    uniqueSenders: toNumber(row.unique_senders),
-    monthsIngested: toNumber(row.months_ingested),
-  };
+    return {
+      totalMessages: toNumber(row.total_messages),
+      totalThreads: toNumber(row.total_threads),
+      uniqueSenders: toNumber(row.unique_senders),
+      monthsIngested: toNumber(row.months_ingested),
+    };
+  });
 }
 
 export async function getByMonth() {
-  const result = await sql<ByMonthRow>`
-    SELECT year, month, messages
-    FROM analytics_by_month
-    ORDER BY year, month
-  `.execute(db);
+  return serverCache.getOrLoad(BY_MONTH_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
+    const result = await sql<ByMonthRow>`
+      SELECT year, month, messages
+      FROM analytics_by_month
+      ORDER BY year, month
+    `.execute(db);
 
-  return result.rows.map((row) => ({
-    year: toNumber(row.year),
-    month: toNumber(row.month),
-    messages: toNumber(row.messages),
-  }));
+    return result.rows.map((row) => ({
+      year: toNumber(row.year),
+      month: toNumber(row.month),
+      messages: toNumber(row.messages),
+    }));
+  });
 }
 
 export async function getTopSenders() {
-  const result = await sql<TopSenderRow>`
-    SELECT from_name, from_email, message_count
-    FROM analytics_top_senders
-    ORDER BY message_count DESC, from_email NULLS LAST, from_name NULLS LAST
-    LIMIT 15
-  `.execute(db);
+  return serverCache.getOrLoad(TOP_SENDERS_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
+    const result = await sql<TopSenderRow>`
+      SELECT from_name, from_email, message_count
+      FROM analytics_top_senders
+      ORDER BY message_count DESC, from_email NULLS LAST, from_name NULLS LAST
+      LIMIT 15
+    `.execute(db);
 
-  return result.rows.map((row) => ({
-    name: row.from_name,
-    email: row.from_email,
-    count: toNumber(row.message_count),
-  }));
+    return result.rows.map((row) => ({
+      name: row.from_name,
+      email: row.from_email,
+      count: toNumber(row.message_count),
+    }));
+  });
 }
 
 export async function getByHour() {
-  const result = await sql<ByHourRow>`
-    SELECT hour, messages
-    FROM analytics_by_hour
-    ORDER BY hour
-  `.execute(db);
+  return serverCache.getOrLoad(BY_HOUR_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
+    const result = await sql<ByHourRow>`
+      SELECT hour, messages
+      FROM analytics_by_hour
+      ORDER BY hour
+    `.execute(db);
 
-  return result.rows.map((row) => ({
-    hour: toNumber(row.hour),
-    messages: toNumber(row.messages),
-  }));
+    return result.rows.map((row) => ({
+      hour: toNumber(row.hour),
+      messages: toNumber(row.messages),
+    }));
+  });
 }
 
 export async function getByDow() {
-  const result = await sql<ByDowRow>`
-    SELECT dow, messages
-    FROM analytics_by_dow
-    ORDER BY dow
-  `.execute(db);
+  return serverCache.getOrLoad(BY_DOW_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
+    const result = await sql<ByDowRow>`
+      SELECT dow, messages
+      FROM analytics_by_dow
+      ORDER BY dow
+    `.execute(db);
 
-  return result.rows.map((row) => ({
-    dow: toNumber(row.dow),
-    messages: toNumber(row.messages),
-  }));
+    return result.rows.map((row) => ({
+      dow: toNumber(row.dow),
+      messages: toNumber(row.messages),
+    }));
+  });
 }
 
 export async function getMessagesLast24h() {

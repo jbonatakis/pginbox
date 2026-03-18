@@ -2,8 +2,10 @@ import { describe, expect, it } from "bun:test";
 import {
   DEFAULT_AUTH_APP_BASE_URL,
   DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES,
+  DEFAULT_ANALYTICS_PAGE_CACHE_TTL_MINUTES,
   DEFAULT_DATABASE_URL,
   resolveAnalyticsMessagesLast24hTtlMs,
+  resolveAnalyticsPageCacheTtlMs,
   resolveAuthAppBaseUrl,
   resolveAuthEmailRuntimeConfig,
   resolveDatabaseUrl,
@@ -104,5 +106,24 @@ describe("server config", () => {
     expect(() =>
       resolveAnalyticsMessagesLast24hTtlMs({ ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES: "nope" }),
     ).toThrow("ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES must be a positive integer");
+  });
+
+  it("defaults the analytics page cache TTL to 60 minutes and supports env overrides", () => {
+    expect(resolveAnalyticsPageCacheTtlMs({})).toBe(
+      DEFAULT_ANALYTICS_PAGE_CACHE_TTL_MINUTES * 60 * 1000,
+    );
+    expect(resolveAnalyticsPageCacheTtlMs({ ANALYTICS_PAGE_CACHE_TTL_MINUTES: "30" })).toBe(
+      30 * 60 * 1000,
+    );
+  });
+
+  it("rejects invalid analytics page cache TTL values", () => {
+    expect(() => resolveAnalyticsPageCacheTtlMs({ ANALYTICS_PAGE_CACHE_TTL_MINUTES: "0" })).toThrow(
+      "ANALYTICS_PAGE_CACHE_TTL_MINUTES must be a positive integer",
+    );
+
+    expect(() =>
+      resolveAnalyticsPageCacheTtlMs({ ANALYTICS_PAGE_CACHE_TTL_MINUTES: "NaN" }),
+    ).toThrow("ANALYTICS_PAGE_CACHE_TTL_MINUTES must be a positive integer");
   });
 });
