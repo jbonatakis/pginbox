@@ -72,16 +72,6 @@
             <span class="thread-activity-label">Last activity</span>
             <span class="thread-activity">{formatDateTime(thread.last_activity_at)}</span>
           </div>
-
-          <div class="thread-actions">
-            {#if thread.has_unread}
-              <a
-                href={getTrackedThreadResumeUrl(thread)}
-                class="thread-action primary"
-                on:click={(event) => onLinkClick(event, getTrackedThreadResumeUrl(thread))}
-              >Resume</a>
-            {/if}
-          </div>
         </li>
       {/each}
     </ul>
@@ -213,14 +203,6 @@
     color: #486581;
   }
 
-  .thread-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    flex-wrap: wrap;
-  }
-
-  .thread-action,
   .primary-button {
     display: inline-flex;
     align-items: center;
@@ -234,26 +216,12 @@
     text-decoration: none;
   }
 
-  .thread-action {
-    border: 1px solid #d9e2ec;
-    background: rgba(255, 255, 255, 0.88);
-    color: #334e68;
-  }
-
-  .thread-action:hover {
-    background: #f0f7ff;
-    border-color: #9fb3c8;
-    color: #243b53;
-  }
-
-  .thread-action.primary,
   .primary-button {
     border: 1px solid #6f9fdd;
     background: #e8f2ff;
     color: #0b4ea2;
   }
 
-  .thread-action.primary:hover,
   .primary-button:hover {
     background: #dcebff;
   }
