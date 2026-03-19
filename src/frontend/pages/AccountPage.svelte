@@ -603,7 +603,11 @@
 
   .primary-button:disabled {
     opacity: 0.7;
-    cursor: wait;
+    cursor: default;
+  }
+
+  .primary-button:disabled:hover {
+    background: #e8f2ff;
   }
 
   .secondary-link {
