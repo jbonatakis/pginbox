@@ -143,6 +143,17 @@ export interface ThreadReadProgress {
   user_id: Int8;
 }
 
+export interface ThreadTracking {
+  anchor_message_id: Int8;
+  created_at: Generated<Timestamp>;
+  manual_followed_at: Timestamp | null;
+  participated_at: Timestamp | null;
+  participation_suppressed_at: Timestamp | null;
+  thread_id: string;
+  updated_at: Generated<Timestamp>;
+  user_id: Int8;
+}
+
 export interface Threads {
   last_activity_at: Timestamp | null;
   list_id: number;
@@ -184,6 +195,7 @@ export interface DB {
   schema_migrations: SchemaMigrations;
   thread_follows: ThreadFollows;
   thread_read_progress: ThreadReadProgress;
+  thread_tracking: ThreadTracking;
   threads: Threads;
   users: Users;
 }

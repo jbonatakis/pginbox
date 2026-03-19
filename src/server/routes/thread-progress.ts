@@ -6,6 +6,8 @@ import {
   getProgress,
   advanceProgress,
   markRead,
+  removeThreadFromMyThreads,
+  addThreadBackToMyThreads,
 } from "../services/thread-progress.service";
 
 function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTarget {
@@ -43,6 +45,28 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       return unfollowThread(user.id, params.threadId);
+    },
+    {
+      params: t.Object({ threadId: t.String() }),
+    }
+  )
+  .delete(
+    "/my-thread",
+    async ({ params, request, set }) => {
+      const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
+      const { user } = await requireAuth(resolved);
+      return removeThreadFromMyThreads(user.id, params.threadId);
+    },
+    {
+      params: t.Object({ threadId: t.String() }),
+    }
+  )
+  .post(
+    "/my-thread",
+    async ({ params, request, set }) => {
+      const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
+      const { user } = await requireAuth(resolved);
+      return addThreadBackToMyThreads(user.id, params.threadId);
     },
     {
       params: t.Object({ threadId: t.String() }),

@@ -56,6 +56,9 @@ def test_store_batch_live_refreshes_threads_after_message_insert(ingest, monkeyp
     def fake_refresh_threads_for_message_ids(cur, list_id, message_ids):
         events.append(("refresh_threads", list_id, message_ids))
 
+    def fake_auto_track_participation_for_inserted_messages(cur, inserted_message_ids):
+        events.append(("auto_track_participation", inserted_message_ids))
+
     def fake_insert_attachments(cur, pending_batch, inserted_message_ids=None):
         events.append(
             (
@@ -72,6 +75,11 @@ def test_store_batch_live_refreshes_threads_after_message_insert(ingest, monkeyp
     monkeypatch.setattr(
         ingest, "_refresh_threads_for_message_ids", fake_refresh_threads_for_message_ids
     )
+    monkeypatch.setattr(
+        ingest,
+        "_auto_track_participation_for_inserted_messages",
+        fake_auto_track_participation_for_inserted_messages,
+    )
     monkeypatch.setattr(ingest, "_insert_attachments", fake_insert_attachments)
 
     ingest.store_batch_live(FakeConn(), batch)
@@ -80,11 +88,84 @@ def test_store_batch_live_refreshes_threads_after_message_insert(ingest, monkeyp
         ("resolve", ["<message@example.com>"]),
         ("insert_messages", ["<message@example.com>"]),
         ("refresh_threads", 23, ["<message@example.com>"]),
+        ("auto_track_participation", {"<message@example.com>": 101}),
         (
             "insert_attachments",
             ["<message@example.com>"],
             {"<message@example.com>": 101},
         ),
+        ("commit",),
+    ]
+
+
+def test_store_batch_backfill_does_not_auto_track_participation(ingest, monkeypatch):
+    events = []
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def __init__(self):
+            self._cursor = FakeCursor()
+
+        def cursor(self):
+            return self._cursor
+
+        def commit(self):
+            events.append(("commit",))
+
+    batch = [
+        {
+            "message_id": "<message@example.com>",
+            "thread_id": "<thread@example.com>",
+            "list_id": 23,
+            "sent_at": ts(1),
+            "sent_at_approx": False,
+            "from_name": "",
+            "from_email": "",
+            "subject": "Subject",
+            "in_reply_to": None,
+            "refs": None,
+            "body": "Body",
+            "_attachments": [],
+            "_normalized_subject": "Subject",
+        }
+    ]
+
+    def fake_resolve_batch_thread_ids(conn, pending_batch):
+        events.append(("resolve", [record["message_id"] for record in pending_batch]))
+
+    def fake_insert_messages(cur, pending_batch):
+        events.append(("insert_messages", [record["message_id"] for record in pending_batch]))
+        return {"<message@example.com>": 101}
+
+    def fake_insert_attachments(cur, pending_batch, inserted_message_ids=None):
+        events.append(("insert_attachments", inserted_message_ids))
+
+    def fail_auto_track(*args, **kwargs):
+        raise AssertionError("backfill should not auto-track participation")
+
+    monkeypatch.setattr(
+        ingest, "_resolve_batch_thread_ids", fake_resolve_batch_thread_ids
+    )
+    monkeypatch.setattr(ingest, "_insert_messages", fake_insert_messages)
+    monkeypatch.setattr(ingest, "_insert_attachments", fake_insert_attachments)
+    monkeypatch.setattr(
+        ingest,
+        "_auto_track_participation_for_inserted_messages",
+        fail_auto_track,
+    )
+
+    ingest.store_batch_backfill(FakeConn(), batch)
+
+    assert events == [
+        ("resolve", ["<message@example.com>"]),
+        ("insert_messages", ["<message@example.com>"]),
+        ("insert_attachments", {"<message@example.com>": 101}),
         ("commit",),
     ]
 
@@ -253,6 +334,64 @@ def test_store_batch_overwrite_rewrites_messages_and_attachments(ingest, monkeyp
         ),
         ("commit",),
     ]
+
+
+def test_store_batch_overwrite_does_not_auto_track_participation(ingest, monkeypatch):
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeConn:
+        def __init__(self):
+            self._cursor = FakeCursor()
+
+        def cursor(self):
+            return self._cursor
+
+        def commit(self):
+            return None
+
+    batch = [
+        {
+            "message_id": "<message@example.com>",
+            "thread_id": "<thread@example.com>",
+            "list_id": 23,
+            "sent_at": ts(1),
+            "sent_at_approx": False,
+            "from_name": "",
+            "from_email": "",
+            "subject": "Subject",
+            "in_reply_to": None,
+            "refs": None,
+            "body": "Body",
+            "_attachments": [],
+            "_normalized_subject": "Subject",
+        }
+    ]
+
+    monkeypatch.setattr(
+        ingest,
+        "_resolve_batch_thread_ids",
+        lambda conn, pending_batch: None,
+    )
+    monkeypatch.setattr(ingest, "_overwrite_messages", lambda cur, pending_batch: {})
+    monkeypatch.setattr(
+        ingest,
+        "_replace_attachments_for_ids",
+        lambda cur, pending_batch, id_map, target_db_ids=None: {},
+    )
+    monkeypatch.setattr(
+        ingest,
+        "_auto_track_participation_for_inserted_messages",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("overwrite should not auto-track participation")
+        ),
+    )
+
+    ingest.store_batch_overwrite(FakeConn(), batch)
 
 
 def test_insert_attachments_only_uses_newly_inserted_message_ids(ingest, monkeypatch):

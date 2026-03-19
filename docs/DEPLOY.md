@@ -49,6 +49,36 @@ Create a `.env` in the repo (or set in the shell) with:
 
 Do **not** commit `.env`; it’s in `.gitignore`.
 
+## Post-deploy one-offs
+
+### My Threads historical rollout
+
+After the `thread_tracking` schema migration is up and the new API build is deployed,
+run the one-time historical `My Threads` backfill manually from any machine that can
+reach the production database:
+
+```bash
+export DATABASE_URL="postgresql://..."
+make my-threads-backfill BATCH_SIZE=250
+```
+
+Direct Bun entrypoint:
+
+```bash
+bun run my-threads:backfill -- --batch-size 250
+```
+
+Operational notes:
+
+- the job is intentionally outside the migration path and safe to rerun
+- it scans active verified users in batches and logs one line per batch
+- `progress_seeded` should trend toward `0` on reruns because existing
+  `thread_read_progress` rows are preserved
+- use `MAX_USERS=...` for a partial run or `START_AFTER_USER_ID=...` to resume after an
+  interruption
+- on the initial rollout, missing progress rows are seeded to each thread's current
+  latest message so the launch is quiet instead of surfacing historical unread backlogs
+
 ## Ingestion
 
 Ingestion is **not** in this stack. Run it from a machine that can reach Supabase and postgresql.org (e.g. your laptop or a cron job elsewhere):

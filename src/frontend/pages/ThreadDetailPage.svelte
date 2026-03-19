@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ThreadDetail, ThreadProgress } from "shared/api";
+  import type { ThreadDetail, ThreadFollowState, ThreadProgress } from "shared/api";
   import { onDestroy, tick } from "svelte";
   import { get } from "svelte/store";
   import ErrorState from "../components/ErrorState.svelte";
@@ -8,6 +8,11 @@
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
   import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
+  import {
+    getThreadDetailTrackingView,
+    mergeThreadProgressTrackingState,
+    type ThreadDetailTrackingView,
+  } from "../lib/threadDetailTracking";
   import { authStore } from "../lib/state/auth";
   import {
     parseThreadDetailPage,
@@ -15,7 +20,7 @@
     serializeThreadsDetailContext,
     withThreadDetailPage,
   } from "../lib/state/threadsQuery";
-  import { navigate, onLinkClick, threadDetailPath, threadsPath } from "../router";
+  import { navigate, onLinkClick, threadsPath } from "../router";
 
   type ThreadDetailStatus = "idle" | "loading" | "success" | "error";
   type LoadMode = "navigate" | "refresh" | "replace";
@@ -52,6 +57,7 @@
   let backToThreadsPath = threadsPath;
   let lastAppliedHashAnchorKey: string | null = null;
   let retryNavigateOptions: LoadThreadOptions = {};
+  let trackingView: ThreadDetailTrackingView | null = null;
 
   const threadSubject = (subject: string | null): string => {
     const normalized = subject?.trim() ?? "";
@@ -312,16 +318,9 @@
 
   const resumeReading = (event: MouseEvent): void => {
     event.preventDefault();
-    if (!progress?.isFollowed || !progress.firstUnreadMessageId) return;
+    if (trackingView === null || trackingView.resumeTarget === null) return;
 
-    const targetThreadId = progress.threadId;
-    const targetPage = progress.resumePage ?? progress.latestPage;
-    const anchorId = `message-${progress.firstUnreadMessageId}`;
-    const targetPath = threadDetailPath(targetThreadId);
-    const targetUrl =
-      targetPage < progress.latestPage
-        ? `${targetPath}?page=${targetPage}#${anchorId}`
-        : `${targetPath}#${anchorId}`;
+    const { anchorId, targetPage, targetThreadId, targetUrl } = trackingView.resumeTarget;
 
     if (targetThreadId !== threadId) {
       navigate(targetUrl);
@@ -348,7 +347,7 @@
   };
 
   const markRead = async (): Promise<void> => {
-    if (isBannerBusy || !progress?.isFollowed) return;
+    if (isBannerBusy || trackingView === null || !trackingView.showMarkRead) return;
     isBannerBusy = true;
     try {
       progress = await api.threads.markRead(progress?.threadId ?? threadId);
@@ -361,15 +360,46 @@
   };
 
   const toggleFollow = async (): Promise<void> => {
-    if (isBannerBusy || !progress) return;
+    if (isBannerBusy || !progress || trackingView === null) return;
     isBannerBusy = true;
     try {
       const result = progress.isFollowed
         ? await api.threads.unfollow(progress.threadId)
         : await api.threads.follow(progress.threadId);
-      const refreshedProgress = await fetchProgress(threadId);
-      progress = refreshedProgress ?? { ...progress, isFollowed: result.isFollowed };
-      progressRequestedThreadId = threadId;
+      await refreshProgressFromTrackingState(result);
+    } catch {
+      // silently ignore
+    } finally {
+      isBannerBusy = false;
+    }
+  };
+
+  const refreshProgressFromTrackingState = async (nextState: ThreadFollowState): Promise<void> => {
+    if (!progress) return;
+    const refreshedProgress = await fetchProgress(threadId);
+    progress = refreshedProgress ?? mergeThreadProgressTrackingState(progress, nextState);
+    progressRequestedThreadId = threadId;
+  };
+
+  const removeFromMyThreads = async (): Promise<void> => {
+    if (isBannerBusy || !progress || trackingView === null || !trackingView.showRemoveFromMyThreads) return;
+    isBannerBusy = true;
+    try {
+      const result = await api.threads.removeFromMyThreads(progress.threadId);
+      await refreshProgressFromTrackingState(result);
+    } catch {
+      // silently ignore
+    } finally {
+      isBannerBusy = false;
+    }
+  };
+
+  const addBackToMyThreads = async (): Promise<void> => {
+    if (isBannerBusy || !progress || trackingView === null || !trackingView.showAddBackToMyThreads) return;
+    isBannerBusy = true;
+    try {
+      const result = await api.threads.addBackToMyThreads(progress.threadId);
+      await refreshProgressFromTrackingState(result);
     } catch {
       // silently ignore
     } finally {
@@ -477,6 +507,11 @@
     status === "error" &&
     (error?.status === 400 || error?.status === 422 || error?.code === "BAD_REQUEST");
   $: hashAnchorKey = thread ? currentHashAnchorKey(thread.messagePagination.page) : null;
+  $: trackingView = getThreadDetailTrackingView(
+    $authStore.isAuthenticated,
+    progress,
+    (count) => numberFormatter.format(count)
+  );
 
   $: if (hashAnchorKey === null) {
     lastAppliedHashAnchorKey = null;
@@ -572,22 +607,14 @@
       </dl>
     </article>
 
-    {#if $authStore.isAuthenticated && progress !== null}
+    {#if trackingView !== null}
       <div class="progress-banner">
-        <span class="progress-banner-status">
-          {#if progress.isFollowed}
-            {#if progress.hasUnread}
-              {numberFormatter.format(progress.unreadCount)}
-              {progress.unreadCount === 1 ? "unread message" : "unread messages"}
-            {:else}
-              All caught up
-            {/if}
-          {:else}
-            Follow this thread to track unread messages.
-          {/if}
-        </span>
+        <div class="progress-banner-copy">
+          <span class="progress-banner-status">{trackingView.statusText}</span>
+          <p class="progress-banner-note">{trackingView.participationText}</p>
+        </div>
         <div class="progress-banner-actions">
-          {#if progress.isFollowed && progress.hasUnread && progress.firstUnreadMessageId !== null}
+          {#if trackingView.showResumeReading}
             <button
               class="banner-button banner-button--primary"
               type="button"
@@ -595,7 +622,7 @@
               on:click={resumeReading}
             >Resume reading</button>
           {/if}
-          {#if progress.isFollowed && progress.hasUnread}
+          {#if trackingView.showMarkRead}
             <button
               class="banner-button"
               type="button"
@@ -603,12 +630,28 @@
               on:click={markRead}
             >Mark as read</button>
           {/if}
+          {#if trackingView.showRemoveFromMyThreads}
+            <button
+              class="banner-button"
+              type="button"
+              disabled={isBusy || isBannerBusy}
+              on:click={removeFromMyThreads}
+            >Remove from My Threads</button>
+          {/if}
+          {#if trackingView.showAddBackToMyThreads}
+            <button
+              class="banner-button"
+              type="button"
+              disabled={isBusy || isBannerBusy}
+              on:click={addBackToMyThreads}
+            >Add back to My Threads</button>
+          {/if}
           <button
             class="banner-button banner-button--follow"
             type="button"
             disabled={isBusy || isBannerBusy}
             on:click={toggleFollow}
-          >{progress.isFollowed ? "Unfollow" : "Follow"}</button>
+          >{trackingView.followButtonLabel}</button>
         </div>
       </div>
     {/if}
@@ -631,10 +674,10 @@
       messages={thread.messages}
       startIndex={startIndex}
       totalCount={thread.message_count}
-      firstUnreadMessageId={progress?.firstUnreadMessageId ?? null}
-      threadId={progress?.threadId ?? threadId}
+      firstUnreadMessageId={trackingView?.timelineFirstUnreadMessageId ?? null}
+      threadId={trackingView?.timelineThreadId ?? threadId}
       isAuthenticated={$authStore.isAuthenticated}
-      trackReadProgress={progress?.isFollowed ?? false}
+      trackReadProgress={trackingView?.trackReadProgress ?? false}
     />
 
     <ThreadPageControls
@@ -764,11 +807,24 @@
     min-width: 0;
   }
 
-  .progress-banner-status {
+  .progress-banner-copy {
     flex: 1 1 auto;
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+
+  .progress-banner-status {
     font-size: 0.88rem;
     font-weight: 600;
     color: #102a43;
+  }
+
+  .progress-banner-note {
+    margin: 0;
+    color: #486581;
+    font-size: 0.82rem;
+    line-height: 1.35;
   }
 
   .progress-banner-actions {
