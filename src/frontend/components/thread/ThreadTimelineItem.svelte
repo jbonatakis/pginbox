@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import type { MessageWithAttachments } from "shared/api";
   import { parseMessageBody, type MessageBodyBlock } from "../../lib/messageBody";
+  import { postgresqlArchiveMessageUrl } from "../../lib/postgresqlArchive";
   import ThreadMessageAttachments from "./ThreadMessageAttachments.svelte";
 
   export let message: MessageWithAttachments;
@@ -14,6 +15,7 @@
   let validTimestamp = false;
   let sentAtLabel = "Unknown time";
   let bodyBlocks: MessageBodyBlock[] = [];
+  let archiveUrl: string | null = null;
   const dispatch = createEventDispatcher<{ toggle: void }>();
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -59,6 +61,7 @@
   $: validTimestamp = isValidTimestamp(message.sent_at);
   $: sentAtLabel = timestampLabel(message.sent_at);
   $: bodyBlocks = parseMessageBody(message.body);
+  $: archiveUrl = postgresqlArchiveMessageUrl(message.message_id);
 </script>
 
 <article class="timeline-item" id={anchorId} aria-labelledby={`${anchorId}-heading`}>
@@ -102,6 +105,18 @@
         <time datetime={message.sent_at}>{sentAtLabel}</time>
       {:else}
         <span>{sentAtLabel}</span>
+      {/if}
+      {#if archiveUrl}
+        <span aria-hidden="true">·</span>
+        <a
+          class="meta-link"
+          href={archiveUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open original message in PostgreSQL mailing archive"
+        >
+          View in archive
+        </a>
       {/if}
     </p>
 
@@ -240,6 +255,23 @@
   .meta time,
   .meta span {
     overflow-wrap: anywhere;
+  }
+
+  .meta-link {
+    color: #627d98;
+    font-weight: 500;
+    text-decoration-thickness: 1px;
+    text-decoration-color: rgba(98, 125, 152, 0.45);
+  }
+
+  .meta-link:hover {
+    color: #486581;
+    text-decoration-color: currentColor;
+  }
+
+  .meta-link:focus-visible {
+    outline: 2px solid #0b4ea2;
+    outline-offset: 2px;
   }
 
   .subject {
