@@ -43,7 +43,13 @@
   }
 
   let overlayElement: HTMLDivElement | null = null;
+  let patchPreviewElement: HTMLDivElement | null = null;
+  let textPreviewElement: HTMLPreElement | null = null;
+  let scrollAnimationFrame: number | null = null;
+  let scrollDirection = 0;
+  let lastScrollFrameAt = 0;
   let isFullscreen = false;
+  let prefersReducedMotion = false;
   let supportsFullscreen = false;
 
   const attachmentName = (value: AttachmentSummary): string => {
@@ -257,6 +263,75 @@
     }
   };
 
+  const activeScrollContainer = (): HTMLElement | null => patchPreviewElement ?? textPreviewElement;
+
+  const scrollPreviewBy = (deltaY: number): void => {
+    const container = activeScrollContainer();
+    if (!container) return;
+    container.scrollBy({
+      top: deltaY,
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+    });
+  };
+
+  const previewScrollStep = (): number => {
+    const container = activeScrollContainer();
+    if (!container) return 96;
+    return Math.max(72, Math.round(container.clientHeight * 0.12));
+  };
+
+  const continuousScrollSpeed = (): number => {
+    const container = activeScrollContainer();
+    if (!container) return 7200;
+    return Math.max(7200, container.clientHeight * 8);
+  };
+
+  const stopContinuousScroll = (): void => {
+    scrollDirection = 0;
+    lastScrollFrameAt = 0;
+    if (scrollAnimationFrame !== null) {
+      cancelAnimationFrame(scrollAnimationFrame);
+      scrollAnimationFrame = null;
+    }
+  };
+
+  const stepContinuousScroll = (timestamp: number): void => {
+    if (scrollDirection === 0) {
+      scrollAnimationFrame = null;
+      lastScrollFrameAt = 0;
+      return;
+    }
+
+    const container = activeScrollContainer();
+    if (!container) {
+      stopContinuousScroll();
+      return;
+    }
+
+    if (lastScrollFrameAt === 0) {
+      lastScrollFrameAt = timestamp;
+    } else {
+      const deltaMs = Math.min(32, timestamp - lastScrollFrameAt);
+      lastScrollFrameAt = timestamp;
+      container.scrollTop += (continuousScrollSpeed() * deltaMs * scrollDirection) / 1000;
+    }
+
+    scrollAnimationFrame = requestAnimationFrame(stepContinuousScroll);
+  };
+
+  const startContinuousScroll = (direction: 1 | -1): void => {
+    if (prefersReducedMotion) {
+      scrollPreviewBy(previewScrollStep() * direction);
+      return;
+    }
+
+    scrollDirection = direction;
+    if (scrollAnimationFrame !== null) return;
+
+    lastScrollFrameAt = 0;
+    scrollAnimationFrame = requestAnimationFrame(stepContinuousScroll);
+  };
+
   const close = (): void => {
     if (document.fullscreenElement === overlayElement) {
       void document.exitFullscreen().finally(() => {
@@ -299,6 +374,30 @@
       return;
     }
 
+    if ((event.key === "h" || event.key === "H") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      goPrevious();
+      return;
+    }
+
+    if ((event.key === "l" || event.key === "L") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      goNext();
+      return;
+    }
+
+    if ((event.key === "j" || event.key === "J") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      startContinuousScroll(1);
+      return;
+    }
+
+    if ((event.key === "k" || event.key === "K") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      startContinuousScroll(-1);
+      return;
+    }
+
     if (event.key === "ArrowLeft") {
       event.preventDefault();
       goPrevious();
@@ -308,6 +407,30 @@
     if (event.key === "ArrowRight") {
       event.preventDefault();
       goNext();
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      startContinuousScroll(1);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      startContinuousScroll(-1);
+    }
+  };
+
+  const handleKeyup = (event: KeyboardEvent): void => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+    const isDownScrollKey =
+      event.key === "ArrowDown" || event.key === "j" || event.key === "J";
+    const isUpScrollKey = event.key === "ArrowUp" || event.key === "k" || event.key === "K";
+
+    if ((isDownScrollKey && scrollDirection > 0) || (isUpScrollKey && scrollDirection < 0)) {
+      stopContinuousScroll();
     }
   };
 
@@ -319,28 +442,36 @@
   onMount(() => {
     const previousBodyOverflow = document.body.style.overflow;
     const previousHtmlOverflow = document.documentElement.style.overflow;
+    const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     const handleFullscreenChange = (): void => {
       syncFullscreenState();
+    };
+    const syncReducedMotionPreference = (): void => {
+      prefersReducedMotion = reducedMotionQuery.matches;
     };
 
     supportsFullscreen =
       typeof overlayElement?.requestFullscreen === "function" &&
       typeof document.exitFullscreen === "function";
     syncFullscreenState();
+    syncReducedMotionPreference();
 
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
     document.addEventListener("fullscreenchange", handleFullscreenChange);
+    reducedMotionQuery.addEventListener("change", syncReducedMotionPreference);
 
     return () => {
+      stopContinuousScroll();
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      reducedMotionQuery.removeEventListener("change", syncReducedMotionPreference);
       document.body.style.overflow = previousBodyOverflow;
       document.documentElement.style.overflow = previousHtmlOverflow;
     };
   });
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window on:blur={stopContinuousScroll} on:keydown={handleKeydown} on:keyup={handleKeyup} />
 
 <div
   bind:this={overlayElement}
@@ -399,7 +530,12 @@
     {:else if content === null || content === ""}
       <p class="status">No extracted attachment preview is available.</p>
     {:else if showPatchPreview}
-      <div class="patch-preview" role="region" aria-label="Patch preview">
+      <div
+        bind:this={patchPreviewElement}
+        class="patch-preview"
+        role="region"
+        aria-label="Patch preview"
+      >
         {#each patchLines as line, index (`${index}:${line.kind}:${line.raw}`)}
           <div class={`patch-row patch-row-${line.kind}`}>
             <span class="line-no line-no-old">{formatLineNumber(line.oldLineNumber)}</span>
@@ -409,7 +545,7 @@
         {/each}
       </div>
     {:else}
-      <pre class="preview"><code>{content}</code></pre>
+      <pre bind:this={textPreviewElement} class="preview"><code>{content}</code></pre>
     {/if}
   </div>
 </div>
@@ -580,6 +716,7 @@
     margin: 0;
     padding: 1rem;
     overflow: auto;
+    scroll-behavior: smooth;
     background: #102a43;
     color: #f0f4f8;
     font-size: 0.84rem;
@@ -595,6 +732,7 @@
 
   .patch-preview {
     overflow: auto;
+    scroll-behavior: smooth;
     background: #f8fafc;
     color: #102a43;
     font-size: 0.84rem;
@@ -700,6 +838,13 @@
   .patch-row-remove .line-no {
     background: #fca5a5;
     color: #7f1d1d;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .preview,
+    .patch-preview {
+      scroll-behavior: auto;
+    }
   }
 
   @media (max-width: 640px) {
