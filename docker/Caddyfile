@@ -2,14 +2,15 @@
 # Canonical host is the bare domain.
 
 www.pginbox.dev {
-    redir https://pginbox.dev{uri} permanent
+	redir https://pginbox.dev{uri} permanent
 }
 
 pginbox.dev {
-    handle_path /api/* {
-        reverse_proxy api:3000
-    }
-    handle {
-        reverse_proxy frontend:80
-    }
+	handle_path /api/* {
+		reverse_proxy api:3000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
 }
