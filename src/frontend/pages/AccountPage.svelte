@@ -11,7 +11,6 @@
     createTrackedThreadTabsController,
     getTrackedThreadEmptyMessage,
     getTrackedThreadTabLabel,
-    getTrackedThreadTabTitle,
     TRACKED_THREAD_TABS,
     type TrackedThreadTab,
   } from "../lib/trackedThreads";
@@ -398,10 +397,6 @@
           role="tabpanel"
           aria-labelledby={"tracked-thread-tab-" + activeTrackedThreadTab}
         >
-          <h3 class="tracked-thread-tab-heading">
-            {getTrackedThreadTabTitle(activeTrackedThreadTab)}
-          </h3>
-
           <TrackedThreadList
             tab={activeTrackedThreadTab}
             items={activeTrackedThreadState.items}
@@ -727,13 +722,6 @@
     display: grid;
     gap: 0.75rem;
     padding-top: 0.15rem;
-  }
-
-  .tracked-thread-tab-heading {
-    margin: 0;
-    color: #102a43;
-    font-size: 0.98rem;
-    line-height: 1.2;
   }
 
   @media (max-width: 640px) {
