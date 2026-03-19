@@ -156,8 +156,9 @@ describe("tracked-thread frontend helpers", () => {
     expect(getTrackedThreadLatestUrl(myUnreadThread)).toBe("/threads/pgsql%2Ffoo%20bar");
   });
 
-  it("fetches counts first and only loads the default followed tab on initialize", async () => {
+  it("fetches counts first, loads the default followed tab, and starts prefetching the inactive tab", async () => {
     const calls: string[] = [];
+    const myPage = deferred<Paginated<TrackedThread>>();
 
     const controller = createTrackedThreadTabsController({
       counts: async () => {
@@ -171,23 +172,31 @@ describe("tracked-thread frontend helpers", () => {
         },
         my: async () => {
           calls.push("my");
-          return page([trackedThread("my-1")], null);
+          return myPage.promise;
         },
       },
     });
 
     await controller.initialize();
 
-    const state = readState(controller.state);
+    let state = readState(controller.state);
 
-    expect(calls).toEqual(["counts", "followed"]);
+    expect(calls).toEqual(["counts", "followed", "my"]);
     expect(state.activeTab).toBe("followed");
     expect(state.tabs.followed.count).toBe(3);
     expect(state.tabs.my.count).toBe(7);
     expect(state.tabs.followed.items.map((item) => item.thread_id)).toEqual(["followed-1"]);
     expect(state.tabs.followed.nextCursor).toBe("followed-next");
-    expect(state.tabs.my.hasLoaded).toBe(false);
+    expect(state.tabs.my.hasLoaded).toBe(true);
+    expect(state.tabs.my.loading).toBe(true);
     expect(state.tabs.my.items).toEqual([]);
+
+    myPage.resolve(page([trackedThread("my-1")], null));
+    await flushPromises();
+
+    state = readState(controller.state);
+    expect(state.tabs.my.loading).toBe(false);
+    expect(state.tabs.my.items.map((item) => item.thread_id)).toEqual(["my-1"]);
   });
 
   it("surfaces count fetch failures before any tab rows load", async () => {
@@ -254,7 +263,7 @@ describe("tracked-thread frontend helpers", () => {
     expect(state.tabs.followed.hasLoaded).toBe(false);
   });
 
-  it("lazy-loads the inactive tab only on first switch and does not refetch it on revisits", async () => {
+  it("prefetches the inactive tab after initialize and does not refetch it on revisits", async () => {
     let followedCalls = 0;
     let myCalls = 0;
 
@@ -343,7 +352,7 @@ describe("tracked-thread frontend helpers", () => {
       "followed-2",
     ]);
     expect(state.tabs.followed.nextCursor).toBeNull();
-    expect(state.tabs.my.items).toEqual([]);
+    expect(state.tabs.my.items.map((item) => item.thread_id)).toEqual(["my-1"]);
   });
 
   it("preserves a followed-thread error while My Threads can still load empty independently", async () => {

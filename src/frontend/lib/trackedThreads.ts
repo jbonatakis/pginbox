@@ -249,6 +249,14 @@ export function createTrackedThreadTabsController(
     }
   };
 
+  const prefetchInactiveTabs = (): void => {
+    for (const tab of TRACKED_THREAD_TABS) {
+      if (tab === state.activeTab) continue;
+      if (state.tabs[tab].count === 0) continue;
+      void loadTab(tab);
+    }
+  };
+
   return {
     state: readonly(store),
 
@@ -265,6 +273,7 @@ export function createTrackedThreadTabsController(
       if (initializePromise) return initializePromise;
       if (state.countsLoaded) {
         await loadTab(state.activeTab);
+        prefetchInactiveTabs();
         return;
       }
 
@@ -293,6 +302,7 @@ export function createTrackedThreadTabsController(
           );
 
           await loadTab(activeTab);
+          prefetchInactiveTabs();
         } catch (error) {
           setState((current) => ({
             ...current,
