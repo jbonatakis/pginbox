@@ -6,6 +6,7 @@ pgsql-hackers
 pgsql-bugs
 pgsql-docs
 pgsql-committers
+pgsql-www
 
 # Users
 pgsql-general
