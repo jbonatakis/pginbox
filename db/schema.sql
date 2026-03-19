@@ -965,6 +965,13 @@ CREATE INDEX idx_threads_list_id ON public.threads USING btree (list_id);
 
 
 --
+-- Name: idx_threads_page_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_threads_page_order ON public.threads USING btree (last_activity_at DESC NULLS LAST, thread_id);
+
+
+--
 -- Name: idx_threads_subject_trgm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1112,4 +1119,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260317000011'),
     ('20260317000012'),
     ('20260317000013'),
-    ('20260318000014');
+    ('20260318000014'),
+    ('20260319000015');
