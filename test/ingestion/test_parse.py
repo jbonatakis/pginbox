@@ -111,3 +111,52 @@ Second message.
         "Jack\n"
     )
     assert records[1]["message_id"] == "<next@example.com>"
+
+
+def test_parse_mbox_prefers_message_date_header_over_mbox_separator_timestamp(
+    ingest, tmp_path
+):
+    path = tmp_path / "pgsql-hackers.202508"
+    path.write_text(
+        """From pgsql-hackers-owner+archive@lists.postgresql.org Thu Aug 07 17:16:16 2025
+Date: Thu, 7 Aug 2025 12:46:47 -0400
+From: Mat Arye <mat@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Read-only connection mode for AI workflows.
+Message-ID: <root@example.com>
+Content-Type: text/plain; charset=utf-8
+
+Hello.
+""",
+        encoding="utf-8",
+    )
+
+    records = list(ingest.parse_mbox(path, list_id=1))
+
+    assert len(records) == 1
+    assert records[0]["sent_at"].isoformat() == "2025-08-07T12:46:47-04:00"
+    assert records[0]["sent_at_approx"] is False
+
+
+def test_parse_mbox_falls_back_to_mbox_separator_timestamp_when_date_header_is_missing(
+    ingest, tmp_path
+):
+    path = tmp_path / "pgsql-hackers.202508"
+    path.write_text(
+        """From pgsql-hackers-owner+archive@lists.postgresql.org Thu Aug 07 17:16:16 2025
+From: Mat Arye <mat@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Read-only connection mode for AI workflows.
+Message-ID: <root@example.com>
+Content-Type: text/plain; charset=utf-8
+
+Hello.
+""",
+        encoding="utf-8",
+    )
+
+    records = list(ingest.parse_mbox(path, list_id=1))
+
+    assert len(records) == 1
+    assert records[0]["sent_at"].isoformat() == "2025-08-07T17:16:16"
+    assert records[0]["sent_at_approx"] is False

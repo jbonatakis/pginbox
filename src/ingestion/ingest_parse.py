@@ -327,21 +327,21 @@ def parse_mbox(path: Path, list_id: int):
 
         sent_at = None
         used_date_header = False
-        from_line = msg.get_from() or ""
-        from_line_parts = from_line.split(" ", 1)
-        if len(from_line_parts) == 2:
+        date_str = msg.get("Date") or ""
+        if date_str:
             try:
-                parsed = email.utils.parsedate_to_datetime(from_line_parts[1])
-                if parsed.year > 2001:
-                    sent_at = parsed
+                sent_at = email.utils.parsedate_to_datetime(date_str)
+                used_date_header = True
             except Exception:
                 pass
         if sent_at is None:
-            date_str = msg.get("Date") or ""
-            if date_str:
+            from_line = msg.get_from() or ""
+            from_line_parts = from_line.split(" ", 1)
+            if len(from_line_parts) == 2:
                 try:
-                    sent_at = email.utils.parsedate_to_datetime(date_str)
-                    used_date_header = True
+                    parsed = email.utils.parsedate_to_datetime(from_line_parts[1])
+                    if parsed.year > 2001:
+                        sent_at = parsed
                 except Exception:
                     pass
         sent_at_approx = False
