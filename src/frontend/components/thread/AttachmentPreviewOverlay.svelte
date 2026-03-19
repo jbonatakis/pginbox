@@ -45,6 +45,8 @@
   let overlayElement: HTMLDivElement | null = null;
   let patchPreviewElement: HTMLDivElement | null = null;
   let textPreviewElement: HTMLPreElement | null = null;
+  let pendingCount = "";
+  let pendingGoToTop = false;
   let scrollAnimationFrame: number | null = null;
   let scrollDirection = 0;
   let lastScrollFrameAt = 0;
@@ -265,12 +267,77 @@
 
   const activeScrollContainer = (): HTMLElement | null => patchPreviewElement ?? textPreviewElement;
 
+  const clearCommandBuffer = (): void => {
+    pendingCount = "";
+    pendingGoToTop = false;
+  };
+
+  const pendingCountValue = (): number | null => {
+    if (pendingCount.length === 0) return null;
+    const parsed = Number.parseInt(pendingCount, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+
+  const previewLineHeight = (): number => {
+    const patchFirstRow = patchPreviewElement?.firstElementChild;
+    if (patchFirstRow instanceof HTMLElement) {
+      const rowHeight = patchFirstRow.getBoundingClientRect().height;
+      if (rowHeight > 0) return rowHeight;
+    }
+
+    const container = activeScrollContainer();
+    if (!container) return 24;
+
+    const computedStyle = window.getComputedStyle(container);
+    const explicitLineHeight = Number.parseFloat(computedStyle.lineHeight);
+    if (Number.isFinite(explicitLineHeight) && explicitLineHeight > 0) {
+      return explicitLineHeight;
+    }
+
+    const fontSize = Number.parseFloat(computedStyle.fontSize);
+    if (Number.isFinite(fontSize) && fontSize > 0) {
+      return fontSize * 1.45;
+    }
+
+    return 24;
+  };
+
   const scrollPreviewBy = (deltaY: number): void => {
     const container = activeScrollContainer();
     if (!container) return;
     container.scrollBy({
       top: deltaY,
       behavior: prefersReducedMotion ? "auto" : "smooth",
+    });
+  };
+
+  const scrollPreviewByLines = (lineCount: number): void => {
+    const container = activeScrollContainer();
+    if (!container || lineCount === 0) return;
+
+    container.scrollBy({
+      top: previewLineHeight() * lineCount,
+      behavior: "auto",
+    });
+  };
+
+  const scrollPreviewToLine = (lineNumber: number): void => {
+    const container = activeScrollContainer();
+    if (!container) return;
+
+    container.scrollTo({
+      top: previewLineHeight() * Math.max(0, lineNumber - 1),
+      behavior: "auto",
+    });
+  };
+
+  const scrollPreviewToEdge = (edge: "top" | "bottom"): void => {
+    const container = activeScrollContainer();
+    if (!container) return;
+
+    container.scrollTo({
+      top: edge === "top" ? 0 : container.scrollHeight,
+      behavior: "auto",
     });
   };
 
@@ -333,6 +400,7 @@
   };
 
   const close = (): void => {
+    clearCommandBuffer();
     if (document.fullscreenElement === overlayElement) {
       void document.exitFullscreen().finally(() => {
         dispatch("close");
@@ -358,8 +426,14 @@
   };
 
   const handleKeydown = (event: KeyboardEvent): void => {
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      clearCommandBuffer();
+      return;
+    }
+
     if (event.key === "Escape") {
       event.preventDefault();
+      clearCommandBuffer();
       if (isFullscreen) {
         void exitFullscreen();
       } else {
@@ -368,58 +442,137 @@
       return;
     }
 
-    if ((event.key === "f" || event.key === "F") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (/^[1-9]$/.test(event.key) || (event.key === "0" && pendingCount.length > 0)) {
       event.preventDefault();
+      stopContinuousScroll();
+      pendingCount = `${pendingCount}${event.key}`;
+      pendingGoToTop = false;
+      return;
+    }
+
+    if (event.key === "g") {
+      event.preventDefault();
+      stopContinuousScroll();
+
+      if (pendingGoToTop) {
+        const count = pendingCountValue();
+        if (count !== null) {
+          scrollPreviewToLine(count);
+        } else {
+          scrollPreviewToEdge("top");
+        }
+        clearCommandBuffer();
+      } else {
+        pendingGoToTop = true;
+      }
+      return;
+    }
+
+    if (event.key === "G") {
+      event.preventDefault();
+      stopContinuousScroll();
+      const count = pendingCountValue();
+      if (count !== null) {
+        scrollPreviewToLine(count);
+      } else {
+        scrollPreviewToEdge("bottom");
+      }
+      clearCommandBuffer();
+      return;
+    }
+
+    if (event.key === "f" || event.key === "F") {
+      event.preventDefault();
+      clearCommandBuffer();
       void toggleFullscreen();
       return;
     }
 
-    if ((event.key === "h" || event.key === "H") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.key === "h" || event.key === "H") {
       event.preventDefault();
+      clearCommandBuffer();
       goPrevious();
       return;
     }
 
-    if ((event.key === "l" || event.key === "L") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.key === "l" || event.key === "L") {
       event.preventDefault();
+      clearCommandBuffer();
       goNext();
       return;
     }
 
-    if ((event.key === "j" || event.key === "J") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.key === "j" || event.key === "J") {
       event.preventDefault();
-      startContinuousScroll(1);
+      const count = pendingCountValue();
+      if (count !== null) {
+        stopContinuousScroll();
+        scrollPreviewByLines(count);
+        clearCommandBuffer();
+      } else {
+        pendingGoToTop = false;
+        startContinuousScroll(1);
+      }
       return;
     }
 
-    if ((event.key === "k" || event.key === "K") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.key === "k" || event.key === "K") {
       event.preventDefault();
-      startContinuousScroll(-1);
+      const count = pendingCountValue();
+      if (count !== null) {
+        stopContinuousScroll();
+        scrollPreviewByLines(-count);
+        clearCommandBuffer();
+      } else {
+        pendingGoToTop = false;
+        startContinuousScroll(-1);
+      }
       return;
     }
 
     if (event.key === "ArrowLeft") {
       event.preventDefault();
+      clearCommandBuffer();
       goPrevious();
       return;
     }
 
     if (event.key === "ArrowRight") {
       event.preventDefault();
+      clearCommandBuffer();
       goNext();
       return;
     }
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      startContinuousScroll(1);
+      const count = pendingCountValue();
+      if (count !== null) {
+        stopContinuousScroll();
+        scrollPreviewByLines(count);
+        clearCommandBuffer();
+      } else {
+        pendingGoToTop = false;
+        startContinuousScroll(1);
+      }
       return;
     }
 
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      startContinuousScroll(-1);
+      const count = pendingCountValue();
+      if (count !== null) {
+        stopContinuousScroll();
+        scrollPreviewByLines(-count);
+        clearCommandBuffer();
+      } else {
+        pendingGoToTop = false;
+        startContinuousScroll(-1);
+      }
+      return;
     }
+
+    clearCommandBuffer();
   };
 
   const handleKeyup = (event: KeyboardEvent): void => {
