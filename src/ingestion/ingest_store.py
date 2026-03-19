@@ -131,6 +131,13 @@ PARTICIPATION_MATCHES_CTE = """
     )
 """
 
+ACTIVE_TRACKING_SQL = """
+    (
+        thread_tracking.manual_followed_at IS NOT NULL
+        OR thread_tracking.participation_suppressed_at IS NULL
+    )
+"""
+
 UPSERT_PARTICIPATION_TRACKING_SQL = (
     PARTICIPATION_MATCHES_CTE
     + """
@@ -179,11 +186,31 @@ SEED_PARTICIPATION_PROGRESS_SQL = (
         matched_messages.message_id,
         now()
     FROM matched_messages
+    INNER JOIN thread_tracking
+        ON thread_tracking.user_id = matched_messages.user_id
+       AND thread_tracking.thread_id = matched_messages.thread_id
     LEFT JOIN thread_read_progress
         ON thread_read_progress.user_id = matched_messages.user_id
        AND thread_read_progress.thread_id = matched_messages.thread_id
-    WHERE thread_read_progress.user_id IS NULL
+    WHERE """
+    + ACTIVE_TRACKING_SQL
+    + """
+      AND thread_read_progress.user_id IS NULL
     ON CONFLICT (user_id, thread_id) DO NOTHING
+"""
+)
+
+DELETE_INACTIVE_PARTICIPATION_PROGRESS_SQL = (
+    PARTICIPATION_MATCHES_CTE
+    + """
+    DELETE FROM thread_read_progress
+    USING thread_tracking, matched_messages
+    WHERE thread_read_progress.user_id = thread_tracking.user_id
+      AND thread_read_progress.thread_id = thread_tracking.thread_id
+      AND matched_messages.user_id = thread_tracking.user_id
+      AND matched_messages.thread_id = thread_tracking.thread_id
+      AND thread_tracking.manual_followed_at IS NULL
+      AND thread_tracking.participation_suppressed_at IS NOT NULL
 """
 )
 
@@ -201,6 +228,9 @@ ADVANCE_PARTICIPATION_PROGRESS_SQL = (
             existing_messages.sent_at AS existing_sent_at,
             existing_messages.thread_id AS existing_thread_id
         FROM matched_messages
+        INNER JOIN thread_tracking
+            ON thread_tracking.user_id = matched_messages.user_id
+           AND thread_tracking.thread_id = matched_messages.thread_id
         INNER JOIN thread_read_progress
             ON thread_read_progress.user_id = matched_messages.user_id
            AND thread_read_progress.thread_id = matched_messages.thread_id
@@ -208,6 +238,9 @@ ADVANCE_PARTICIPATION_PROGRESS_SQL = (
             ON candidate_messages.id = matched_messages.message_id
         LEFT JOIN messages AS existing_messages
             ON existing_messages.id = thread_read_progress.last_read_message_id
+        WHERE """
+    + ACTIVE_TRACKING_SQL
+    + """
     ),
     rows_to_advance AS (
         SELECT user_id, thread_id, candidate_message_id
@@ -618,6 +651,7 @@ def _auto_track_participation_for_inserted_messages(
     inserted_message_ids: dict[str, int],
     *,
     upsert_participation_tracking_sql=UPSERT_PARTICIPATION_TRACKING_SQL,
+    delete_inactive_participation_progress_sql=DELETE_INACTIVE_PARTICIPATION_PROGRESS_SQL,
     seed_participation_progress_sql=SEED_PARTICIPATION_PROGRESS_SQL,
     advance_participation_progress_sql=ADVANCE_PARTICIPATION_PROGRESS_SQL,
 ):
@@ -626,6 +660,7 @@ def _auto_track_participation_for_inserted_messages(
 
     inserted_db_ids = sorted(set(inserted_message_ids.values()))
     cur.execute(upsert_participation_tracking_sql, (inserted_db_ids,))
+    cur.execute(delete_inactive_participation_progress_sql, (inserted_db_ids,))
     cur.execute(seed_participation_progress_sql, (inserted_db_ids,))
     cur.execute(advance_participation_progress_sql, (inserted_db_ids,))
 

@@ -414,6 +414,92 @@ def test_live_ingest_preserves_manual_follow_and_suppression_while_advancing_pro
     assert progress == (reply_db_id,)
 
 
+def test_live_ingest_keeps_participation_only_thread_suppressed_and_deletes_progress(
+    ingest, live_ingest_db
+):
+    conn, token = live_ingest_db
+    user_email = f"{token}-suppressed@example.com"
+    user_id = insert_user(
+        conn,
+        email=user_email,
+        status="active",
+        email_verified_at=ts(1),
+    )
+    list_id = insert_list(conn, token)
+    root = make_record(
+        token,
+        list_id,
+        "root-suppressed",
+        sent_at=ts(2),
+        from_email=f"{token}-other@example.com",
+    )
+    ingest.store_batch_live(conn, [root])
+
+    root_db_id, thread_id = fetch_message(conn, root["message_id"])
+    participated_at = ts(3)
+    suppressed_at = ts(4)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO thread_tracking (
+                user_id,
+                thread_id,
+                anchor_message_id,
+                manual_followed_at,
+                participated_at,
+                participation_suppressed_at,
+                created_at,
+                updated_at
+            )
+            VALUES (%s, %s, %s, NULL, %s, %s, %s, %s)
+            """,
+            (
+                user_id,
+                thread_id,
+                root_db_id,
+                participated_at,
+                suppressed_at,
+                participated_at,
+                suppressed_at,
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO thread_read_progress (
+                user_id,
+                thread_id,
+                last_read_message_id,
+                updated_at
+            )
+            VALUES (%s, %s, %s, %s)
+            """,
+            (user_id, thread_id, root_db_id, participated_at),
+        )
+    conn.commit()
+
+    reply = make_record(
+        token,
+        list_id,
+        "reply-suppressed",
+        sent_at=ts(5),
+        from_email=user_email.upper(),
+        in_reply_to=root["message_id"],
+        refs=[root["message_id"]],
+    )
+    ingest.store_batch_live(conn, [reply])
+
+    reply_db_id, _ = fetch_message(conn, reply["message_id"])
+    tracking = fetch_tracking_row(conn, user_id, thread_id)
+    progress = fetch_progress_row(conn, user_id, thread_id)
+
+    assert tracking is not None
+    assert tracking[0] == reply_db_id
+    assert tracking[1] is None
+    assert tracking[2] == participated_at
+    assert tracking[3] == suppressed_at
+    assert progress is None
+
+
 def test_live_ingest_keeps_progress_when_existing_row_is_already_ahead(
     ingest, live_ingest_db
 ):
