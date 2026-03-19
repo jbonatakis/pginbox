@@ -42,6 +42,10 @@
     raw: string;
   }
 
+  let overlayElement: HTMLDivElement | null = null;
+  let isFullscreen = false;
+  let supportsFullscreen = false;
+
   const attachmentName = (value: AttachmentSummary): string => {
     const filename = value.filename?.trim() ?? "";
     if (filename.length > 0) return filename;
@@ -229,7 +233,38 @@
 
   const formatLineNumber = (value: number | null): string => (value === null ? "" : String(value));
 
+  const syncFullscreenState = (): void => {
+    isFullscreen = document.fullscreenElement === overlayElement;
+  };
+
+  const exitFullscreen = async (): Promise<void> => {
+    if (document.fullscreenElement !== overlayElement) return;
+    await document.exitFullscreen();
+  };
+
+  const toggleFullscreen = async (): Promise<void> => {
+    if (!overlayElement || !supportsFullscreen) return;
+
+    try {
+      if (document.fullscreenElement === overlayElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      await overlayElement.requestFullscreen();
+    } catch {
+      // Ignore user-agent rejections so preview navigation stays responsive.
+    }
+  };
+
   const close = (): void => {
+    if (document.fullscreenElement === overlayElement) {
+      void document.exitFullscreen().finally(() => {
+        dispatch("close");
+      });
+      return;
+    }
+
     dispatch("close");
   };
 
@@ -250,7 +285,17 @@
   const handleKeydown = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
       event.preventDefault();
-      close();
+      if (isFullscreen) {
+        void exitFullscreen();
+      } else {
+        close();
+      }
+      return;
+    }
+
+    if ((event.key === "f" || event.key === "F") && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      void toggleFullscreen();
       return;
     }
 
@@ -274,11 +319,21 @@
   onMount(() => {
     const previousBodyOverflow = document.body.style.overflow;
     const previousHtmlOverflow = document.documentElement.style.overflow;
+    const handleFullscreenChange = (): void => {
+      syncFullscreenState();
+    };
+
+    supportsFullscreen =
+      typeof overlayElement?.requestFullscreen === "function" &&
+      typeof document.exitFullscreen === "function";
+    syncFullscreenState();
 
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
 
     return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.body.style.overflow = previousBodyOverflow;
       document.documentElement.style.overflow = previousHtmlOverflow;
     };
@@ -287,7 +342,13 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="overlay" role="presentation" on:click={handleBackdropClick}>
+<div
+  bind:this={overlayElement}
+  class:overlay--fullscreen={isFullscreen}
+  class="overlay"
+  role="presentation"
+  on:click={handleBackdropClick}
+>
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="attachment-preview-title">
     <header class="dialog-header">
       <div class="header-copy">
@@ -312,6 +373,16 @@
           >
           <button class="nav-button" type="button" disabled={!canGoNext} on:click={goNext}>→</button>
         </div>
+        {#if supportsFullscreen}
+          <button
+            class="fullscreen-button"
+            type="button"
+            aria-pressed={isFullscreen}
+            on:click={() => void toggleFullscreen()}
+          >
+            {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          </button>
+        {/if}
         {#if attachment.has_content}
           <a class="download-button" href={attachmentDownloadPath(attachment.id)}>Download</a>
         {:else}
@@ -355,6 +426,11 @@
     overscroll-behavior: contain;
   }
 
+  .overlay--fullscreen {
+    padding: 0;
+    background: rgba(15, 23, 42, 0.9);
+  }
+
   .dialog {
     width: min(72rem, 100%);
     height: min(88vh, 60rem);
@@ -365,6 +441,14 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     overflow: hidden;
+  }
+
+  .overlay--fullscreen .dialog {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: 0;
+    box-shadow: none;
   }
 
   .dialog-header {
@@ -418,6 +502,7 @@
   }
 
   .nav-button,
+  .fullscreen-button,
   .download-button,
   .close-button {
     border: 1px solid #6f9fdd;
@@ -436,11 +521,16 @@
     cursor: pointer;
   }
 
+  .fullscreen-button {
+    cursor: pointer;
+  }
+
   .download-button {
     text-decoration: none;
   }
 
   .nav-button:hover:not(:disabled),
+  .fullscreen-button:hover,
   .download-button:hover,
   .close-button:hover {
     background: #dcedff;
@@ -463,6 +553,7 @@
   }
 
   .nav-button:focus-visible,
+  .fullscreen-button:focus-visible,
   .download-button:focus-visible,
   .close-button:focus-visible {
     outline: 2px solid #0b4ea2;
