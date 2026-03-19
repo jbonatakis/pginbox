@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "auth:cleanup": "bun src/server/jobs/auth-cleanup.ts",
+    "my-threads:backfill": "bun src/server/jobs/my-threads-historical-backfill.ts",
     "dev": "bun --watch src/server/index.ts",
     "dev:threads": "bun src/server/dev/test-threads.ts",
     "start": "bun src/server/index.ts",

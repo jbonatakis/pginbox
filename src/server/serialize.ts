@@ -11,7 +11,10 @@ import type {
   Message,
   MessageWithAttachments,
   Person,
+  TrackedThread,
+  TrackedThreadCounts,
   ThreadDetail,
+  ThreadProgress,
   ThreadMessagePagination,
   Thread,
   ThreadWithMessages,
@@ -23,6 +26,10 @@ function dateToIso(d: Date | string | null | undefined): string | null {
 
 function bigintToString(v: bigint | number | string): string {
   return String(v);
+}
+
+function nullableBigintToString(v: bigint | number | string | null | undefined): string | null {
+  return v == null ? null : bigintToString(v);
 }
 
 // Lists: already API-shaped (id number, name string)
@@ -80,8 +87,8 @@ type ThreadRow = {
   thread_id: string;
   list_id: number;
   subject: string | null;
-  started_at: Date | null;
-  last_activity_at: Date | null;
+  started_at: Date | string | null;
+  last_activity_at: Date | string | null;
   message_count: number;
   list_name: string;
   is_followed?: boolean | null;
@@ -103,6 +110,73 @@ export function toThread(row: ThreadRow): Thread {
   }
 
   return thread;
+}
+
+type ThreadProgressRow = {
+  threadId: string;
+  isFollowed: boolean;
+  isInMyThreads: boolean;
+  isMyThreadsSuppressed: boolean;
+  lastReadMessageId: bigint | number | string | null;
+  firstUnreadMessageId: bigint | number | string | null;
+  unreadCount: number;
+  hasUnread: boolean;
+  resumePage: number | null;
+  latestPage: number;
+};
+
+export function toThreadProgress(row: ThreadProgressRow): ThreadProgress {
+  return {
+    threadId: row.threadId,
+    isFollowed: row.isFollowed,
+    isInMyThreads: row.isInMyThreads,
+    isMyThreadsSuppressed: row.isMyThreadsSuppressed,
+    lastReadMessageId: nullableBigintToString(row.lastReadMessageId),
+    firstUnreadMessageId: nullableBigintToString(row.firstUnreadMessageId),
+    unreadCount: row.unreadCount,
+    hasUnread: row.hasUnread,
+    resumePage: row.resumePage,
+    latestPage: row.latestPage,
+  };
+}
+
+type TrackedThreadRow = ThreadRow & {
+  is_followed: boolean;
+  is_in_my_threads: boolean;
+  is_my_threads_suppressed: boolean;
+  last_read_message_id: bigint | number | string | null;
+  first_unread_message_id: bigint | number | string | null;
+  unread_count: number;
+  has_unread: boolean;
+  resume_page: number | null;
+  latest_page: number;
+};
+
+export function toTrackedThread(row: TrackedThreadRow): TrackedThread {
+  return {
+    ...toThread(row),
+    is_followed: row.is_followed,
+    is_in_my_threads: row.is_in_my_threads,
+    is_my_threads_suppressed: row.is_my_threads_suppressed,
+    last_read_message_id: nullableBigintToString(row.last_read_message_id),
+    first_unread_message_id: nullableBigintToString(row.first_unread_message_id),
+    unread_count: row.unread_count,
+    has_unread: row.has_unread,
+    resume_page: row.resume_page,
+    latest_page: row.latest_page,
+  };
+}
+
+type TrackedThreadCountsRow = {
+  followed_threads: bigint | number | string;
+  my_threads: bigint | number | string;
+};
+
+export function toTrackedThreadCounts(row: TrackedThreadCountsRow): TrackedThreadCounts {
+  return {
+    followedThreads: Number(row.followed_threads),
+    myThreads: Number(row.my_threads),
+  };
 }
 
 // Message: id and sent_at serialized

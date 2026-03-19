@@ -274,8 +274,8 @@
   }
 
   .follow-button.followed {
-    border-color: rgba(11, 78, 162, 0.34);
-    background: var(--primary-soft);
+    border-color: transparent;
+    background: transparent;
     color: var(--primary);
   }
 
@@ -286,8 +286,8 @@
   }
 
   .follow-button.followed:hover {
-    border-color: rgba(11, 78, 162, 0.34);
-    background: var(--primary-soft);
+    border-color: transparent;
+    background: transparent;
     color: var(--primary);
   }
 

@@ -27,6 +27,8 @@ export interface ThreadFollowStatesRequest {
 
 export interface ThreadFollowStateSummary {
   isFollowed: boolean;
+  isInMyThreads: boolean;
+  isMyThreadsSuppressed: boolean;
 }
 
 export interface ThreadFollowStatesResponse {
@@ -209,15 +211,19 @@ export interface ByDow {
   messages: number;
 }
 
-// ---- Followed Threads ----
+// ---- Tracked Threads ----
 export interface ThreadFollowState {
   threadId: string;
   isFollowed: boolean;
+  isInMyThreads: boolean;
+  isMyThreadsSuppressed: boolean;
 }
 
 export interface ThreadProgress {
   threadId: string;
   isFollowed: boolean;
+  isInMyThreads: boolean;
+  isMyThreadsSuppressed: boolean;
   lastReadMessageId: string | null;
   firstUnreadMessageId: string | null;
   unreadCount: number;
@@ -226,14 +232,23 @@ export interface ThreadProgress {
   latestPage: number;
 }
 
-export interface FollowedThread extends Thread {
+export interface TrackedThread extends Thread {
   is_followed: boolean;
+  is_in_my_threads: boolean;
+  is_my_threads_suppressed: boolean;
   last_read_message_id: string | null;
   first_unread_message_id: string | null;
   unread_count: number;
   has_unread: boolean;
   resume_page: number | null;
   latest_page: number;
+}
+
+export type FollowedThread = TrackedThread;
+
+export interface TrackedThreadCounts {
+  followedThreads: number;
+  myThreads: number;
 }
 
 // ---- Pagination ----

@@ -1,25 +1,26 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import TrackedThreadList from "../components/account/TrackedThreadList.svelte";
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
   import SuccessState from "../components/SuccessState.svelte";
   import { buildAuthPath } from "../lib/authRedirect";
-  import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import { toApiErrorShape, type ApiErrorShape } from "../lib/api";
   import { authStore } from "../lib/state/auth";
-  import { accountPath, forgotPasswordPath, homePath, loginPath, navigate, onLinkClick, threadDetailPath } from "../router";
-  import type { FollowedThread } from "shared/api";
+  import {
+    createTrackedThreadTabsController,
+    getTrackedThreadEmptyMessage,
+    getTrackedThreadTabLabel,
+    TRACKED_THREAD_TABS,
+    type TrackedThreadTab,
+  } from "../lib/trackedThreads";
+  import { accountPath, forgotPasswordPath, homePath, loginPath, navigate, onLinkClick } from "../router";
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
   });
 
-  let followedThreads: FollowedThread[] = [];
-  let followedThreadsError: ApiErrorShape | null = null;
-  let followedThreadsFetched = false;
-  let followedThreadsLoading = false;
-  let followedThreadsLoadingMore = false;
-  let followedThreadsNextCursor: string | null = null;
   let logoutError: ApiErrorShape | null = null;
   let profileDisplayName = "";
   let profileError: ApiErrorShape | null = null;
@@ -28,6 +29,10 @@
   let resendMessage: string | null = null;
   let redirectTimer: number | null = null;
   let syncedDisplayName: string | null = null;
+  let trackedThreadUserId: string | null = null;
+
+  const trackedThreadTabs = createTrackedThreadTabsController();
+  const trackedThreadTabsStore = trackedThreadTabs.state;
 
   const forgotPasswordLink = buildAuthPath(forgotPasswordPath, accountPath);
   const loginLink = buildAuthPath(loginPath, accountPath);
@@ -146,53 +151,32 @@
   $: normalizedProfileDisplayName = profileDisplayName.trim();
   $: isProfileDirty = (normalizedProfileDisplayName || null) !== (currentUserDisplayName || null);
 
-  $: if (currentUser && !followedThreadsFetched) {
-    followedThreadsFetched = true;
-    void loadFollowedThreads();
+  $: currentUserId = currentUser?.id ?? null;
+  $: activeTrackedThreadTab = $trackedThreadTabsStore.activeTab;
+  $: activeTrackedThreadState = $trackedThreadTabsStore.tabs[activeTrackedThreadTab];
+  $: trackedThreadCountsError = $trackedThreadTabsStore.countsError;
+  $: trackedThreadCountsLoading = $trackedThreadTabsStore.countsLoading;
+  $: if (currentUserId && trackedThreadUserId !== currentUserId) {
+    trackedThreadUserId = currentUserId;
+    trackedThreadTabs.reset();
+    void trackedThreadTabs.initialize();
+  }
+  $: if (!currentUserId && trackedThreadUserId !== null) {
+    trackedThreadUserId = null;
+    trackedThreadTabs.reset();
   }
 
-  function resumeUrl(thread: FollowedThread): string {
-    const base = threadDetailPath(thread.thread_id);
-    if (thread.has_unread && thread.resume_page !== null && thread.first_unread_message_id !== null) {
-      return `${base}?page=${thread.resume_page}#message-${thread.first_unread_message_id}`;
-    }
-    return `${base}?page=${thread.latest_page}`;
-  }
+  const handleTrackedThreadTabSelect = (tab: TrackedThreadTab): void => {
+    void trackedThreadTabs.activateTab(tab);
+  };
 
-  function latestUrl(thread: FollowedThread): string {
-    return threadDetailPath(thread.thread_id);
-  }
-
-  async function loadFollowedThreads(): Promise<void> {
-    followedThreadsLoading = true;
-    followedThreadsError = null;
-    try {
-      const result = await api.me.followedThreads();
-      followedThreads = result.items;
-      followedThreadsNextCursor = result.nextCursor;
-    } catch (error) {
-      followedThreadsError = toApiErrorShape(error);
-    } finally {
-      followedThreadsLoading = false;
-    }
-  }
-
-  async function loadMoreFollowedThreads(): Promise<void> {
-    if (!followedThreadsNextCursor) return;
-    followedThreadsLoadingMore = true;
-    try {
-      const result = await api.me.followedThreads({ cursor: followedThreadsNextCursor });
-      followedThreads = [...followedThreads, ...result.items];
-      followedThreadsNextCursor = result.nextCursor;
-    } catch (error) {
-      followedThreadsError = toApiErrorShape(error);
-    } finally {
-      followedThreadsLoadingMore = false;
-    }
-  }
+  const handleTrackedThreadLoadMore = (tab: TrackedThreadTab): void => {
+    void trackedThreadTabs.loadMore(tab);
+  };
 
   onDestroy(() => {
     clearRedirectTimer();
+    trackedThreadTabs.reset();
   });
 </script>
 
@@ -367,56 +351,64 @@
 
     </section>
 
-    <section class="followed-threads-section" aria-label="Followed threads">
-      <h2 class="section-heading">Followed Threads</h2>
+    <section class="tracked-threads-section" aria-label="Tracked threads">
+      <header class="tracked-threads-header">
+        <div>
+          <p class="eyebrow">Threads</p>
+          <h2 class="section-heading">Tracked Threads</h2>
+        </div>
+        <p class="support-copy">
+          Followed discussions and threads you started or replied to live here.
+        </p>
+      </header>
 
-      {#if followedThreadsLoading}
-        <LoadingState title="Loading followed threads" message="Fetching your followed threads." />
-      {:else if followedThreadsError}
-        <ErrorState
-          title="Unable to load followed threads"
-          message={followedThreadsError.message}
-          detail={formatErrorDetail(followedThreadsError)}
+      {#if trackedThreadCountsLoading}
+        <LoadingState
+          title="Loading tracked threads"
+          message="Fetching tracked-thread counts and your first list."
         />
-      {:else if followedThreads.length === 0}
-        <p class="empty-state">No followed threads yet.</p>
+      {:else if trackedThreadCountsError}
+        <ErrorState
+          title="Unable to load tracked threads"
+          message={trackedThreadCountsError.message}
+          detail={formatErrorDetail(trackedThreadCountsError)}
+        />
       {:else}
-        <ul class="followed-threads-list">
-          {#each followedThreads as thread (thread.thread_id)}
-            <li class="thread-item">
-              <div class="thread-subject-row">
-                <a
-                  href={resumeUrl(thread)}
-                  class="thread-subject"
-                  class:has-unread={thread.has_unread}
-                  on:click={(e) => onLinkClick(e, resumeUrl(thread))}
-                >{thread.subject ?? "(No subject)"}</a>
-                {#if thread.has_unread}
-                  <span class="unread-badge" aria-label="{thread.unread_count} unread">{thread.unread_count}</span>
-                {/if}
-              </div>
-              <div class="thread-meta">
-                <span class="thread-list-name">{thread.list_name}</span>
-                <span class="thread-activity">{formatDateTime(thread.last_activity_at)}</span>
-                <a
-                  href={latestUrl(thread)}
-                  class="thread-latest-link"
-                  on:click={(e) => onLinkClick(e, latestUrl(thread))}
-                >Latest</a>
-              </div>
-            </li>
-          {/each}
-        </ul>
-        {#if followedThreadsNextCursor}
-          <div class="load-more">
+        <div class="tracked-thread-tabs" role="tablist" aria-label="Tracked thread lists">
+          {#each TRACKED_THREAD_TABS as tab}
             <button
               type="button"
-              class="primary-button"
-              disabled={followedThreadsLoadingMore}
-              on:click={loadMoreFollowedThreads}
-            >{followedThreadsLoadingMore ? "Loading..." : "Load more"}</button>
-          </div>
-        {/if}
+              id={"tracked-thread-tab-" + tab}
+              role="tab"
+              class="tracked-thread-tab"
+              class:active={activeTrackedThreadTab === tab}
+              aria-controls={"tracked-thread-panel-" + tab}
+              aria-selected={activeTrackedThreadTab === tab}
+              on:click={() => handleTrackedThreadTabSelect(tab)}
+            >
+              {getTrackedThreadTabLabel(tab, $trackedThreadTabsStore.tabs[tab].count)}
+            </button>
+          {/each}
+        </div>
+
+        <div
+          id={"tracked-thread-panel-" + activeTrackedThreadTab}
+          class="tracked-thread-tab-panel"
+          role="tabpanel"
+          aria-labelledby={"tracked-thread-tab-" + activeTrackedThreadTab}
+        >
+          <TrackedThreadList
+            tab={activeTrackedThreadTab}
+            items={activeTrackedThreadState.items}
+            error={activeTrackedThreadState.error}
+            loading={activeTrackedThreadState.loading}
+            loadingMore={activeTrackedThreadState.loadingMore}
+            nextCursor={activeTrackedThreadState.nextCursor}
+            emptyMessage={getTrackedThreadEmptyMessage(activeTrackedThreadTab)}
+            formatDateTime={formatDateTime}
+            on:loadmore={(event) => handleTrackedThreadLoadMore(event.detail.tab)}
+          />
+        </div>
       {/if}
     </section>
   {/if}
@@ -611,7 +603,11 @@
 
   .primary-button:disabled {
     opacity: 0.7;
-    cursor: wait;
+    cursor: default;
+  }
+
+  .primary-button:disabled:hover {
+    background: #e8f2ff;
   }
 
   .secondary-link {
@@ -665,7 +661,7 @@
     line-height: 1.4;
   }
 
-  .followed-threads-section {
+  .tracked-threads-section {
     display: grid;
     gap: 0.75rem;
     padding: 1rem;
@@ -678,6 +674,11 @@
     min-width: 0;
   }
 
+  .tracked-threads-header {
+    display: grid;
+    gap: 0.35rem;
+  }
+
   .section-heading {
     margin: 0;
     color: #102a43;
@@ -685,110 +686,46 @@
     line-height: 1.2;
   }
 
-  .empty-state {
-    margin: 0;
-    color: #627d98;
-    font-size: 0.92rem;
-  }
-
-  .followed-threads-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 0;
-  }
-
-  .thread-item {
-    display: grid;
-    gap: 0.28rem;
-    padding: 0.65rem 0;
-    border-bottom: 1px solid #e8edf3;
-  }
-
-  .thread-item:last-child {
-    border-bottom: none;
-  }
-
-  .thread-subject-row {
+  .tracked-thread-tabs {
     display: flex;
-    align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
   }
 
-  .thread-subject {
-    color: #334e68;
-    font-size: 0.95rem;
-    line-height: 1.4;
-    text-decoration: none;
-    word-break: break-word;
-  }
-
-  .thread-subject:hover {
-    color: #0b4ea2;
-    text-decoration: underline;
-  }
-
-  .thread-subject.has-unread {
-    font-weight: 700;
-    color: #102a43;
-  }
-
-  .unread-badge {
+  .tracked-thread-tab {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 1.35rem;
-    height: 1.35rem;
-    padding: 0 0.35rem;
-    border-radius: 999px;
-    background: #0b4ea2;
-    color: #fff;
-    font-size: 0.72rem;
-    font-weight: 700;
-    line-height: 1;
-    flex-shrink: 0;
-  }
-
-  .thread-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.65rem;
-    flex-wrap: wrap;
-  }
-
-  .thread-list-name {
-    color: #627d98;
-    font-size: 0.8rem;
-  }
-
-  .thread-activity {
-    color: #829ab1;
-    font-size: 0.8rem;
-  }
-
-  .thread-latest-link {
-    margin-left: auto;
-    color: #486581;
-    font-size: 0.8rem;
-    text-decoration: none;
-    padding: 0.15rem 0.5rem;
+    min-height: 2.35rem;
+    padding: 0.48rem 0.85rem;
     border: 1px solid #d9e2ec;
     border-radius: 999px;
+    background: rgba(255, 255, 255, 0.88);
+    color: #486581;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1;
     white-space: nowrap;
   }
 
-  .thread-latest-link:hover {
+  .tracked-thread-tab:hover {
     background: #f0f7ff;
     border-color: #9fb3c8;
     color: #243b53;
   }
 
-  .load-more {
-    display: flex;
-    justify-content: center;
-    padding-top: 0.25rem;
+  .tracked-thread-tab.active {
+    border-color: #6f9fdd;
+    background: #e8f2ff;
+    color: #0b4ea2;
+  }
+
+  .tracked-thread-tab-panel {
+    display: grid;
+    gap: 0.75rem;
+    padding-top: 0.15rem;
   }
 
   @media (max-width: 640px) {
@@ -812,6 +749,10 @@
 
     .primary-button,
     .secondary-link {
+      width: 100%;
+    }
+
+    .tracked-thread-tab {
       width: 100%;
     }
   }

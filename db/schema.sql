@@ -521,6 +521,23 @@ CREATE TABLE public.thread_read_progress (
 
 
 --
+-- Name: thread_tracking; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.thread_tracking (
+    user_id bigint NOT NULL,
+    thread_id text NOT NULL,
+    anchor_message_id bigint NOT NULL,
+    manual_followed_at timestamp with time zone,
+    participated_at timestamp with time zone,
+    participation_suppressed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT thread_tracking_source_check CHECK (((manual_followed_at IS NOT NULL) OR (participated_at IS NOT NULL)))
+);
+
+
+--
 -- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -752,6 +769,14 @@ ALTER TABLE ONLY public.thread_follows
 
 ALTER TABLE ONLY public.thread_read_progress
     ADD CONSTRAINT thread_read_progress_pkey PRIMARY KEY (user_id, thread_id);
+
+
+--
+-- Name: thread_tracking thread_tracking_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_tracking
+    ADD CONSTRAINT thread_tracking_pkey PRIMARY KEY (user_id, thread_id);
 
 
 --
@@ -1043,15 +1068,15 @@ ALTER TABLE ONLY public.thread_follows
 --
 
 ALTER TABLE ONLY public.thread_read_progress
-    ADD CONSTRAINT thread_read_progress_last_read_message_id_fkey FOREIGN KEY (last_read_message_id) REFERENCES public.messages(id) ON DELETE CASCADE;
+    ADD CONSTRAINT thread_read_progress_last_read_message_id_fkey FOREIGN KEY (last_read_message_id) REFERENCES public.messages(id) ON DELETE RESTRICT;
 
 
 --
--- Name: thread_read_progress thread_read_progress_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: thread_tracking thread_tracking_anchor_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.thread_read_progress
-    ADD CONSTRAINT thread_read_progress_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.thread_tracking
+    ADD CONSTRAINT thread_tracking_anchor_message_id_fkey FOREIGN KEY (anchor_message_id) REFERENCES public.messages(id) ON DELETE RESTRICT;
 
 
 --
@@ -1086,4 +1111,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260315000010'),
     ('20260317000011'),
     ('20260317000012'),
-    ('20260317000013');
+    ('20260317000013'),
+    ('20260318000014');

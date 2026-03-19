@@ -107,6 +107,176 @@ REBUILD_THREADS_SQL = """
     GROUP BY thread_id, list_id
 """
 
+PARTICIPATION_MATCHES_CTE = """
+    WITH ranked_matches AS (
+        SELECT
+            users.id AS user_id,
+            messages.thread_id,
+            messages.id AS message_id,
+            row_number() OVER (
+                PARTITION BY users.id, messages.thread_id
+                ORDER BY messages.sent_at DESC NULLS FIRST, messages.id DESC
+            ) AS rank
+        FROM messages
+        INNER JOIN users
+            ON lower(users.email) = lower(messages.from_email)
+        WHERE messages.id = ANY(%s)
+          AND users.status = 'active'
+          AND users.email_verified_at IS NOT NULL
+    ),
+    matched_messages AS (
+        SELECT user_id, thread_id, message_id
+        FROM ranked_matches
+        WHERE rank = 1
+    )
+"""
+
+ACTIVE_TRACKING_SQL = """
+    (
+        thread_tracking.manual_followed_at IS NOT NULL
+        OR thread_tracking.participation_suppressed_at IS NULL
+    )
+"""
+
+UPSERT_PARTICIPATION_TRACKING_SQL = (
+    PARTICIPATION_MATCHES_CTE
+    + """
+    INSERT INTO thread_tracking (
+        user_id,
+        thread_id,
+        anchor_message_id,
+        manual_followed_at,
+        participated_at,
+        participation_suppressed_at,
+        created_at,
+        updated_at
+    )
+    SELECT
+        matched_messages.user_id,
+        matched_messages.thread_id,
+        matched_messages.message_id,
+        NULL,
+        now(),
+        NULL,
+        now(),
+        now()
+    FROM matched_messages
+    ON CONFLICT (user_id, thread_id) DO UPDATE SET
+        anchor_message_id = EXCLUDED.anchor_message_id,
+        participated_at = COALESCE(
+            thread_tracking.participated_at,
+            EXCLUDED.participated_at
+        ),
+        updated_at = EXCLUDED.updated_at
+"""
+)
+
+SEED_PARTICIPATION_PROGRESS_SQL = (
+    PARTICIPATION_MATCHES_CTE
+    + """
+    INSERT INTO thread_read_progress (
+        user_id,
+        thread_id,
+        last_read_message_id,
+        updated_at
+    )
+    SELECT
+        matched_messages.user_id,
+        matched_messages.thread_id,
+        matched_messages.message_id,
+        now()
+    FROM matched_messages
+    INNER JOIN thread_tracking
+        ON thread_tracking.user_id = matched_messages.user_id
+       AND thread_tracking.thread_id = matched_messages.thread_id
+    LEFT JOIN thread_read_progress
+        ON thread_read_progress.user_id = matched_messages.user_id
+       AND thread_read_progress.thread_id = matched_messages.thread_id
+    WHERE """
+    + ACTIVE_TRACKING_SQL
+    + """
+      AND thread_read_progress.user_id IS NULL
+    ON CONFLICT (user_id, thread_id) DO NOTHING
+"""
+)
+
+DELETE_INACTIVE_PARTICIPATION_PROGRESS_SQL = (
+    PARTICIPATION_MATCHES_CTE
+    + """
+    DELETE FROM thread_read_progress
+    USING thread_tracking, matched_messages
+    WHERE thread_read_progress.user_id = thread_tracking.user_id
+      AND thread_read_progress.thread_id = thread_tracking.thread_id
+      AND matched_messages.user_id = thread_tracking.user_id
+      AND matched_messages.thread_id = thread_tracking.thread_id
+      AND thread_tracking.manual_followed_at IS NULL
+      AND thread_tracking.participation_suppressed_at IS NOT NULL
+"""
+)
+
+ADVANCE_PARTICIPATION_PROGRESS_SQL = (
+    PARTICIPATION_MATCHES_CTE
+    + """
+    ,
+    progress_candidates AS (
+        SELECT
+            matched_messages.user_id,
+            matched_messages.thread_id,
+            matched_messages.message_id AS candidate_message_id,
+            thread_read_progress.last_read_message_id AS existing_message_id,
+            candidate_messages.sent_at AS candidate_sent_at,
+            existing_messages.sent_at AS existing_sent_at,
+            existing_messages.thread_id AS existing_thread_id
+        FROM matched_messages
+        INNER JOIN thread_tracking
+            ON thread_tracking.user_id = matched_messages.user_id
+           AND thread_tracking.thread_id = matched_messages.thread_id
+        INNER JOIN thread_read_progress
+            ON thread_read_progress.user_id = matched_messages.user_id
+           AND thread_read_progress.thread_id = matched_messages.thread_id
+        INNER JOIN messages AS candidate_messages
+            ON candidate_messages.id = matched_messages.message_id
+        LEFT JOIN messages AS existing_messages
+            ON existing_messages.id = thread_read_progress.last_read_message_id
+        WHERE """
+    + ACTIVE_TRACKING_SQL
+    + """
+    ),
+    rows_to_advance AS (
+        SELECT user_id, thread_id, candidate_message_id
+        FROM progress_candidates
+        WHERE existing_thread_id IS DISTINCT FROM thread_id
+           OR (
+               candidate_sent_at IS NULL
+               AND existing_sent_at IS NOT NULL
+           )
+           OR (
+               candidate_sent_at IS NULL
+               AND existing_sent_at IS NULL
+               AND candidate_message_id > existing_message_id
+           )
+           OR (
+               candidate_sent_at IS NOT NULL
+               AND existing_sent_at IS NOT NULL
+               AND (
+                   candidate_sent_at > existing_sent_at
+                   OR (
+                       candidate_sent_at = existing_sent_at
+                       AND candidate_message_id > existing_message_id
+                   )
+               )
+           )
+    )
+    UPDATE thread_read_progress
+    SET
+        last_read_message_id = rows_to_advance.candidate_message_id,
+        updated_at = now()
+    FROM rows_to_advance
+    WHERE thread_read_progress.user_id = rows_to_advance.user_id
+      AND thread_read_progress.thread_id = rows_to_advance.thread_id
+"""
+)
+
 
 def _fetch_thread_ids(cur, list_id: int, message_ids: list[str]) -> dict[str, str]:
     if not message_ids:
@@ -476,6 +646,25 @@ def _refresh_threads_for_message_ids(
     cur.execute(upsert_touched_threads_sql, (list_id, thread_ids))
 
 
+def _auto_track_participation_for_inserted_messages(
+    cur,
+    inserted_message_ids: dict[str, int],
+    *,
+    upsert_participation_tracking_sql=UPSERT_PARTICIPATION_TRACKING_SQL,
+    delete_inactive_participation_progress_sql=DELETE_INACTIVE_PARTICIPATION_PROGRESS_SQL,
+    seed_participation_progress_sql=SEED_PARTICIPATION_PROGRESS_SQL,
+    advance_participation_progress_sql=ADVANCE_PARTICIPATION_PROGRESS_SQL,
+):
+    if not inserted_message_ids:
+        return
+
+    inserted_db_ids = sorted(set(inserted_message_ids.values()))
+    cur.execute(upsert_participation_tracking_sql, (inserted_db_ids,))
+    cur.execute(delete_inactive_participation_progress_sql, (inserted_db_ids,))
+    cur.execute(seed_participation_progress_sql, (inserted_db_ids,))
+    cur.execute(advance_participation_progress_sql, (inserted_db_ids,))
+
+
 def store_batch_live(
     conn,
     batch: list,
@@ -483,6 +672,7 @@ def store_batch_live(
     resolve_batch_thread_ids=_resolve_batch_thread_ids,
     insert_messages=_insert_messages,
     refresh_threads_for_message_ids=_refresh_threads_for_message_ids,
+    auto_track_participation_for_inserted_messages=_auto_track_participation_for_inserted_messages,
     insert_attachments=_insert_attachments,
 ):
     """Insert messages and refresh affected thread aggregates in one transaction."""
@@ -495,6 +685,7 @@ def store_batch_live(
     with conn.cursor() as cur:
         inserted_message_ids = insert_messages(cur, batch)
         refresh_threads_for_message_ids(cur, list_id, message_ids)
+        auto_track_participation_for_inserted_messages(cur, inserted_message_ids)
         insert_attachments(cur, batch, inserted_message_ids)
     conn.commit()
 

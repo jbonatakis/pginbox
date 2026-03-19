@@ -23,11 +23,12 @@ import type {
   ByDow,
   ByHour,
   ByMonth,
-  FollowedThread,
   List,
   Paginated,
   Person,
   PersonListItem,
+  TrackedThread,
+  TrackedThreadCounts,
   Thread,
   ThreadDetail,
   ThreadFollowState,
@@ -519,10 +520,12 @@ export interface GetThreadProgressParams {
   pageSize?: number;
 }
 
-export interface ListFollowedThreadsParams {
+export interface ListTrackedThreadsParams {
   limit?: number;
   cursor?: string;
 }
+
+export type ListFollowedThreadsParams = ListTrackedThreadsParams;
 
 export async function followThread(
   threadId: string,
@@ -543,6 +546,27 @@ export async function unfollowThread(
   return requestAuthJson<ThreadFollowState>(
     withApiBase(`/threads/${encodePathParam(threadId)}/follow`),
     { ...options, method: "DELETE" }
+  );
+}
+
+export async function removeThreadFromMyThreads(
+  threadId: string,
+  options: RequestOptions = {}
+): Promise<ThreadFollowState> {
+  return requestAuthJson<ThreadFollowState>(
+    withApiBase(`/threads/${encodePathParam(threadId)}/my-thread`),
+    { ...options, method: "DELETE" }
+  );
+}
+
+export async function addThreadBackToMyThreads(
+  threadId: string,
+  options: RequestOptions = {}
+): Promise<ThreadFollowState> {
+  return postAuthJson<ThreadFollowState>(
+    withApiBase(`/threads/${encodePathParam(threadId)}/my-thread`),
+    {},
+    options
   );
 }
 
@@ -581,14 +605,31 @@ export async function markThreadRead(
 }
 
 export async function listFollowedThreads(
-  params: ListFollowedThreadsParams = {},
+  params: ListTrackedThreadsParams = {},
   options: RequestOptions = {}
-): Promise<Paginated<FollowedThread>> {
+): Promise<Paginated<TrackedThread>> {
   const path = withApiBase("/me/followed-threads", {
     limit: params.limit,
     cursor: params.cursor,
   });
-  return requestAuthJson<Paginated<FollowedThread>>(path, options);
+  return requestAuthJson<Paginated<TrackedThread>>(path, options);
+}
+
+export async function listMyThreads(
+  params: ListTrackedThreadsParams = {},
+  options: RequestOptions = {}
+): Promise<Paginated<TrackedThread>> {
+  const path = withApiBase("/me/my-threads", {
+    limit: params.limit,
+    cursor: params.cursor,
+  });
+  return requestAuthJson<Paginated<TrackedThread>>(path, options);
+}
+
+export async function getTrackedThreadCounts(
+  options: RequestOptions = {}
+): Promise<TrackedThreadCounts> {
+  return requestAuthJson<TrackedThreadCounts>(withApiBase("/me/tracked-thread-counts"), options);
 }
 
 export async function getThreadFollowStates(
@@ -640,15 +681,19 @@ export const api = {
   },
   me: {
     followedThreads: listFollowedThreads,
+    myThreads: listMyThreads,
+    trackedThreadCounts: getTrackedThreadCounts,
     threadFollowStates: getThreadFollowStates,
   },
   threads: {
+    addBackToMyThreads: addThreadBackToMyThreads,
     advanceProgress: advanceThreadProgress,
     follow: followThread,
     get: getThread,
     getProgress: getThreadProgress,
     list: listThreads,
     markRead: markThreadRead,
+    removeFromMyThreads: removeThreadFromMyThreads,
     unfollow: unfollowThread,
   },
 };

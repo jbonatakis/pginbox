@@ -4,6 +4,7 @@ import { sql } from "kysely";
 import { app } from "../../src/server/app";
 import { db } from "../../src/server/db";
 import { hashOpaqueToken, SESSION_TTL_MS } from "../../src/server/auth";
+import { trackThreadParticipation } from "../../src/server/services/thread-progress.service";
 
 const base = "http://localhost";
 
@@ -66,7 +67,9 @@ async function createTestSession(userId: string): Promise<TestSession> {
 }
 
 async function deleteUser(userId: string): Promise<void> {
-  // CASCADE removes auth_sessions, thread_follows, thread_read_progress
+  await db.deleteFrom("thread_tracking").where("user_id", "=", userId).execute();
+  await db.deleteFrom("thread_read_progress").where("user_id", "=", userId).execute();
+  // CASCADE still removes auth_sessions and thread_follows.
   await db.deleteFrom("users").where("id", "=", userId).execute();
 }
 
@@ -163,20 +166,67 @@ async function createThreadWithSentAtValues(
   return { threadId, msgIds: ordered.map((r) => String(r.id)) };
 }
 
-async function insertFollowRow(userId: string, threadId: string, anchorMessageId: string): Promise<void> {
+async function setThreadActivity(
+  threadId: string,
+  lastActivityAt: Date | null,
+  startedAt: Date | null = lastActivityAt
+): Promise<void> {
   await db
-    .insertInto("thread_follows")
+    .updateTable("threads")
+    .set({
+      started_at: startedAt,
+      last_activity_at: lastActivityAt,
+    })
+    .where("thread_id", "=", threadId)
+    .execute();
+}
+
+async function insertFollowRow(userId: string, threadId: string, anchorMessageId: string): Promise<void> {
+  const followedAt = new Date();
+  await db
+    .insertInto("thread_tracking")
     .values({
       user_id: userId,
       thread_id: threadId,
       anchor_message_id: anchorMessageId,
+      manual_followed_at: followedAt,
+      participated_at: null,
+      participation_suppressed_at: null,
+      created_at: followedAt,
+      updated_at: followedAt,
+    })
+    .execute();
+}
+
+async function insertParticipationRow(
+  userId: string,
+  threadId: string,
+  anchorMessageId: string,
+  opts: {
+    suppressed?: boolean;
+    manualFollowedAt?: Date | null;
+    participatedAt?: Date;
+  } = {}
+): Promise<void> {
+  const participatedAt = opts.participatedAt ?? new Date();
+  await db
+    .insertInto("thread_tracking")
+    .values({
+      user_id: userId,
+      thread_id: threadId,
+      anchor_message_id: anchorMessageId,
+      manual_followed_at: opts.manualFollowedAt ?? null,
+      participated_at: participatedAt,
+      participation_suppressed_at: opts.suppressed ? participatedAt : null,
+      created_at: participatedAt,
+      updated_at: participatedAt,
     })
     .execute();
 }
 
 async function deleteThread(threadId: string): Promise<void> {
-  // Deletes messages first (FK: thread_follows.anchor_message_id → messages.id RESTRICT)
-  // The user must already be deleted before this is called so follows are gone.
+  // Deletes messages first. Any restrictive message references from thread state rows
+  // must already be gone before this helper runs.
   await db.deleteFrom("messages").where("thread_id", "=", threadId).execute();
   await db.deleteFrom("threads").where("thread_id", "=", threadId).execute();
 }
@@ -221,6 +271,16 @@ describe("auth enforcement", () => {
     expect(res.status).toBe(401);
   });
 
+  it("DELETE /threads/:id/my-thread returns 401 when unauthenticated", async () => {
+    const res = await send("/threads/some-thread/my-thread", { method: "DELETE" });
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /threads/:id/my-thread returns 401 when unauthenticated", async () => {
+    const res = await send("/threads/some-thread/my-thread", { method: "POST" });
+    expect(res.status).toBe(401);
+  });
+
   it("POST /me/thread-follow-states returns 401 when unauthenticated", async () => {
     const res = await send("/me/thread-follow-states", {
       method: "POST",
@@ -250,6 +310,20 @@ describe("auth enforcement", () => {
   it("GET /me/followed-threads returns 401 when unauthenticated", async () => {
     const res = await send("/me/followed-threads");
     expect(res.status).toBe(401);
+  });
+
+  it("GET /me/my-threads returns 401 when unauthenticated", async () => {
+    const res = await send("/me/my-threads");
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /me/tracked-thread-counts returns the standard auth error when unauthenticated", async () => {
+    const res = await send("/me/tracked-thread-counts");
+    expect(res.status).toBe(401);
+    expect(await parseJson(res)).toEqual({
+      code: "AUTH_REQUIRED",
+      message: "Authentication required",
+    });
   });
 });
 
@@ -289,8 +363,14 @@ describe("follow/unfollow behavior", () => {
       cookie: session.cookie,
     });
     expect(res.status).toBe(200);
-    const body = (await parseJson(res)) as { isFollowed: boolean };
+    const body = (await parseJson(res)) as {
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+    };
     expect(body.isFollowed).toBe(true);
+    expect(body.isInMyThreads).toBe(false);
+    expect(body.isMyThreadsSuppressed).toBe(false);
 
     const progress = await db
       .selectFrom("thread_read_progress")
@@ -393,7 +473,7 @@ describe("follow/unfollow behavior", () => {
     expect(((await parseJson(unfollowRes)) as { isFollowed: boolean }).isFollowed).toBe(false);
 
     const follow = await db
-      .selectFrom("thread_follows")
+      .selectFrom("thread_tracking")
       .select("thread_id")
       .where("user_id", "=", user!.id)
       .where("thread_id", "=", thread.threadId)
@@ -459,11 +539,19 @@ describe("thread list follow state", () => {
     });
     expect(res.status).toBe(200);
     const body = (await parseJson(res)) as {
-      states: Record<string, { isFollowed: boolean }>;
+      states: Record<string, {
+        isFollowed: boolean;
+        isInMyThreads: boolean;
+        isMyThreadsSuppressed: boolean;
+      }>;
     };
 
     expect(body.states[followedThread.threadId]?.isFollowed).toBe(true);
+    expect(body.states[followedThread.threadId]?.isInMyThreads).toBe(false);
+    expect(body.states[followedThread.threadId]?.isMyThreadsSuppressed).toBe(false);
     expect(body.states[unfollowedThread.threadId]?.isFollowed).toBe(false);
+    expect(body.states[unfollowedThread.threadId]?.isInMyThreads).toBe(false);
+    expect(body.states[unfollowedThread.threadId]?.isMyThreadsSuppressed).toBe(false);
   });
 
   it("GET /threads stays unannotated even for authenticated users", async () => {
@@ -503,8 +591,9 @@ describe("thread list follow state", () => {
 
     await insertFollowRow(user!.id, followedThread.threadId, followedThread.msgIds[0]);
     await db
-      .updateTable("thread_follows")
+      .updateTable("thread_tracking")
       .set({
+        manual_followed_at: followedAt,
         created_at: followedAt,
         updated_at: followedAt,
       })
@@ -527,6 +616,621 @@ describe("thread list follow state", () => {
       .where("thread_id", "=", followedThread.threadId)
       .executeTakeFirstOrThrow();
     expect(String(progress.last_read_message_id)).toBe(followedThread.msgIds[2]);
+  });
+});
+
+describe("my threads participation and suppression", () => {
+  let listId: number;
+  let thread: { threadId: string; msgIds: string[] };
+  let user: TestUser | null = null;
+  let session: TestSession;
+
+  beforeAll(async () => {
+    listId = await createList();
+    thread = await createThread(listId, 5);
+  });
+
+  afterAll(async () => {
+    await deleteThread(thread.threadId);
+    await deleteList(listId);
+  });
+
+  beforeEach(async () => {
+    user = await createTestUser();
+    session = await createTestSession(user.id);
+  });
+
+  afterEach(async () => {
+    if (user) {
+      await deleteUser(user.id);
+      user = null;
+    }
+  });
+
+  it("new participation creates a my-thread row and follow-state response", async () => {
+    const state = await trackThreadParticipation(user!.id, thread.msgIds[1]);
+    expect(state).toEqual({
+      threadId: thread.threadId,
+      isFollowed: false,
+      isInMyThreads: true,
+      isMyThreadsSuppressed: false,
+    });
+
+    const tracking = await db
+      .selectFrom("thread_tracking")
+      .select(["anchor_message_id", "manual_followed_at", "participated_at", "participation_suppressed_at"])
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(tracking.anchor_message_id)).toBe(thread.msgIds[1]);
+    expect(tracking.manual_followed_at).toBeNull();
+    expect(tracking.participated_at).toBeDefined();
+    expect(tracking.participation_suppressed_at).toBeNull();
+
+    const res = await send("/me/thread-follow-states", {
+      method: "POST",
+      cookie: session.cookie,
+      body: { threadIds: [thread.threadId] },
+    });
+    expect(res.status).toBe(200);
+    expect(await parseJson(res)).toEqual({
+      states: {
+        [thread.threadId]: {
+          isFollowed: false,
+          isInMyThreads: true,
+          isMyThreadsSuppressed: false,
+        },
+      },
+    });
+  });
+
+  it("GET /progress returns shared unread state for my-threads-only tracking", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+
+    const res = await send(`/threads/${encodeURIComponent(thread.threadId)}/progress`, {
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as {
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+      lastReadMessageId: string | null;
+      firstUnreadMessageId: string | null;
+      unreadCount: number;
+      resumePage: number | null;
+    };
+
+    expect(body.isFollowed).toBe(false);
+    expect(body.isInMyThreads).toBe(true);
+    expect(body.isMyThreadsSuppressed).toBe(false);
+    expect(body.lastReadMessageId).toBe(thread.msgIds[1]);
+    expect(body.firstUnreadMessageId).toBe(thread.msgIds[2]);
+    expect(body.unreadCount).toBe(3);
+    expect(body.resumePage).toBe(1);
+  });
+
+  it("manual follow on a my-threads row keeps the shared progress row", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+
+    const followRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(followRes.status).toBe(200);
+    const followBody = (await parseJson(followRes)) as {
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+    };
+    expect(followBody.isFollowed).toBe(true);
+    expect(followBody.isInMyThreads).toBe(true);
+    expect(followBody.isMyThreadsSuppressed).toBe(false);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(progress.last_read_message_id)).toBe(thread.msgIds[1]);
+  });
+
+  it("removing and restoring a manually followed my-thread only toggles participation suppression", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+
+    const removeRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+    expect(removeRes.status).toBe(200);
+    expect(await parseJson(removeRes)).toEqual({
+      threadId: thread.threadId,
+      isFollowed: true,
+      isInMyThreads: false,
+      isMyThreadsSuppressed: true,
+    });
+
+    const suppressedTracking = await db
+      .selectFrom("thread_tracking")
+      .select(["manual_followed_at", "participation_suppressed_at"])
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(suppressedTracking.manual_followed_at).toBeDefined();
+    expect(suppressedTracking.participation_suppressed_at).toBeDefined();
+
+    const addBackRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(addBackRes.status).toBe(200);
+    expect(await parseJson(addBackRes)).toEqual({
+      threadId: thread.threadId,
+      isFollowed: true,
+      isInMyThreads: true,
+      isMyThreadsSuppressed: false,
+    });
+
+    const restoredTracking = await db
+      .selectFrom("thread_tracking")
+      .select(["manual_followed_at", "participation_suppressed_at"])
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(restoredTracking.manual_followed_at).toBeDefined();
+    expect(restoredTracking.participation_suppressed_at).toBeNull();
+  });
+
+  it("removing and restoring a manually followed suppressed row preserves shared progress", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/progress`, {
+      method: "POST",
+      body: { lastReadMessageId: thread.msgIds[3] },
+      cookie: session.cookie,
+    });
+
+    const removeRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+    expect(removeRes.status).toBe(200);
+
+    const suppressedProgress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(suppressedProgress.last_read_message_id)).toBe(thread.msgIds[3]);
+
+    const addBackRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(addBackRes.status).toBe(200);
+
+    const restoredProgress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(restoredProgress.last_read_message_id)).toBe(thread.msgIds[3]);
+  });
+
+  it("removing a participation-only thread keeps a suppressed row but drops progress", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+
+    const removeRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+    expect(removeRes.status).toBe(200);
+    const body = (await parseJson(removeRes)) as {
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+    };
+    expect(body.isFollowed).toBe(false);
+    expect(body.isInMyThreads).toBe(false);
+    expect(body.isMyThreadsSuppressed).toBe(true);
+
+    const tracking = await db
+      .selectFrom("thread_tracking")
+      .select(["manual_followed_at", "participated_at", "participation_suppressed_at"])
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(tracking.manual_followed_at).toBeNull();
+    expect(tracking.participated_at).toBeDefined();
+    expect(tracking.participation_suppressed_at).toBeDefined();
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("thread_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirst();
+    expect(progress).toBeUndefined();
+
+    const progressRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/progress`, {
+      cookie: session.cookie,
+    });
+    const progressBody = (await parseJson(progressRes)) as {
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+      unreadCount: number;
+      lastReadMessageId: string | null;
+    };
+    expect(progressBody.isFollowed).toBe(false);
+    expect(progressBody.isInMyThreads).toBe(false);
+    expect(progressBody.isMyThreadsSuppressed).toBe(true);
+    expect(progressBody.lastReadMessageId).toBeNull();
+    expect(progressBody.unreadCount).toBe(0);
+  });
+
+  it("adding a participation-only thread back reseeds progress from the current latest message", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+
+    const addBackRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(addBackRes.status).toBe(200);
+    const body = (await parseJson(addBackRes)) as {
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+    };
+    expect(body.isFollowed).toBe(false);
+    expect(body.isInMyThreads).toBe(true);
+    expect(body.isMyThreadsSuppressed).toBe(false);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(progress.last_read_message_id)).toBe(thread.msgIds[4]);
+  });
+
+  it("suppression stays sticky across later participation events", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+
+    const state = await trackThreadParticipation(user!.id, thread.msgIds[3]);
+    expect(state.isFollowed).toBe(false);
+    expect(state.isInMyThreads).toBe(false);
+    expect(state.isMyThreadsSuppressed).toBe(true);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("thread_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirst();
+    expect(progress).toBeUndefined();
+  });
+
+  it("unfollowing while participation remains keeps the thread in my threads and preserves shared progress", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+
+    const unfollowRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+    expect(unfollowRes.status).toBe(200);
+    expect(await parseJson(unfollowRes)).toEqual({
+      threadId: thread.threadId,
+      isFollowed: false,
+      isInMyThreads: true,
+      isMyThreadsSuppressed: false,
+    });
+
+    const tracking = await db
+      .selectFrom("thread_tracking")
+      .select(["manual_followed_at", "participated_at", "participation_suppressed_at"])
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(tracking.manual_followed_at).toBeNull();
+    expect(tracking.participated_at).toBeDefined();
+    expect(tracking.participation_suppressed_at).toBeNull();
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(String(progress.last_read_message_id)).toBe(thread.msgIds[1]);
+
+    const listedRes = await send("/me/my-threads", { cookie: session.cookie });
+    expect(listedRes.status).toBe(200);
+    const listedBody = (await parseJson(listedRes)) as {
+      items: Array<{ thread_id: string }>;
+    };
+    expect(listedBody.items.map((item) => item.thread_id)).toContain(thread.threadId);
+  });
+
+  it("unfollowing a manually followed suppressed row keeps suppression and removes shared progress", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+
+    const unfollowRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+    expect(unfollowRes.status).toBe(200);
+    const body = (await parseJson(unfollowRes)) as {
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+    };
+    expect(body.isFollowed).toBe(false);
+    expect(body.isInMyThreads).toBe(false);
+    expect(body.isMyThreadsSuppressed).toBe(true);
+
+    const tracking = await db
+      .selectFrom("thread_tracking")
+      .select(["manual_followed_at", "participation_suppressed_at"])
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirstOrThrow();
+    expect(tracking.manual_followed_at).toBeNull();
+    expect(tracking.participation_suppressed_at).toBeDefined();
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("thread_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirst();
+    expect(progress).toBeUndefined();
+  });
+
+  it("GET /me/my-threads only returns unsuppressed participated rows", async () => {
+    await trackThreadParticipation(user!.id, thread.msgIds[1]);
+
+    const listedRes = await send("/me/my-threads", { cookie: session.cookie });
+    expect(listedRes.status).toBe(200);
+    const listedBody = (await parseJson(listedRes)) as {
+      items: Array<{ thread_id: string; is_in_my_threads: boolean }>;
+    };
+    expect(listedBody.items.map((item) => item.thread_id)).toContain(thread.threadId);
+    expect(listedBody.items[0]?.is_in_my_threads).toBe(true);
+
+    await send(`/threads/${encodeURIComponent(thread.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+
+    const suppressedRes = await send("/me/my-threads", { cookie: session.cookie });
+    expect(suppressedRes.status).toBe(200);
+    const suppressedBody = (await parseJson(suppressedRes)) as {
+      items: Array<{ thread_id: string }>;
+    };
+    expect(suppressedBody.items.find((item) => item.thread_id === thread.threadId)).toBeUndefined();
+  });
+});
+
+describe("tracked thread list contracts and counts", () => {
+  let listId: number;
+  let threads: Array<{ threadId: string; msgIds: string[] }> = [];
+  let user: TestUser | null = null;
+  let session: TestSession;
+
+  beforeAll(async () => {
+    listId = await createList();
+    threads = await Promise.all([
+      createThread(listId, 4),
+      createThread(listId, 4),
+      createThread(listId, 4),
+      createThread(listId, 4),
+    ]);
+
+    await Promise.all([
+      setThreadActivity(threads[0]!.threadId, new Date(Date.UTC(2024, 0, 4, 0, 0, 0))),
+      setThreadActivity(threads[1]!.threadId, new Date(Date.UTC(2024, 0, 3, 0, 0, 0))),
+      setThreadActivity(threads[2]!.threadId, new Date(Date.UTC(2024, 0, 2, 0, 0, 0))),
+      setThreadActivity(threads[3]!.threadId, new Date(Date.UTC(2024, 0, 1, 0, 0, 0))),
+    ]);
+  });
+
+  afterAll(async () => {
+    for (const thread of threads) {
+      await deleteThread(thread.threadId);
+    }
+    await deleteList(listId);
+  });
+
+  beforeEach(async () => {
+    user = await createTestUser();
+    session = await createTestSession(user.id);
+  });
+
+  afterEach(async () => {
+    if (user) {
+      await deleteUser(user.id);
+      user = null;
+    }
+  });
+
+  it("POST and DELETE /threads/:id/my-thread are no-ops for untracked and follow-only threads", async () => {
+    const removeUntrackedRes = await send(`/threads/${encodeURIComponent(threads[0]!.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+    expect(removeUntrackedRes.status).toBe(200);
+    expect(await parseJson(removeUntrackedRes)).toEqual({
+      threadId: threads[0]!.threadId,
+      isFollowed: false,
+      isInMyThreads: false,
+      isMyThreadsSuppressed: false,
+    });
+
+    const followRes = await send(`/threads/${encodeURIComponent(threads[1]!.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(followRes.status).toBe(200);
+
+    const removeFollowOnlyRes = await send(`/threads/${encodeURIComponent(threads[1]!.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+    expect(removeFollowOnlyRes.status).toBe(200);
+    expect(await parseJson(removeFollowOnlyRes)).toEqual({
+      threadId: threads[1]!.threadId,
+      isFollowed: true,
+      isInMyThreads: false,
+      isMyThreadsSuppressed: false,
+    });
+
+    const addBackFollowOnlyRes = await send(`/threads/${encodeURIComponent(threads[1]!.threadId)}/my-thread`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(addBackFollowOnlyRes.status).toBe(200);
+    expect(await parseJson(addBackFollowOnlyRes)).toEqual({
+      threadId: threads[1]!.threadId,
+      isFollowed: true,
+      isInMyThreads: false,
+      isMyThreadsSuppressed: false,
+    });
+  });
+
+  it("GET /me/my-threads matches followed-threads ordering, cursor pagination, and row shape", async () => {
+    for (const thread of threads.slice(0, 3)) {
+      await trackThreadParticipation(user!.id, thread.msgIds[1]!);
+      const followRes = await send(`/threads/${encodeURIComponent(thread.threadId)}/follow`, {
+        method: "POST",
+        cookie: session.cookie,
+      });
+      expect(followRes.status).toBe(200);
+    }
+
+    const followedRes = await send("/me/followed-threads?limit=2", { cookie: session.cookie });
+    const myThreadsRes = await send("/me/my-threads?limit=2", { cookie: session.cookie });
+    expect(followedRes.status).toBe(200);
+    expect(myThreadsRes.status).toBe(200);
+
+    const followedBody = (await parseJson(followedRes)) as {
+      items: Array<{
+        thread_id: string;
+        is_followed: boolean;
+        is_in_my_threads: boolean;
+        is_my_threads_suppressed: boolean;
+        last_read_message_id: string | null;
+        first_unread_message_id: string | null;
+        unread_count: number;
+        has_unread: boolean;
+        resume_page: number | null;
+        latest_page: number;
+      }>;
+      nextCursor: string | null;
+    };
+    const myThreadsBody = (await parseJson(myThreadsRes)) as typeof followedBody;
+
+    expect(followedBody.items.map((item) => item.thread_id)).toEqual([
+      threads[0]!.threadId,
+      threads[1]!.threadId,
+    ]);
+    expect(myThreadsBody).toEqual(followedBody);
+    expect(followedBody.items[0]).toMatchObject({
+      thread_id: threads[0]!.threadId,
+      list_id: listId,
+      subject: "Test",
+      started_at: "2024-01-04T00:00:00.000Z",
+      last_activity_at: "2024-01-04T00:00:00.000Z",
+      message_count: expect.any(Number),
+      list_name: await getListName(listId),
+      is_followed: true,
+      is_in_my_threads: true,
+      is_my_threads_suppressed: false,
+      last_read_message_id: threads[0]!.msgIds[1]!,
+      first_unread_message_id: threads[0]!.msgIds[2]!,
+      unread_count: 2,
+      has_unread: true,
+      resume_page: 1,
+      latest_page: 1,
+    });
+    expect(followedBody.nextCursor).toEqual(expect.any(String));
+
+    const followedNextRes = await send(
+      `/me/followed-threads?limit=2&cursor=${encodeURIComponent(followedBody.nextCursor!)}`,
+      { cookie: session.cookie }
+    );
+    const myThreadsNextRes = await send(
+      `/me/my-threads?limit=2&cursor=${encodeURIComponent(myThreadsBody.nextCursor!)}`,
+      { cookie: session.cookie }
+    );
+    expect(followedNextRes.status).toBe(200);
+    expect(myThreadsNextRes.status).toBe(200);
+
+    const followedNextBody = (await parseJson(followedNextRes)) as typeof followedBody;
+    const myThreadsNextBody = (await parseJson(myThreadsNextRes)) as typeof followedBody;
+
+    expect(followedNextBody.items.map((item) => item.thread_id)).toEqual([threads[2]!.threadId]);
+    expect(followedNextBody.nextCursor).toBeNull();
+    expect(myThreadsNextBody).toEqual(followedNextBody);
+  });
+
+  it("GET /me/tracked-thread-counts returns both tab counts without suppressed participation rows", async () => {
+    await send(`/threads/${encodeURIComponent(threads[0]!.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+
+    await trackThreadParticipation(user!.id, threads[1]!.msgIds[1]!);
+
+    await trackThreadParticipation(user!.id, threads[2]!.msgIds[1]!);
+    await send(`/threads/${encodeURIComponent(threads[2]!.threadId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+
+    await trackThreadParticipation(user!.id, threads[3]!.msgIds[1]!);
+    await send(`/threads/${encodeURIComponent(threads[3]!.threadId)}/my-thread`, {
+      method: "DELETE",
+      cookie: session.cookie,
+    });
+
+    const res = await send("/me/tracked-thread-counts", { cookie: session.cookie });
+    expect(res.status).toBe(200);
+    expect(await parseJson(res)).toEqual({
+      followedThreads: 2,
+      myThreads: 2,
+    });
   });
 });
 
@@ -933,9 +1637,9 @@ describe("canonicalization after thread_id drift", () => {
   });
 
   afterEach(async () => {
-    // Delete user first so cascade removes follows and progress
+    // Delete user-linked thread state first so message cleanup can proceed.
     if (user) {
-      await db.deleteFrom("users").where("id", "=", user.id).execute();
+      await deleteUser(user.id);
       user = null;
     }
     // Delete messages by explicit IDs (thread_id may have changed)
@@ -982,7 +1686,7 @@ describe("canonicalization after thread_id drift", () => {
 
     // Follow row should now reference newThreadId
     const followNew = await db
-      .selectFrom("thread_follows")
+      .selectFrom("thread_tracking")
       .select("thread_id")
       .where("user_id", "=", user!.id)
       .where("thread_id", "=", newThreadId)
@@ -991,7 +1695,7 @@ describe("canonicalization after thread_id drift", () => {
 
     // Follow row for oldThreadId should be gone
     const followOld = await db
-      .selectFrom("thread_follows")
+      .selectFrom("thread_tracking")
       .select("thread_id")
       .where("user_id", "=", user!.id)
       .where("thread_id", "=", oldThreadId)
@@ -1059,5 +1763,124 @@ describe("canonicalization after thread_id drift", () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0]?.thread_id).toBe(newThreadId);
     expect(body.items[0]?.last_read_message_id).toBe(msgIds[1]);
+  });
+
+  it("tracking collisions merge sources and preserve suppression", async () => {
+    const manualFollowedAt = new Date(Date.UTC(2024, 0, 2, 0, 0, 0));
+    const participatedAt = new Date(Date.UTC(2024, 0, 3, 0, 0, 0));
+
+    await db
+      .insertInto("thread_tracking")
+      .values([
+        {
+          user_id: user!.id,
+          thread_id: oldThreadId,
+          anchor_message_id: msgIds[0],
+          manual_followed_at: manualFollowedAt,
+          participated_at: null,
+          participation_suppressed_at: null,
+          created_at: manualFollowedAt,
+          updated_at: manualFollowedAt,
+        },
+        {
+          user_id: user!.id,
+          thread_id: newThreadId,
+          anchor_message_id: msgIds[4],
+          manual_followed_at: null,
+          participated_at: participatedAt,
+          participation_suppressed_at: participatedAt,
+          created_at: participatedAt,
+          updated_at: participatedAt,
+        },
+      ])
+      .execute();
+
+    await simulateDrift();
+
+    const res = await send(`/threads/${encodeURIComponent(oldThreadId)}/progress`, {
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as {
+      threadId: string;
+      isFollowed: boolean;
+      isInMyThreads: boolean;
+      isMyThreadsSuppressed: boolean;
+    };
+    expect(body.threadId).toBe(newThreadId);
+    expect(body.isFollowed).toBe(true);
+    expect(body.isInMyThreads).toBe(false);
+    expect(body.isMyThreadsSuppressed).toBe(true);
+
+    const merged = await db
+      .selectFrom("thread_tracking")
+      .select(["manual_followed_at", "participated_at", "participation_suppressed_at"])
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", newThreadId)
+      .executeTakeFirstOrThrow();
+    expect(merged.manual_followed_at).toBeDefined();
+    expect(merged.participated_at).toBeDefined();
+    expect(merged.participation_suppressed_at).toBeDefined();
+
+    const stale = await db
+      .selectFrom("thread_tracking")
+      .select("thread_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", oldThreadId)
+      .executeTakeFirst();
+    expect(stale).toBeUndefined();
+  });
+
+  it("progress collisions keep the farther-ahead row in canonical order", async () => {
+    await insertParticipationRow(user!.id, oldThreadId, msgIds[0], {
+      participatedAt: new Date(Date.UTC(2024, 0, 1, 0, 0, 0)),
+    });
+
+    await db
+      .insertInto("thread_read_progress")
+      .values([
+        {
+          user_id: user!.id,
+          thread_id: oldThreadId,
+          last_read_message_id: msgIds[1],
+          updated_at: new Date(Date.UTC(2024, 0, 2, 0, 0, 0)),
+        },
+        {
+          user_id: user!.id,
+          thread_id: newThreadId,
+          last_read_message_id: msgIds[3],
+          updated_at: new Date(Date.UTC(2024, 0, 3, 0, 0, 0)),
+        },
+      ])
+      .execute();
+
+    await simulateDrift();
+
+    const res = await send(`/threads/${encodeURIComponent(oldThreadId)}/progress`, {
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+    const body = (await parseJson(res)) as {
+      threadId: string;
+      lastReadMessageId: string | null;
+    };
+    expect(body.threadId).toBe(newThreadId);
+    expect(body.lastReadMessageId).toBe(msgIds[3]);
+
+    const merged = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", newThreadId)
+      .executeTakeFirstOrThrow();
+    expect(String(merged.last_read_message_id)).toBe(msgIds[3]);
+
+    const stale = await db
+      .selectFrom("thread_read_progress")
+      .select("thread_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", oldThreadId)
+      .executeTakeFirst();
+    expect(stale).toBeUndefined();
   });
 });

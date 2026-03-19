@@ -186,6 +186,16 @@ def _refresh_threads_for_message_ids(cur, list_id: int, message_ids: list[str]):
     )
 
 
+def _auto_track_participation_for_inserted_messages(
+    cur,
+    inserted_message_ids: dict[str, int],
+):
+    return store_lib._auto_track_participation_for_inserted_messages(
+        cur,
+        inserted_message_ids,
+    )
+
+
 def store_batch_live(conn, batch: list):
     return store_lib.store_batch_live(
         conn,
@@ -193,6 +203,7 @@ def store_batch_live(conn, batch: list):
         resolve_batch_thread_ids=_resolve_batch_thread_ids,
         insert_messages=_insert_messages,
         refresh_threads_for_message_ids=_refresh_threads_for_message_ids,
+        auto_track_participation_for_inserted_messages=_auto_track_participation_for_inserted_messages,
         insert_attachments=_insert_attachments,
     )
 
