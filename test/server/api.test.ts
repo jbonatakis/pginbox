@@ -305,4 +305,85 @@ describe("API not-found and success (require DB)", () => {
       await db.deleteFrom("lists").where("id", "=", listRow.id).execute();
     }
   });
+
+  it("GET /people serves a cached value until the cache is cleared", async () => {
+    serverCache.clear();
+
+    const before = await get("/people?limit=1");
+    expect(before.status).toBe(200);
+
+    const items = (before.json as { items: Array<{ id: number; name: string }> }).items;
+    if (items.length === 0) return;
+
+    const person = items[0]!;
+    const originalName = person.name;
+    const updatedName = `${originalName} ${uid()}`;
+
+    try {
+      await db
+        .updateTable("people")
+        .set({ name: updatedName })
+        .where("id", "=", person.id)
+        .execute();
+
+      const cached = await get("/people?limit=1");
+      expect(cached.status).toBe(200);
+      expect((cached.json as { items: Array<{ id: number; name: string }> }).items[0]?.name).toBe(originalName);
+
+      serverCache.clear();
+
+      const refreshed = await get("/people?limit=1");
+      expect(refreshed.status).toBe(200);
+      expect((refreshed.json as { items: Array<{ id: number; name: string }> }).items[0]?.name).toBe(updatedName);
+    } finally {
+      serverCache.clear();
+      await db
+        .updateTable("people")
+        .set({ name: originalName })
+        .where("id", "=", person.id)
+        .execute();
+    }
+  });
+
+  it("GET /people/:id serves a cached value until the cache is cleared", async () => {
+    serverCache.clear();
+
+    const peopleResponse = await get("/people?limit=1");
+    expect(peopleResponse.status).toBe(200);
+
+    const people = (peopleResponse.json as { items: Array<{ id: number }> }).items;
+    if (people.length === 0) return;
+
+    const personId = people[0]!.id;
+    const before = await get(`/people/${personId}`);
+    expect(before.status).toBe(200);
+
+    const originalName = (before.json as { name: string }).name;
+    const updatedName = `${originalName} ${uid()}`;
+
+    try {
+      await db
+        .updateTable("people")
+        .set({ name: updatedName })
+        .where("id", "=", personId)
+        .execute();
+
+      const cached = await get(`/people/${personId}`);
+      expect(cached.status).toBe(200);
+      expect((cached.json as { name: string }).name).toBe(originalName);
+
+      serverCache.clear();
+
+      const refreshed = await get(`/people/${personId}`);
+      expect(refreshed.status).toBe(200);
+      expect((refreshed.json as { name: string }).name).toBe(updatedName);
+    } finally {
+      serverCache.clear();
+      await db
+        .updateTable("people")
+        .set({ name: originalName })
+        .where("id", "=", personId)
+        .execute();
+    }
+  });
 });

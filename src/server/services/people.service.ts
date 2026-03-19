@@ -1,5 +1,16 @@
 import { db } from "../db";
 import { BadRequestError } from "../errors";
+import { InvalidCacheTtlError, serverCache } from "../cache";
+
+const PEOPLE_CACHE_TTL_MS = 45 * 60 * 1000;
+
+function peopleListCacheKey(query: { cursor?: string; limit: number }): string {
+  return `people:list:${query.limit}:${query.cursor ?? ""}`;
+}
+
+function personDetailCacheKey(id: number): string {
+  return `people:detail:${id}`;
+}
 
 function encodeCursor(messageCount: number, personId: number): string {
   return Buffer.from(JSON.stringify({ messageCount, personId })).toString("base64url");
@@ -19,6 +30,23 @@ function decodeCursorSafe(cursor: string): { messageCount: number; personId: num
 }
 
 export async function listPeople(query: { cursor?: string; limit: number }) {
+  try {
+    return await serverCache.getOrLoad(
+      peopleListCacheKey(query),
+      PEOPLE_CACHE_TTL_MS,
+      async () => queryPeopleList(query)
+    );
+  } catch (error) {
+    if (error instanceof InvalidCacheTtlError) {
+      console.error(`[cache] ${error.message}`);
+      return queryPeopleList(query);
+    }
+
+    throw error;
+  }
+}
+
+async function queryPeopleList(query: { cursor?: string; limit: number }) {
   const limit = Math.min(Math.max(1, query.limit), 100);
 
   let q = db
@@ -62,6 +90,23 @@ export async function listPeople(query: { cursor?: string; limit: number }) {
 }
 
 export async function getPerson(id: number) {
+  try {
+    return await serverCache.getOrLoad(
+      personDetailCacheKey(id),
+      PEOPLE_CACHE_TTL_MS,
+      async () => queryPerson(id)
+    );
+  } catch (error) {
+    if (error instanceof InvalidCacheTtlError) {
+      console.error(`[cache] ${error.message}`);
+      return queryPerson(id);
+    }
+
+    throw error;
+  }
+}
+
+async function queryPerson(id: number) {
   const person = await db
     .selectFrom("people")
     .selectAll()
