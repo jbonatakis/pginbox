@@ -46,9 +46,7 @@ describe("thread detail tracking helpers", () => {
 
     expect(view).not.toBeNull();
     expect(view?.statusText).toBe("3 unread messages");
-    expect(view?.participationText).toBe(
-      "Not in My Threads yet. Replying in this thread will add it there automatically."
-    );
+    expect(view?.participationText).toBeNull();
     expect(view?.followButtonLabel).toBe("Unfollow");
     expect(view?.showResumeReading).toBe(true);
     expect(view?.showMarkRead).toBe(true);

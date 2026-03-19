@@ -611,7 +611,9 @@
       <div class="progress-banner">
         <div class="progress-banner-copy">
           <span class="progress-banner-status">{trackingView.statusText}</span>
-          <p class="progress-banner-note">{trackingView.participationText}</p>
+          {#if trackingView.participationText}
+            <p class="progress-banner-note">{trackingView.participationText}</p>
+          {/if}
         </div>
         <div class="progress-banner-actions">
           {#if trackingView.showResumeReading}

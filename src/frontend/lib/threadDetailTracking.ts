@@ -13,7 +13,7 @@ export interface ThreadResumeTarget {
 export interface ThreadDetailTrackingView {
   followButtonLabel: "Follow" | "Unfollow";
   isTracked: boolean;
-  participationText: string;
+  participationText: string | null;
   resumeTarget: ThreadResumeTarget | null;
   showAddBackToMyThreads: boolean;
   showMarkRead: boolean;
@@ -85,7 +85,7 @@ export function getThreadTrackingStatusText(
 
 export function getThreadParticipationText(
   progress: Pick<ThreadProgress, "isFollowed" | "isInMyThreads" | "isMyThreadsSuppressed">
-): string {
+): string | null {
   if (progress.isMyThreadsSuppressed) {
     return "You replied in this thread but removed it from My Threads.";
   }
@@ -98,7 +98,7 @@ export function getThreadParticipationText(
     return "Tracked in My Threads because you replied.";
   }
 
-  return "Not in My Threads yet. Replying in this thread will add it there automatically.";
+  return null;
 }
 
 export function getThreadDetailTrackingView(
