@@ -4,7 +4,6 @@
   import type { ApiErrorShape } from "../../lib/api";
   import {
     getTrackedThreadErrorTitle,
-    getTrackedThreadLatestUrl,
     getTrackedThreadLoadingCopy,
     getTrackedThreadResumeUrl,
     type TrackedThreadTab,
@@ -82,12 +81,6 @@
                 on:click={(event) => onLinkClick(event, getTrackedThreadResumeUrl(thread))}
               >Resume</a>
             {/if}
-
-            <a
-              href={getTrackedThreadLatestUrl(thread)}
-              class="thread-action"
-              on:click={(event) => onLinkClick(event, getTrackedThreadLatestUrl(thread))}
-            >Latest</a>
           </div>
         </li>
       {/each}
