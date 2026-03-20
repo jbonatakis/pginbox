@@ -150,13 +150,16 @@ PARTICIPATION_MATCHES_CTE = """
     WITH ranked_matches AS (
         SELECT
             users.id AS user_id,
-            messages.thread_id,
+            messages.thread_id AS raw_thread_id,
+            threads.id AS stable_thread_id,
             messages.id AS message_id,
             row_number() OVER (
                 PARTITION BY users.id, messages.thread_id
                 ORDER BY messages.sent_at DESC NULLS FIRST, messages.id DESC
             ) AS rank
         FROM messages
+        INNER JOIN threads
+            ON threads.thread_id = messages.thread_id
         INNER JOIN users
             ON lower(users.email) = lower(messages.from_email)
         WHERE messages.id = ANY(%s)
@@ -164,7 +167,7 @@ PARTICIPATION_MATCHES_CTE = """
           AND users.email_verified_at IS NOT NULL
     ),
     matched_messages AS (
-        SELECT user_id, thread_id, message_id
+        SELECT user_id, raw_thread_id, stable_thread_id, message_id
         FROM ranked_matches
         WHERE rank = 1
     )
@@ -192,7 +195,7 @@ UPSERT_PARTICIPATION_TRACKING_SQL = (
     )
     SELECT
         matched_messages.user_id,
-        matched_messages.thread_id,
+        matched_messages.stable_thread_id,
         matched_messages.message_id,
         NULL,
         now(),
@@ -221,16 +224,16 @@ SEED_PARTICIPATION_PROGRESS_SQL = (
     )
     SELECT
         matched_messages.user_id,
-        matched_messages.thread_id,
+        matched_messages.stable_thread_id,
         matched_messages.message_id,
         now()
     FROM matched_messages
     INNER JOIN thread_tracking
         ON thread_tracking.user_id = matched_messages.user_id
-       AND thread_tracking.thread_id = matched_messages.thread_id
+       AND thread_tracking.thread_id = matched_messages.stable_thread_id
     LEFT JOIN thread_read_progress
         ON thread_read_progress.user_id = matched_messages.user_id
-       AND thread_read_progress.thread_id = matched_messages.thread_id
+       AND thread_read_progress.thread_id = matched_messages.stable_thread_id
     WHERE """
     + ACTIVE_TRACKING_SQL
     + """
@@ -247,7 +250,7 @@ DELETE_INACTIVE_PARTICIPATION_PROGRESS_SQL = (
     WHERE thread_read_progress.user_id = thread_tracking.user_id
       AND thread_read_progress.thread_id = thread_tracking.thread_id
       AND matched_messages.user_id = thread_tracking.user_id
-      AND matched_messages.thread_id = thread_tracking.thread_id
+      AND matched_messages.stable_thread_id = thread_tracking.thread_id
       AND thread_tracking.manual_followed_at IS NULL
       AND thread_tracking.participation_suppressed_at IS NOT NULL
 """
@@ -260,19 +263,20 @@ ADVANCE_PARTICIPATION_PROGRESS_SQL = (
     progress_candidates AS (
         SELECT
             matched_messages.user_id,
-            matched_messages.thread_id,
+            matched_messages.stable_thread_id AS thread_id,
+            matched_messages.raw_thread_id,
             matched_messages.message_id AS candidate_message_id,
             thread_read_progress.last_read_message_id AS existing_message_id,
             candidate_messages.sent_at AS candidate_sent_at,
             existing_messages.sent_at AS existing_sent_at,
-            existing_messages.thread_id AS existing_thread_id
+            existing_messages.thread_id AS existing_raw_thread_id
         FROM matched_messages
         INNER JOIN thread_tracking
             ON thread_tracking.user_id = matched_messages.user_id
-           AND thread_tracking.thread_id = matched_messages.thread_id
+           AND thread_tracking.thread_id = matched_messages.stable_thread_id
         INNER JOIN thread_read_progress
             ON thread_read_progress.user_id = matched_messages.user_id
-           AND thread_read_progress.thread_id = matched_messages.thread_id
+           AND thread_read_progress.thread_id = matched_messages.stable_thread_id
         INNER JOIN messages AS candidate_messages
             ON candidate_messages.id = matched_messages.message_id
         LEFT JOIN messages AS existing_messages
@@ -284,7 +288,7 @@ ADVANCE_PARTICIPATION_PROGRESS_SQL = (
     rows_to_advance AS (
         SELECT user_id, thread_id, candidate_message_id
         FROM progress_candidates
-        WHERE existing_thread_id IS DISTINCT FROM thread_id
+        WHERE existing_raw_thread_id IS DISTINCT FROM raw_thread_id
            OR (
                candidate_sent_at IS NULL
                AND existing_sent_at IS NOT NULL
