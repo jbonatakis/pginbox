@@ -15,7 +15,8 @@ MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
 GIT_PATCH_FROM_RE = re.compile(
     rb"^From [0-9a-f]{7,64} Mon Sep 17 00:00:00 2001(?: .*)?$"
 )
-RFC822_HEADER_RE = re.compile(rb"^[A-Za-z0-9-]+:")
+# RFC 5322 field names allow any printable US-ASCII except colon.
+RFC822_HEADER_RE = re.compile(rb"^[!-9;-~]+:")
 
 _TEXT_APPLICATION_TYPES = {
     "application/sql",

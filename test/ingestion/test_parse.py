@@ -113,6 +113,128 @@ Second message.
     assert records[1]["message_id"] == "<next@example.com>"
 
 
+def test_parse_mbox_keeps_real_message_separator_with_underscore_header(
+    ingest, tmp_path
+):
+    path = tmp_path / "pgsql-hackers.202603"
+    path.write_text(
+        """From pgsql-hackers-owner+archive@lists.postgresql.org Mon Mar 16 19:28:55 2026
+Date: Mon, 16 Mar 2026 15:28:06 -0400
+From: Example Author <author@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Patch set
+Message-ID: <root@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary"
+
+--boundary
+Content-Type: text/plain; charset=utf-8
+
+Please review.
+
+--boundary
+Content-Type: text/x-diff; charset=us-ascii
+Content-Disposition: attachment; filename="0001-test.patch"
+
+From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001
+From: Example Author <author@example.com>
+Date: Sun, 1 Sep 2024 02:27:50 -0400
+Subject: [PATCH] Example change
+
+---
+ file1 | 1 +
+ 1 file changed, 1 insertion(+)
+
+--boundary--
+
+From pgsql-hackers-owner+archive@lists.postgresql.org Wed Mar 18 10:13:48 2026
+Received: from mail.example.com ([192.0.2.10])
+	by lists.postgresql.org with esmtp id 123
+	for pgsql-hackers@postgresql.org;
+	Wed, 18 Mar 2026 10:09:08 +0000
+From: Someone Else <someone@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Re: Another thread
+Message-ID: <next@example.com>
+msip_labels: Example_Label
+Content-Type: text/plain; charset=utf-8
+
+Second message.
+""",
+        encoding="utf-8",
+    )
+
+    records = list(ingest.parse_mbox(path, list_id=1))
+
+    assert len(records) == 2
+    assert records[0]["message_id"] == "<root@example.com>"
+    assert records[1]["message_id"] == "<next@example.com>"
+    assert records[1]["body"] == "Second message.\n"
+
+
+def test_parse_mbox_preserves_plain_from_body_line_during_sanitized_parse(
+    ingest, tmp_path
+):
+    path = tmp_path / "pgsql-hackers.202603"
+    path.write_text(
+        """From pgsql-hackers-owner+archive@lists.postgresql.org Mon Mar 16 19:28:55 2026
+Date: Mon, 16 Mar 2026 15:28:06 -0400
+From: Example Author <author@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Patch set
+Message-ID: <root@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary"
+
+--boundary
+Content-Type: text/plain; charset=utf-8
+
+Hi Andrei,
+
+From my perspective, many AI integrations would want to limit state changes.
+
+That said, the design space becomes quite large.
+
+--boundary
+Content-Type: text/x-diff; charset=us-ascii
+Content-Disposition: attachment; filename="0001-test.patch"
+
+From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001
+From: Example Author <author@example.com>
+Date: Sun, 1 Sep 2024 02:27:50 -0400
+Subject: [PATCH] Example change
+
+---
+ file1 | 1 +
+ 1 file changed, 1 insertion(+)
+
+--boundary--
+
+From pgsql-hackers-owner+archive@lists.postgresql.org Wed Mar 18 10:13:48 2026
+Date: Wed, 18 Mar 2026 10:09:08 +0000
+From: Someone Else <someone@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Re: Another thread
+Message-ID: <next@example.com>
+Content-Type: text/plain; charset=utf-8
+
+Second message.
+""",
+        encoding="utf-8",
+    )
+
+    records = list(ingest.parse_mbox(path, list_id=1))
+
+    assert len(records) == 2
+    assert records[0]["message_id"] == "<root@example.com>"
+    assert records[0]["body"] == (
+        "Hi Andrei,\n\n"
+        "From my perspective, many AI integrations would want to limit state changes.\n\n"
+        "That said, the design space becomes quite large.\n"
+    )
+    assert records[1]["message_id"] == "<next@example.com>"
+
+
 def test_parse_mbox_prefers_message_date_header_over_mbox_separator_timestamp(
     ingest, tmp_path
 ):
