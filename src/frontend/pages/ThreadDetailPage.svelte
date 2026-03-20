@@ -743,9 +743,10 @@
   {/if}
 
   <p class="route-link">
-    <a href={backToThreadsPath} on:click={(event) => onLinkClick(event, backToThreadsPath)}
-      >Back to threads</a
-    >
+    <a href={backToThreadsPath} class="route-link-anchor" on:click={(event) => onLinkClick(event, backToThreadsPath)}>
+      <span class="route-link-icon" aria-hidden="true">←</span>
+      <span>Back to threads</span>
+    </a>
   </p>
 </section>
 
@@ -914,12 +915,36 @@
 
   .route-link {
     margin: 0;
+    display: flex;
+    justify-content: flex-start;
   }
 
-  .route-link a {
-    color: #0b4ea2;
-    font-weight: 600;
-    text-decoration-thickness: 1px;
+  .route-link-anchor {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.5rem;
+    padding: 0.52rem 0.88rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.88);
+    color: #334e68;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    box-shadow: 0 10px 24px rgba(16, 42, 67, 0.06);
+  }
+
+  .route-link-anchor:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .route-link-icon {
+    font-size: 1rem;
+    line-height: 1;
   }
 
   .jump-to-top-button {
