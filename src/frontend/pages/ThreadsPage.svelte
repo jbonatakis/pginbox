@@ -70,7 +70,7 @@
   $: isInitialLoad = status === "idle" || (status === "loading" && threads.length === 0);
   $: listsErrorMessage = listsError?.message ?? null;
   $: searchQuery = queryState.q ?? "";
-  $: threadIdsKey = threads.map((thread) => thread.thread_id).join(",");
+  $: threadIdsKey = threads.map((thread) => thread.id).join(",");
   $: toDate = toDateInputValue(queryState.to);
   $: if ($authStore.isBootstrapped && !$authStore.isAuthenticated) {
     clearActiveFollowStatesRequest();
@@ -316,7 +316,7 @@
   };
 
   const loadFollowStates = async (items: Thread[]): Promise<void> => {
-    const threadIds = items.map((thread) => thread.thread_id);
+    const threadIds = items.map((thread) => thread.id);
     const threadIdSet = new Set(threadIds);
     const nextKey = threadIds.join(",");
 
@@ -346,11 +346,11 @@
       if (requestId !== followStateRequestSequence) return;
 
       threads = threads.map((thread) => {
-        if (!threadIdSet.has(thread.thread_id)) return thread;
+        if (!threadIdSet.has(thread.id)) return thread;
 
         return {
           ...thread,
-          is_followed: response.states[thread.thread_id]?.isFollowed ?? false,
+          is_followed: response.states[thread.id]?.isFollowed ?? false,
         };
       });
       followStatesLoadedKey = nextKey;
@@ -456,13 +456,13 @@
     isFollowed: boolean
   ): void => {
     threads = threads.map((thread) => {
-      if (thread.thread_id !== requestedThreadId && thread.thread_id !== nextThreadId) {
+      if (thread.id !== requestedThreadId && thread.id !== nextThreadId) {
         return thread;
       }
 
       return {
         ...thread,
-        thread_id: thread.thread_id === requestedThreadId ? nextThreadId : thread.thread_id,
+        id: thread.id === requestedThreadId ? nextThreadId : thread.id,
         is_followed: isFollowed,
       };
     });

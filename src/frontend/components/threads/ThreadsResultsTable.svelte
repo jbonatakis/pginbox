@@ -80,7 +80,7 @@
     event.preventDefault();
     event.stopPropagation();
     dispatch("togglefollow", {
-      threadId: thread.thread_id,
+      threadId: thread.id,
       isFollowed: thread.is_followed === true,
     });
   };
@@ -133,10 +133,10 @@
                 title={!hasKnownFollowState(thread) ? "Loading follow state" : thread.is_followed === true ? "Following" : "Follow"}
                 class:followed={thread.is_followed === true}
                 class="follow-button"
-                disabled={isFollowPending(thread.thread_id) || !hasKnownFollowState(thread)}
+                disabled={isFollowPending(thread.id) || !hasKnownFollowState(thread)}
                 on:click={(event) => handleFollowClick(event, thread)}
               >
-                {#if isFollowPending(thread.thread_id) || !hasKnownFollowState(thread)}
+                {#if isFollowPending(thread.id) || !hasKnownFollowState(thread)}
                   <span class="follow-pending" aria-hidden="true"></span>
                 {:else}
                   <svg

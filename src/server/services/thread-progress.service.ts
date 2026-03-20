@@ -42,6 +42,11 @@ interface CanonicalizationMaps {
   progressByInput: Map<string, string>;
 }
 
+interface ResolvedThreadIdentity {
+  rawThreadId: string | null;
+  stableThreadId: string;
+}
+
 interface MergedTrackingRow {
   anchorMessageId: string;
   manualFollowedAt: Date | null;
@@ -137,6 +142,71 @@ function decodeCursorSafe(cursor: string): { lastActivityAt: string | null; thre
   } catch {
     return null;
   }
+}
+
+function toResolvedThreadIdentity(
+  resolvedThread: { id: string; thread_id: string } | null,
+  fallbackThreadId: string
+): ResolvedThreadIdentity {
+  if (!resolvedThread) {
+    return {
+      rawThreadId: null,
+      stableThreadId: fallbackThreadId,
+    };
+  }
+
+  return {
+    rawThreadId: resolvedThread.thread_id,
+    stableThreadId: resolvedThread.id,
+  };
+}
+
+async function resolveRequestedThreadIdentity(
+  inputThreadId: string
+): Promise<ResolvedThreadIdentity> {
+  return toResolvedThreadIdentity(await resolveThreadIdentifier(inputThreadId), inputThreadId);
+}
+
+async function resolveRequestedThreadIdentities(
+  inputThreadIds: string[]
+): Promise<Map<string, ResolvedThreadIdentity>> {
+  const uniqueThreadIds = [...new Set(inputThreadIds.map((threadId) => threadId.trim()).filter(Boolean))];
+  if (uniqueThreadIds.length === 0) {
+    return new Map();
+  }
+
+  const rows = await db
+    .selectFrom("threads")
+    .select(["id", "thread_id"])
+    .where(({ eb, or }) =>
+      or([
+        eb("threads.id", "in", uniqueThreadIds),
+        eb("threads.thread_id", "in", uniqueThreadIds),
+      ])
+    )
+    .execute();
+
+  const resolvedByInput = new Map<string, ResolvedThreadIdentity>();
+  for (const row of rows) {
+    const resolvedThread = toResolvedThreadIdentity(row, row.id);
+    if (uniqueThreadIds.includes(row.id)) {
+      resolvedByInput.set(row.id, resolvedThread);
+    }
+    if (uniqueThreadIds.includes(row.thread_id)) {
+      resolvedByInput.set(row.thread_id, resolvedThread);
+    }
+  }
+
+  for (const inputThreadId of uniqueThreadIds) {
+    if (!resolvedByInput.has(inputThreadId)) {
+      resolvedByInput.set(inputThreadId, {
+        rawThreadId: null,
+        stableThreadId: inputThreadId,
+      });
+    }
+  }
+
+  return resolvedByInput;
 }
 
 function getTrackingFlags(row: TrackingRow | null | undefined): TrackingFlags {
@@ -258,15 +328,17 @@ async function getHistoricalParticipationBackfillCandidates(
     ranked_user_messages AS (
       SELECT
         bu.user_id,
-        m.thread_id,
+        t.id AS thread_id,
         m.id AS anchor_message_id,
         row_number() OVER (
-          PARTITION BY bu.user_id, m.thread_id
+          PARTITION BY bu.user_id, t.id
           ORDER BY m.sent_at DESC NULLS FIRST, m.id DESC
         ) AS anchor_rank
       FROM batch_users bu
       JOIN messages m
         ON lower(m.from_email) = bu.email
+      JOIN threads t
+        ON t.thread_id = m.thread_id
     ),
     participation_anchors AS (
       SELECT user_id, thread_id, anchor_message_id
@@ -275,14 +347,16 @@ async function getHistoricalParticipationBackfillCandidates(
     ),
     ranked_thread_messages AS (
       SELECT
-        m.thread_id,
+        t.id AS thread_id,
         m.id AS latest_thread_message_id,
         row_number() OVER (
-          PARTITION BY m.thread_id
+          PARTITION BY t.id
           ORDER BY m.sent_at DESC NULLS FIRST, m.id DESC
         ) AS latest_rank
       FROM messages m
-      WHERE m.thread_id IN (SELECT DISTINCT thread_id FROM participation_anchors)
+      JOIN threads t
+        ON t.thread_id = m.thread_id
+      WHERE t.id IN (SELECT DISTINCT thread_id FROM participation_anchors)
     ),
     latest_thread_messages AS (
       SELECT thread_id, latest_thread_message_id
@@ -308,11 +382,11 @@ async function getHistoricalParticipationBackfillCandidates(
   }));
 }
 
-async function getLatestMessageIdInCanonicalOrder(threadId: string): Promise<string | null> {
+async function getLatestMessageIdInCanonicalOrder(rawThreadId: string): Promise<string | null> {
   const latestMsg = await db
     .selectFrom("messages")
     .select("id")
-    .where("thread_id", "=", threadId)
+    .where("thread_id", "=", rawThreadId)
     .orderBy(sql`sent_at DESC NULLS FIRST`)
     .orderBy("id", "desc")
     .limit(1)
@@ -321,11 +395,11 @@ async function getLatestMessageIdInCanonicalOrder(threadId: string): Promise<str
   return latestMsg ? msgIdStr(latestMsg.id) : null;
 }
 
-async function getLatestMessageIdAtOrBefore(threadId: string, cutoff: Date): Promise<string | null> {
+async function getLatestMessageIdAtOrBefore(rawThreadId: string, cutoff: Date): Promise<string | null> {
   const latestMsg = await db
     .selectFrom("messages")
     .select("id")
-    .where("thread_id", "=", threadId)
+    .where("thread_id", "=", rawThreadId)
     .where(({ eb, or }) =>
       or([
         eb("sent_at", "<=", cutoff),
@@ -340,28 +414,28 @@ async function getLatestMessageIdAtOrBefore(threadId: string, cutoff: Date): Pro
   return latestMsg ? msgIdStr(latestMsg.id) : null;
 }
 
-async function getThreadMessageCount(threadId: string): Promise<number> {
+async function getThreadMessageCount(rawThreadId: string): Promise<number> {
   const row = await db
     .selectFrom("messages")
     .select(sql<string>`count(*)`.as("count"))
-    .where("thread_id", "=", threadId)
+    .where("thread_id", "=", rawThreadId)
     .executeTakeFirst();
   return Number(row?.count ?? 0);
 }
 
 async function computeProgressStats(
-  threadId: string,
+  rawThreadId: string,
   lastReadMessageId: string | null
 ): Promise<ProgressStats> {
   if (lastReadMessageId === null) {
     const [countRow, firstMsgRow] = await Promise.all([
       db.selectFrom("messages")
         .select(sql<string>`count(*)`.as("count"))
-        .where("thread_id", "=", threadId)
+        .where("thread_id", "=", rawThreadId)
         .executeTakeFirst(),
       db.selectFrom("messages")
         .select("id")
-        .where("thread_id", "=", threadId)
+        .where("thread_id", "=", rawThreadId)
         .orderBy(sql`sent_at ASC NULLS LAST`)
         .orderBy("id", "asc")
         .limit(1)
@@ -386,7 +460,7 @@ async function computeProgressStats(
         row_number() OVER (ORDER BY m.sent_at ASC NULLS LAST, m.id ASC) AS ordinal,
         count(*) OVER () AS total_messages
       FROM messages m
-      WHERE m.thread_id = ${threadId}
+      WHERE m.thread_id = ${rawThreadId}
     )
     SELECT
       (SELECT ordinal::text FROM ordered WHERE id = ${lastReadMessageId}::bigint) AS last_read_ordinal,
@@ -411,7 +485,7 @@ async function computeProgressStats(
 }
 
 async function getMessageOrdinals(
-  threadId: string,
+  rawThreadId: string,
   messageIds: string[]
 ): Promise<Map<string, number>> {
   const uniqueMessageIds = [...new Set(messageIds)];
@@ -423,7 +497,7 @@ async function getMessageOrdinals(
         m.id,
         row_number() OVER (ORDER BY m.sent_at ASC NULLS LAST, m.id ASC) AS ordinal
       FROM messages m
-      WHERE m.thread_id = ${threadId}
+      WHERE m.thread_id = ${rawThreadId}
     )
     SELECT id::text AS id, ordinal::text AS ordinal
     FROM ordered
@@ -434,11 +508,11 @@ async function getMessageOrdinals(
 }
 
 async function compareMessagePosition(
-  threadId: string,
+  rawThreadId: string,
   candidateMessageId: string,
   existingMessageId: string
 ): Promise<number> {
-  const ordinalById = await getMessageOrdinals(threadId, [candidateMessageId, existingMessageId]);
+  const ordinalById = await getMessageOrdinals(rawThreadId, [candidateMessageId, existingMessageId]);
   const candidateOrdinal = ordinalById.get(candidateMessageId) ?? 0;
   const existingOrdinal = ordinalById.get(existingMessageId) ?? 0;
   return candidateOrdinal - existingOrdinal;
@@ -675,154 +749,22 @@ async function canonicalizeAllTrackingRowsForUser(userId: DbInt8Value): Promise<
   const userIdStr = toDbInt8(userId);
   const rows = await db
     .selectFrom("thread_tracking")
-    .selectAll()
+    .select("thread_id")
     .where("user_id", "=", userIdStr)
     .execute();
 
-  const mapping = new Map<string, string>();
-  if (rows.length === 0) return mapping;
-
-  const anchorRows = await db
-    .selectFrom("messages")
-    .select(["id", "thread_id"])
-    .where("id", "in", rows.map((row) => row.anchor_message_id))
-    .execute();
-  const threadIdByAnchorId = new Map(anchorRows.map((row) => [msgIdStr(row.id), row.thread_id]));
-
-  const rowsByCanonicalThreadId = new Map<string, TrackingRow[]>();
-  for (const row of rows) {
-    const canonicalThreadId = threadIdByAnchorId.get(msgIdStr(row.anchor_message_id)) ?? row.thread_id;
-    mapping.set(row.thread_id, canonicalThreadId);
-    const existing = rowsByCanonicalThreadId.get(canonicalThreadId) ?? [];
-    existing.push(row);
-    rowsByCanonicalThreadId.set(canonicalThreadId, existing);
-  }
-
-  for (const [canonicalThreadId, groupedRows] of rowsByCanonicalThreadId) {
-    const canonicalRow = groupedRows.find((row) => row.thread_id === canonicalThreadId) ?? null;
-
-    if (groupedRows.length === 1 && canonicalRow) {
-      continue;
-    }
-
-    if (groupedRows.length === 1) {
-      const row = groupedRows[0]!;
-      await db.updateTable("thread_tracking")
-        .set({
-          thread_id: canonicalThreadId,
-          updated_at: new Date(),
-        })
-        .where("user_id", "=", userIdStr)
-        .where("thread_id", "=", row.thread_id)
-        .execute();
-      continue;
-    }
-
-    const survivor = canonicalRow
-      ?? [...groupedRows].sort((left, right) => {
-        return getTrackingEventAt(right).getTime() - getTrackingEventAt(left).getTime();
-      })[0]!;
-    const merged = mergeTrackingRows(groupedRows);
-
-    await db.updateTable("thread_tracking")
-      .set({
-        thread_id: canonicalThreadId,
-        anchor_message_id: sql`${merged.anchorMessageId}::bigint`,
-        manual_followed_at: merged.manualFollowedAt,
-        participated_at: merged.participatedAt,
-        participation_suppressed_at: merged.participationSuppressedAt,
-        created_at: merged.createdAt,
-        updated_at: new Date(),
-      })
-      .where("user_id", "=", userIdStr)
-      .where("thread_id", "=", survivor.thread_id)
-      .execute();
-
-    const duplicateThreadIds = groupedRows
-      .filter((row) => row.thread_id !== survivor.thread_id)
-      .map((row) => row.thread_id);
-    if (duplicateThreadIds.length > 0) {
-      await db.deleteFrom("thread_tracking")
-        .where("user_id", "=", userIdStr)
-        .where("thread_id", "in", duplicateThreadIds)
-        .execute();
-    }
-  }
-
-  return mapping;
+  return new Map(rows.map((row) => [row.thread_id, row.thread_id]));
 }
 
 async function canonicalizeAllProgressRowsForUser(userId: DbInt8Value): Promise<Map<string, string>> {
   const userIdStr = toDbInt8(userId);
   const rows = await db
     .selectFrom("thread_read_progress")
-    .selectAll()
+    .select("thread_id")
     .where("user_id", "=", userIdStr)
     .execute();
 
-  const mapping = new Map<string, string>();
-  if (rows.length === 0) return mapping;
-
-  const messageRows = await db
-    .selectFrom("messages")
-    .select(["id", "thread_id"])
-    .where("id", "in", rows.map((row) => row.last_read_message_id))
-    .execute();
-  const threadIdByMessageId = new Map(messageRows.map((row) => [msgIdStr(row.id), row.thread_id]));
-
-  const rowsByCanonicalThreadId = new Map<string, ProgressRow[]>();
-  for (const row of rows) {
-    const canonicalThreadId = threadIdByMessageId.get(msgIdStr(row.last_read_message_id)) ?? row.thread_id;
-    mapping.set(row.thread_id, canonicalThreadId);
-    const existing = rowsByCanonicalThreadId.get(canonicalThreadId) ?? [];
-    existing.push(row);
-    rowsByCanonicalThreadId.set(canonicalThreadId, existing);
-  }
-
-  for (const [canonicalThreadId, groupedRows] of rowsByCanonicalThreadId) {
-    const canonicalRow = groupedRows.find((row) => row.thread_id === canonicalThreadId) ?? null;
-    const farthestRow = await pickFarthestProgressRow(canonicalThreadId, groupedRows);
-
-    if (groupedRows.length === 1 && canonicalRow) {
-      continue;
-    }
-
-    if (groupedRows.length === 1) {
-      const row = groupedRows[0]!;
-      await db.updateTable("thread_read_progress")
-        .set({
-          thread_id: canonicalThreadId,
-          updated_at: row.updated_at,
-        })
-        .where("user_id", "=", userIdStr)
-        .where("thread_id", "=", row.thread_id)
-        .execute();
-      continue;
-    }
-
-    const survivor = canonicalRow ?? farthestRow;
-    await db.updateTable("thread_read_progress")
-      .set({
-        thread_id: canonicalThreadId,
-        last_read_message_id: sql`${msgIdStr(farthestRow.last_read_message_id)}::bigint`,
-        updated_at: farthestRow.updated_at,
-      })
-      .where("user_id", "=", userIdStr)
-      .where("thread_id", "=", survivor.thread_id)
-      .execute();
-
-    const duplicateThreadIds = groupedRows
-      .filter((row) => row.thread_id !== survivor.thread_id)
-      .map((row) => row.thread_id);
-    if (duplicateThreadIds.length > 0) {
-      await db.deleteFrom("thread_read_progress")
-        .where("user_id", "=", userIdStr)
-        .where("thread_id", "in", duplicateThreadIds)
-        .execute();
-    }
-  }
-
-  return mapping;
+  return new Map(rows.map((row) => [row.thread_id, row.thread_id]));
 }
 
 async function deleteInactiveOrphanProgressRowsForUser(userId: DbInt8Value): Promise<void> {
@@ -875,11 +817,6 @@ function resolveCanonicalThreadId(
     ?? inputThreadId;
 }
 
-async function resolveInputThreadId(inputThreadId: string): Promise<string> {
-  const resolvedThread = await resolveThreadIdentifier(inputThreadId);
-  return resolvedThread?.thread_id ?? inputThreadId;
-}
-
 async function getCanonicalProgressRow(
   userId: DbInt8Value,
   threadId: string
@@ -896,7 +833,8 @@ async function getCanonicalProgressRow(
 
 async function getEffectiveLastReadMessageId(
   userId: DbInt8Value,
-  threadId: string,
+  stableThreadId: string,
+  rawThreadId: string,
   trackingRow: TrackingRow,
   progressRow: CanonicalProgressRow | null
 ): Promise<string | null> {
@@ -910,12 +848,12 @@ async function getEffectiveLastReadMessageId(
 
     if (followedAt && progressUpdatedAt && progressUpdatedAt.getTime() < followedAt.getTime()) {
       const repairedBaseline =
-        await resolveFollowSeedMessageId(threadId, null, followedAt)
+        await resolveFollowSeedMessageId(rawThreadId, null, followedAt)
         ?? progressRow.lastReadMessageId;
 
       await Promise.all([
-        upsertProgressRow(userId, threadId, repairedBaseline, followedAt),
-        updateTrackingAnchor(userId, threadId, repairedBaseline, followedAt),
+        upsertProgressRow(userId, stableThreadId, repairedBaseline, followedAt),
+        updateTrackingAnchor(userId, stableThreadId, repairedBaseline, followedAt),
       ]);
 
       return repairedBaseline;
@@ -927,38 +865,41 @@ async function getEffectiveLastReadMessageId(
 
 async function seedProgressIfMissing(
   userId: DbInt8Value,
-  threadId: string,
+  stableThreadId: string,
+  rawThreadId: string | null,
   seedLastReadMessageId?: string | null,
   trackedAt?: Date
 ): Promise<void> {
-  const existing = await getProgressRow(userId, threadId);
+  const existing = await getProgressRow(userId, stableThreadId);
   if (existing) return;
+  if (!rawThreadId) return;
 
-  const seedMsgId = await resolveFollowSeedMessageId(threadId, seedLastReadMessageId, trackedAt);
+  const seedMsgId = await resolveFollowSeedMessageId(rawThreadId, seedLastReadMessageId, trackedAt);
   if (!seedMsgId) return;
 
-  await upsertProgressRow(userId, threadId, seedMsgId, trackedAt ?? new Date());
+  await upsertProgressRow(userId, stableThreadId, seedMsgId, trackedAt ?? new Date());
 }
 
 async function advanceProgressIfAhead(
   userId: DbInt8Value,
-  threadId: string,
+  stableThreadId: string,
+  rawThreadId: string,
   candidateMessageId: string,
   updatedAt = new Date()
 ): Promise<void> {
-  const existing = await getCanonicalProgressRow(userId, threadId);
+  const existing = await getCanonicalProgressRow(userId, stableThreadId);
   if (!existing) {
-    await upsertProgressRow(userId, threadId, candidateMessageId, updatedAt);
+    await upsertProgressRow(userId, stableThreadId, candidateMessageId, updatedAt);
     return;
   }
 
   const comparison = await compareMessagePosition(
-    threadId,
+    rawThreadId,
     candidateMessageId,
     existing.lastReadMessageId
   );
   if (comparison > 0) {
-    await upsertProgressRow(userId, threadId, candidateMessageId, updatedAt);
+    await upsertProgressRow(userId, stableThreadId, candidateMessageId, updatedAt);
   }
 }
 
@@ -975,7 +916,7 @@ async function listTrackedThreads(
 
   let q = db
     .selectFrom("thread_tracking")
-    .innerJoin("threads", "threads.thread_id", "thread_tracking.thread_id")
+    .innerJoin("threads", "threads.id", "thread_tracking.thread_id")
     .innerJoin("lists", "lists.id", "threads.list_id")
     .leftJoin("thread_read_progress", (join) =>
       join
@@ -1001,7 +942,7 @@ async function listTrackedThreads(
     ])
     .where("thread_tracking.user_id", "=", userIdStr)
     .orderBy(sql`threads.last_activity_at DESC NULLS LAST`)
-    .orderBy("threads.thread_id", "asc")
+    .orderBy("threads.id", "asc")
     .limit(limit + 1);
 
   if (mode === "followed") {
@@ -1019,14 +960,14 @@ async function listTrackedThreads(
 
     if (lastActivityAt === null) {
       q = q.where(({ eb, and }) =>
-        and([eb("threads.last_activity_at", "is", null), eb("threads.thread_id", ">", threadId)])
+        and([eb("threads.last_activity_at", "is", null), eb("threads.id", ">", threadId)])
       );
     } else {
       const ts = new Date(lastActivityAt);
       q = q.where(({ eb, or, and }) =>
         or([
           eb("threads.last_activity_at", "<", ts),
-          and([eb("threads.last_activity_at", "=", ts), eb("threads.thread_id", ">", threadId)]),
+          and([eb("threads.last_activity_at", "=", ts), eb("threads.id", ">", threadId)]),
           eb("threads.last_activity_at", "is", null),
         ])
       );
@@ -1042,7 +983,7 @@ async function listTrackedThreads(
     items.map(async (row) => {
       const trackingRow: TrackingRow = {
         user_id: userIdStr,
-        thread_id: row.thread_id,
+        thread_id: row.id,
         anchor_message_id: row.anchor_message_id,
         manual_followed_at: row.manual_followed_at,
         participated_at: row.participated_at,
@@ -1052,18 +993,19 @@ async function listTrackedThreads(
       };
       const effectiveLastReadMessageId = await getEffectiveLastReadMessageId(
         userId,
+        row.id,
         row.thread_id,
         trackingRow,
         row.last_read_message_id
           ? {
-              threadId: row.thread_id,
+              threadId: row.id,
               lastReadMessageId: msgIdStr(row.last_read_message_id),
               updatedAt: row.progress_updated_at ?? row.created_at,
             }
           : null
       );
       const stats = await computeProgressStats(row.thread_id, effectiveLastReadMessageId);
-      const progress = buildThreadProgress(row.thread_id, trackingRow, stats, pageSize);
+      const progress = buildThreadProgress(row.id, trackingRow, stats, pageSize);
 
       return toTrackedThread({
         id: row.id,
@@ -1088,7 +1030,7 @@ async function listTrackedThreads(
   );
 
   const last = items[items.length - 1];
-  const nextCursor = hasMore && last ? encodeCursor(last.last_activity_at, last.thread_id) : null;
+  const nextCursor = hasMore && last ? encodeCursor(last.last_activity_at, last.id) : null;
   return { items: trackedThreads, nextCursor };
 }
 
@@ -1098,9 +1040,9 @@ export async function followThread(
   seedLastReadMessageId?: string | null
 ): Promise<ThreadFollowState> {
   const followedAt = new Date();
-  const resolvedThreadId = await resolveInputThreadId(threadId);
+  const resolvedThreadIdentity = await resolveRequestedThreadIdentity(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadIdentity.stableThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (existing) {
@@ -1114,11 +1056,18 @@ export async function followThread(
         .where("thread_id", "=", canonicalThreadId)
         .execute();
 
-      await seedProgressIfMissing(userId, canonicalThreadId, seedLastReadMessageId, followedAt);
+      await seedProgressIfMissing(
+        userId,
+        canonicalThreadId,
+        resolvedThreadIdentity.rawThreadId,
+        seedLastReadMessageId,
+        followedAt
+      );
     } else {
       await seedProgressIfMissing(
         userId,
         canonicalThreadId,
+        resolvedThreadIdentity.rawThreadId,
         seedLastReadMessageId,
         toDate(existing.manual_followed_at) ?? followedAt
       );
@@ -1128,7 +1077,13 @@ export async function followThread(
     return buildThreadFollowState(canonicalThreadId, refreshed);
   }
 
-  const seedMsgId = await resolveFollowSeedMessageId(canonicalThreadId, seedLastReadMessageId, followedAt);
+  const seedMsgId = resolvedThreadIdentity.rawThreadId
+    ? await resolveFollowSeedMessageId(
+        resolvedThreadIdentity.rawThreadId,
+        seedLastReadMessageId,
+        followedAt
+      )
+    : null;
   if (!seedMsgId) throw new BadRequestError("Thread not found");
 
   await db.insertInto("thread_tracking")
@@ -1153,9 +1108,9 @@ export async function unfollowThread(
   userId: DbInt8Value,
   threadId: string
 ): Promise<ThreadFollowState> {
-  const resolvedThreadId = await resolveInputThreadId(threadId);
+  const resolvedThreadIdentity = await resolveRequestedThreadIdentity(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadIdentity.stableThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (!existing) {
@@ -1201,9 +1156,9 @@ export async function removeThreadFromMyThreads(
   userId: DbInt8Value,
   threadId: string
 ): Promise<ThreadFollowState> {
-  const resolvedThreadId = await resolveInputThreadId(threadId);
+  const resolvedThreadIdentity = await resolveRequestedThreadIdentity(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadIdentity.stableThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (!existing || existing.participated_at == null) {
@@ -1233,9 +1188,9 @@ export async function addThreadBackToMyThreads(
   userId: DbInt8Value,
   threadId: string
 ): Promise<ThreadFollowState> {
-  const resolvedThreadId = await resolveInputThreadId(threadId);
+  const resolvedThreadIdentity = await resolveRequestedThreadIdentity(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadIdentity.stableThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (!existing || existing.participated_at == null) {
@@ -1254,7 +1209,7 @@ export async function addThreadBackToMyThreads(
   }
 
   if (existing.manual_followed_at == null) {
-    await seedProgressIfMissing(userId, canonicalThreadId);
+    await seedProgressIfMissing(userId, canonicalThreadId, resolvedThreadIdentity.rawThreadId);
   }
 
   const refreshed = await getTrackingRow(userId, canonicalThreadId);
@@ -1268,15 +1223,17 @@ export async function trackThreadParticipation(
 ): Promise<ThreadFollowState> {
   const message = await db
     .selectFrom("messages")
-    .select(["id", "thread_id"])
-    .where("id", "=", messageId)
+    .innerJoin("threads", "threads.thread_id", "messages.thread_id")
+    .select(["messages.id", "messages.thread_id", "threads.id as stable_thread_id"])
+    .where("messages.id", "=", messageId)
     .executeTakeFirst();
   if (!message) throw new BadRequestError("Message not found");
 
   await canonicalizeUserThreadState(userId);
 
-  const threadId = message.thread_id;
-  const existing = await getTrackingRow(userId, threadId);
+  const stableThreadId = message.stable_thread_id;
+  const rawThreadId = message.thread_id;
+  const existing = await getTrackingRow(userId, stableThreadId);
   if (existing) {
     await db.updateTable("thread_tracking")
       .set({
@@ -1285,13 +1242,13 @@ export async function trackThreadParticipation(
         updated_at: participatedAt,
       })
       .where("user_id", "=", toDbInt8(userId))
-      .where("thread_id", "=", threadId)
+      .where("thread_id", "=", stableThreadId)
       .execute();
   } else {
     await db.insertInto("thread_tracking")
       .values({
         user_id: toDbInt8(userId),
-        thread_id: threadId,
+        thread_id: stableThreadId,
         anchor_message_id: messageId,
         manual_followed_at: null,
         participated_at: participatedAt,
@@ -1302,15 +1259,15 @@ export async function trackThreadParticipation(
       .execute();
   }
 
-  const refreshed = await getTrackingRow(userId, threadId);
+  const refreshed = await getTrackingRow(userId, stableThreadId);
   const flags = getTrackingFlags(refreshed);
   if (flags.hasActiveTracking) {
-    await advanceProgressIfAhead(userId, threadId, messageId, participatedAt);
+    await advanceProgressIfAhead(userId, stableThreadId, rawThreadId, messageId, participatedAt);
   } else {
-    await deleteProgressRow(userId, threadId);
+    await deleteProgressRow(userId, stableThreadId);
   }
 
-  return buildThreadFollowState(threadId, refreshed);
+  return buildThreadFollowState(stableThreadId, refreshed);
 }
 
 export async function getProgress(
@@ -1318,9 +1275,9 @@ export async function getProgress(
   threadId: string,
   pageSize = 50
 ): Promise<ThreadProgress> {
-  const resolvedThreadId = await resolveInputThreadId(threadId);
+  const resolvedThreadIdentity = await resolveRequestedThreadIdentity(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadIdentity.stableThreadId, maps);
   const trackingRow = await getTrackingRow(userId, canonicalThreadId);
   const progressRow = await getCanonicalProgressRow(userId, canonicalThreadId);
   const flags = getTrackingFlags(trackingRow);
@@ -1330,17 +1287,23 @@ export async function getProgress(
       await deleteProgressRow(userId, canonicalThreadId);
     }
 
-    const totalMessages = await getThreadMessageCount(canonicalThreadId);
+    const totalMessages = resolvedThreadIdentity.rawThreadId
+      ? await getThreadMessageCount(resolvedThreadIdentity.rawThreadId)
+      : 0;
     return buildInactiveThreadProgress(canonicalThreadId, trackingRow, totalMessages, pageSize);
   }
 
   const effectiveLastReadMessageId = await getEffectiveLastReadMessageId(
     userId,
     canonicalThreadId,
+    resolvedThreadIdentity.rawThreadId ?? canonicalThreadId,
     trackingRow,
     progressRow
   );
-  const stats = await computeProgressStats(canonicalThreadId, effectiveLastReadMessageId);
+  const stats = await computeProgressStats(
+    resolvedThreadIdentity.rawThreadId ?? canonicalThreadId,
+    effectiveLastReadMessageId
+  );
   return buildThreadProgress(canonicalThreadId, trackingRow, stats, pageSize);
 }
 
@@ -1350,9 +1313,9 @@ export async function advanceProgress(
   lastReadMessageId: string,
   pageSize = 50
 ): Promise<ThreadProgress> {
-  const resolvedThreadId = await resolveInputThreadId(threadId);
+  const resolvedThreadIdentity = await resolveRequestedThreadIdentity(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadIdentity.stableThreadId, maps);
   const trackingRow = await getTrackingRow(userId, canonicalThreadId);
   const flags = getTrackingFlags(trackingRow);
 
@@ -1367,11 +1330,16 @@ export async function advanceProgress(
     .where("id", "=", lastReadMessageId)
     .executeTakeFirst();
   if (!msg) throw new BadRequestError("Message not found");
-  if (msg.thread_id !== canonicalThreadId) {
+  if (msg.thread_id !== resolvedThreadIdentity.rawThreadId) {
     throw new BadRequestError("Message does not belong to this thread");
   }
 
-  await advanceProgressIfAhead(userId, canonicalThreadId, lastReadMessageId);
+  await advanceProgressIfAhead(
+    userId,
+    canonicalThreadId,
+    resolvedThreadIdentity.rawThreadId ?? msg.thread_id,
+    lastReadMessageId
+  );
   return getProgress(userId, canonicalThreadId, pageSize);
 }
 
@@ -1380,9 +1348,9 @@ export async function markRead(
   threadId: string,
   pageSize = 50
 ): Promise<ThreadProgress> {
-  const resolvedThreadId = await resolveInputThreadId(threadId);
+  const resolvedThreadIdentity = await resolveRequestedThreadIdentity(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadIdentity.stableThreadId, maps);
   const trackingRow = await getTrackingRow(userId, canonicalThreadId);
   const flags = getTrackingFlags(trackingRow);
 
@@ -1391,7 +1359,9 @@ export async function markRead(
     return getProgress(userId, canonicalThreadId, pageSize);
   }
 
-  const latestMessageId = await getLatestMessageIdInCanonicalOrder(canonicalThreadId);
+  const latestMessageId = resolvedThreadIdentity.rawThreadId
+    ? await getLatestMessageIdInCanonicalOrder(resolvedThreadIdentity.rawThreadId)
+    : null;
   if (latestMessageId) {
     await upsertProgressRow(userId, canonicalThreadId, latestMessageId);
   }
@@ -1408,8 +1378,13 @@ export async function getThreadFollowStates(
     return { states: {} };
   }
 
-  const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadIds = [...new Set(normalizedThreadIds.map((threadId) => resolveCanonicalThreadId(threadId, maps)))];
+  await canonicalizeUserThreadState(userId);
+  const resolvedIdentities = await resolveRequestedThreadIdentities(normalizedThreadIds);
+  const canonicalThreadIds = [
+    ...new Set(
+      normalizedThreadIds.map((threadId) => resolvedIdentities.get(threadId)?.stableThreadId ?? threadId)
+    ),
+  ];
   const rows = await db
     .selectFrom("thread_tracking")
     .selectAll()
@@ -1421,7 +1396,7 @@ export async function getThreadFollowStates(
   return {
     states: Object.fromEntries(
       normalizedThreadIds.map((threadId) => {
-        const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+        const canonicalThreadId = resolvedIdentities.get(threadId)?.stableThreadId ?? threadId;
         const state = buildThreadFollowState(canonicalThreadId, rowsByThreadId.get(canonicalThreadId));
         return [threadId, {
           isFollowed: state.isFollowed,

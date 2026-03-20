@@ -82,14 +82,15 @@ async function createList(): Promise<number> {
 async function createThreadWithMessages(
   listId: number,
   messages: TestMessageSeed[]
-): Promise<{ messageIds: Record<string, string>; threadId: string }> {
+): Promise<{ messageIds: Record<string, string>; stableThreadId: string; threadId: string }> {
   const threadId = `my-threads-backfill-${uid()}`;
+  const stableId = stableThreadId();
   createdThreadIds.push(threadId);
 
   await db
     .insertInto("threads")
     .values({
-      id: stableThreadId(),
+      id: stableId,
       last_activity_at: null,
       list_id: listId,
       started_at: null,
@@ -120,7 +121,7 @@ async function createThreadWithMessages(
   const messageIds = Object.fromEntries(inserted.map((row) => [row.subject ?? "", String(row.id)]));
   createdMessageIds.push(...inserted.map((row) => String(row.id)));
 
-  return { messageIds, threadId };
+  return { messageIds, stableThreadId: stableId, threadId };
 }
 
 afterEach(async () => {
@@ -182,7 +183,7 @@ describe("historical My Threads backfill", () => {
       .selectFrom("thread_tracking")
       .select("anchor_message_id")
       .where("user_id", "=", exactUser.id)
-      .where("thread_id", "=", thread.threadId)
+      .where("thread_id", "=", thread.stableThreadId)
       .executeTakeFirstOrThrow();
     expect(String(exactTracking.anchor_message_id)).toBe(thread.messageIds["mine-1"]);
 
@@ -274,7 +275,7 @@ describe("historical My Threads backfill", () => {
         manual_followed_at: manualFollowedAt,
         participated_at: null,
         participation_suppressed_at: null,
-        thread_id: thread.threadId,
+        thread_id: thread.stableThreadId,
         updated_at: manualFollowedAt,
         user_id: user.id,
       })
@@ -294,7 +295,7 @@ describe("historical My Threads backfill", () => {
       .selectFrom("thread_tracking")
       .select(["anchor_message_id", "manual_followed_at", "participated_at"])
       .where("user_id", "=", user.id)
-      .where("thread_id", "=", thread.threadId)
+      .where("thread_id", "=", thread.stableThreadId)
       .executeTakeFirstOrThrow();
 
     expect(String(trackingRow.anchor_message_id)).toBe(thread.messageIds["mine-2"]);
@@ -324,13 +325,13 @@ describe("historical My Threads backfill", () => {
       .selectFrom("thread_tracking")
       .select("anchor_message_id")
       .where("user_id", "=", user.id)
-      .where("thread_id", "=", thread.threadId)
+      .where("thread_id", "=", thread.stableThreadId)
       .executeTakeFirstOrThrow();
     const progressRow = await db
       .selectFrom("thread_read_progress")
       .select("last_read_message_id")
       .where("user_id", "=", user.id)
-      .where("thread_id", "=", thread.threadId)
+      .where("thread_id", "=", thread.stableThreadId)
       .executeTakeFirstOrThrow();
 
     expect(String(trackingRow.anchor_message_id)).toBe(thread.messageIds["mine-2"]);
@@ -383,19 +384,19 @@ describe("historical My Threads backfill", () => {
       .selectFrom("thread_tracking")
       .select(({ fn }) => fn.countAll().as("count"))
       .where("user_id", "=", user.id)
-      .where("thread_id", "=", thread.threadId)
+      .where("thread_id", "=", thread.stableThreadId)
       .executeTakeFirstOrThrow();
     const progressCountRow = await db
       .selectFrom("thread_read_progress")
       .select(({ fn }) => fn.countAll().as("count"))
       .where("user_id", "=", user.id)
-      .where("thread_id", "=", thread.threadId)
+      .where("thread_id", "=", thread.stableThreadId)
       .executeTakeFirstOrThrow();
     const progressRow = await db
       .selectFrom("thread_read_progress")
       .select("last_read_message_id")
       .where("user_id", "=", user.id)
-      .where("thread_id", "=", thread.threadId)
+      .where("thread_id", "=", thread.stableThreadId)
       .executeTakeFirstOrThrow();
 
     expect(Number(trackingCountRow.count)).toBe(1);
