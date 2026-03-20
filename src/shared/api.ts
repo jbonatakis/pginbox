@@ -3,6 +3,8 @@
  * JSON over the wire: dates as ISO strings, bigint ids as strings.
  */
 
+export const DEFAULT_THREAD_MESSAGES_PAGE_SIZE = 50;
+
 // ---- Lists ----
 export interface List {
   id: number;
@@ -65,6 +67,13 @@ export interface AttachmentDetail extends AttachmentSummary {
 
 export interface MessageWithAttachments extends Message {
   attachments: AttachmentSummary[];
+}
+
+export interface MessagePermalink {
+  messageId: string;
+  threadId: string;
+  page: number;
+  pageSize: number;
 }
 
 export interface ThreadWithMessages extends Thread {

@@ -9,6 +9,7 @@ import type {
   AuthUserResponse,
   List,
   Message,
+  MessagePermalink,
   MessageWithAttachments,
   Person,
   TrackedThread,
@@ -211,6 +212,22 @@ export function toMessage(row: MessageRow): Message {
     refs: row.refs,
     body: row.body,
     sent_at_approx: row.sent_at_approx,
+  };
+}
+
+type MessagePermalinkRow = {
+  messageId: bigint | number | string;
+  page: number;
+  pageSize: number;
+  threadId: string;
+};
+
+export function toMessagePermalink(row: MessagePermalinkRow): MessagePermalink {
+  return {
+    messageId: bigintToString(row.messageId),
+    page: row.page,
+    pageSize: row.pageSize,
+    threadId: row.threadId,
   };
 }
 

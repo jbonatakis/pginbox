@@ -1,3 +1,4 @@
+import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "shared/api";
 import type {
   AttachmentDetail,
   AnalyticsSummary,
@@ -24,6 +25,7 @@ import type {
   ByHour,
   ByMonth,
   List,
+  MessagePermalink,
   Paginated,
   Person,
   PersonListItem,
@@ -41,7 +43,6 @@ import type {
 const API_BASE_PATH = "/api";
 export const AUTH_REQUEST_CREDENTIALS: RequestCredentials = "same-origin";
 const DEFAULT_PAGINATION_LIMIT = 25;
-const DEFAULT_THREAD_MESSAGES_LIMIT = 50;
 const MIN_PAGINATION_LIMIT = 1;
 const MAX_PAGINATION_LIMIT = 100;
 
@@ -180,7 +181,7 @@ export function clampPeopleLimit(limit?: number): number {
 }
 
 export function clampThreadMessageLimit(limit?: number): number {
-  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_THREAD_MESSAGES_LIMIT;
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_THREAD_MESSAGES_PAGE_SIZE;
   return Math.max(MIN_PAGINATION_LIMIT, Math.min(MAX_PAGINATION_LIMIT, Math.trunc(limit)));
 }
 
@@ -457,6 +458,16 @@ export async function getThread(
   return requestJson<ThreadDetail>(path, options);
 }
 
+export async function getMessagePermalink(
+  messageId: string,
+  options: RequestOptions = {}
+): Promise<MessagePermalink> {
+  return requestJson<MessagePermalink>(
+    withApiBase(`/messages/${encodePathParam(messageId)}/permalink`),
+    options
+  );
+}
+
 export async function getAttachment(
   id: string | number,
   options: RequestOptions = {}
@@ -674,6 +685,9 @@ export const api = {
   },
   lists: {
     list: listLists,
+  },
+  messages: {
+    getPermalink: getMessagePermalink,
   },
   people: {
     get: getPerson,

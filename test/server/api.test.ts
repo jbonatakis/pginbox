@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "../../src/shared/api";
 import { app } from "../../src/server/app";
 import { serverCache } from "../../src/server/cache";
 import { db } from "../../src/server/db";
@@ -35,6 +36,12 @@ describe("API validation (4xx)", () => {
 
   it("GET /messages/:id returns 400 for negative id", async () => {
     const { status, json } = await get("/messages/-1");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "Invalid message id" });
+  });
+
+  it("GET /messages/:id/permalink returns 400 for non-numeric id", async () => {
+    const { status, json } = await get("/messages/abc/permalink");
     expect(status).toBe(400);
     expect(json).toEqual({ message: "Invalid message id" });
   });
@@ -141,6 +148,73 @@ describe("API not-found and success (require DB)", () => {
     const { status, json } = await get("/messages/999999999999999");
     expect(status).toBe(404);
     expect(json).toEqual({ message: "Message not found" });
+  });
+
+  it("GET /messages/:id/permalink returns 404 for nonexistent id", async () => {
+    const { status, json } = await get("/messages/999999999999999/permalink");
+    expect(status).toBe(404);
+    expect(json).toEqual({ message: "Message not found" });
+  });
+
+  it("GET /messages/:id/permalink resolves the stable thread id and containing page", async () => {
+    const listRow = await db
+      .insertInto("lists")
+      .values({ name: `test-message-permalink-${uid()}` })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    const rawThreadId = `test-message-permalink-thread-${uid()}`;
+    const stableId = stableThreadId();
+
+    try {
+      await db
+        .insertInto("threads")
+        .values({
+          id: stableId,
+          thread_id: rawThreadId,
+          list_id: listRow.id,
+          subject: "Message permalink fixture",
+          started_at: new Date(Date.UTC(2024, 0, 1, 0, 0, 0)),
+          last_activity_at: new Date(Date.UTC(2024, 0, 1, 0, 0, 54)),
+          message_count: 55,
+        })
+        .execute();
+
+      const insertedMessages = await db
+        .insertInto("messages")
+        .values(
+          Array.from({ length: 55 }, (_, index) => ({
+            message_id: `test-message-permalink-${uid()}-${index}@example.com`,
+            thread_id: rawThreadId,
+            list_id: listRow.id,
+            sent_at: new Date(Date.UTC(2024, 0, 1, 0, 0, index)),
+            from_name: "Permalink Test",
+            from_email: "permalink@example.com",
+            subject: `Fixture ${index + 1}`,
+            body: null,
+            in_reply_to: null,
+            refs: null,
+            sent_at_approx: false,
+          }))
+        )
+        .returning("id")
+        .execute();
+
+      const targetMessageId = String(insertedMessages[50]!.id);
+      const { status, json } = await get(`/messages/${targetMessageId}/permalink`);
+
+      expect(status).toBe(200);
+      expect(json).toEqual({
+        messageId: targetMessageId,
+        threadId: stableId,
+        page: 2,
+        pageSize: DEFAULT_THREAD_MESSAGES_PAGE_SIZE,
+      });
+    } finally {
+      await db.deleteFrom("messages").where("thread_id", "=", rawThreadId).execute();
+      await db.deleteFrom("threads").where("id", "=", stableId).execute();
+      await db.deleteFrom("lists").where("id", "=", listRow.id).execute();
+    }
   });
 
   it("GET /attachments/:id returns 200 with content for a previewable attachment", async () => {

@@ -1,5 +1,10 @@
 <script lang="ts">
-  import type { ThreadDetail, ThreadFollowState, ThreadProgress } from "shared/api";
+  import {
+    DEFAULT_THREAD_MESSAGES_PAGE_SIZE,
+    type ThreadDetail,
+    type ThreadFollowState,
+    type ThreadProgress,
+  } from "shared/api";
   import { onDestroy, tick } from "svelte";
   import { get } from "svelte/store";
   import ErrorState from "../components/ErrorState.svelte";
@@ -38,7 +43,6 @@
 
   export let threadId: string;
 
-  const THREAD_MESSAGES_PAGE_LIMIT = 50;
   const JUMP_TO_TOP_VISIBILITY_OFFSET = 280;
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
@@ -342,7 +346,7 @@
       const [response, progressResponse] = await Promise.all([
         api.threads.get(
           targetThreadId,
-          { limit: THREAD_MESSAGES_PAGE_LIMIT, page: targetPage },
+          { limit: DEFAULT_THREAD_MESSAGES_PAGE_SIZE, page: targetPage },
           { signal: requestController.signal }
         ),
         shouldLoadProgress
@@ -580,7 +584,7 @@
   $: hasThreadId = threadId.length > 0;
   $: currentPage = thread?.messagePagination.page ?? 1;
   $: totalPages = thread?.messagePagination.totalPages ?? 1;
-  $: pageSize = thread?.messagePagination.pageSize ?? THREAD_MESSAGES_PAGE_LIMIT;
+  $: pageSize = thread?.messagePagination.pageSize ?? DEFAULT_THREAD_MESSAGES_PAGE_SIZE;
   $: startIndex = (currentPage - 1) * pageSize;
   $: pageSummary = pageSummaryLabel(currentPage, totalPages);
   $: rangeSummary = thread ? messageRangeLabel(startIndex, thread.messages.length, thread.message_count) : null;
