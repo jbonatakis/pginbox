@@ -37,6 +37,7 @@ describe("thread tracking serialization", () => {
   it("serializes tracked-thread rows and tab counts", () => {
     expect(
       toTrackedThread({
+        id: "TTHREAD2",
         thread_id: "thread-2",
         list_id: 9,
         subject: "Subject",
@@ -55,6 +56,7 @@ describe("thread tracking serialization", () => {
         latest_page: 4,
       })
     ).toEqual({
+      id: "TTHREAD2",
       thread_id: "thread-2",
       list_id: 9,
       subject: "Subject",

@@ -155,6 +155,7 @@ export interface ThreadTracking {
 }
 
 export interface Threads {
+  id: string;
   last_activity_at: Timestamp | null;
   list_id: number;
   message_count: Generated<number>;

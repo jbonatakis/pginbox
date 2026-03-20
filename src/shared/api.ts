@@ -11,6 +11,7 @@ export interface List {
 
 // ---- Threads ----
 export interface Thread {
+  id: string;
   thread_id: string;
   list_id: number;
   subject: string | null;
@@ -88,6 +89,7 @@ export interface PersonListItem {
 }
 
 export interface PersonTopThread {
+  id: string;
   thread_id: string;
   subject: string | null;
   last_activity_at: string | null;

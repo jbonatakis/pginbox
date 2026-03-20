@@ -84,6 +84,7 @@ export function toAuthMessageResponse(
 
 // Thread (list item): dates -> ISO strings
 type ThreadRow = {
+  id: string;
   thread_id: string;
   list_id: number;
   subject: string | null;
@@ -96,6 +97,7 @@ type ThreadRow = {
 
 export function toThread(row: ThreadRow): Thread {
   const thread: Thread = {
+    id: row.id,
     thread_id: row.thread_id,
     list_id: row.list_id,
     subject: row.subject,
@@ -283,6 +285,7 @@ type PersonRow = {
   created_at: Date;
 };
 type PersonTopThreadRow = {
+  id: string;
   thread_id: string;
   subject: string | null;
   last_activity_at: Date | null;
@@ -300,6 +303,7 @@ export function toPerson(
     created_at: dateToIso(person.created_at) ?? "",
     emails,
     topThreads: topThreads.map((t) => ({
+      id: t.id,
       thread_id: t.thread_id,
       subject: t.subject,
       last_activity_at: dateToIso(t.last_activity_at),

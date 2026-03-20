@@ -7,6 +7,10 @@ function uid(): string {
   return randomBytes(6).toString("hex");
 }
 
+function stableThreadId(): string {
+  return uid().slice(0, 10).toUpperCase();
+}
+
 function previousUserId(userId: string): string {
   const value = BigInt(userId);
   return value > 0n ? (value - 1n).toString() : "0";
@@ -85,6 +89,7 @@ async function createThreadWithMessages(
   await db
     .insertInto("threads")
     .values({
+      id: stableThreadId(),
       last_activity_at: null,
       list_id: listId,
       started_at: null,

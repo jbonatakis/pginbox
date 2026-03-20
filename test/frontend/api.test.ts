@@ -119,6 +119,7 @@ describe("frontend tracked-thread api helpers", () => {
     const followedPage = {
       items: [
         {
+          id: "TFOLLOWED1",
           thread_id: "followed-thread",
           list_id: 1,
           subject: "Followed",
@@ -142,6 +143,7 @@ describe("frontend tracked-thread api helpers", () => {
     const myThreadsPage = {
       items: [
         {
+          id: "TMY1",
           thread_id: "my-thread",
           list_id: 1,
           subject: "Mine",

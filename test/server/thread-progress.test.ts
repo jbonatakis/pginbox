@@ -14,6 +14,10 @@ function uid(): string {
   return randomBytes(6).toString("hex");
 }
 
+function stableThreadId(): string {
+  return uid().slice(0, 10).toUpperCase();
+}
+
 interface TestUser {
   id: string;
   email: string;
@@ -98,7 +102,14 @@ async function createThread(
   const threadId = `test-thread-${uid()}`;
   await db
     .insertInto("threads")
-    .values({ thread_id: threadId, list_id: listId, subject: "Test", started_at: null, last_activity_at: null })
+    .values({
+      id: stableThreadId(),
+      thread_id: threadId,
+      list_id: listId,
+      subject: "Test",
+      started_at: null,
+      last_activity_at: null,
+    })
     .execute();
   await db
     .insertInto("messages")
@@ -135,7 +146,14 @@ async function createThreadWithSentAtValues(
   const threadId = `test-thread-${uid()}`;
   await db
     .insertInto("threads")
-    .values({ thread_id: threadId, list_id: listId, subject: "Test", started_at: null, last_activity_at: null })
+    .values({
+      id: stableThreadId(),
+      thread_id: threadId,
+      list_id: listId,
+      subject: "Test",
+      started_at: null,
+      last_activity_at: null,
+    })
     .execute();
   await db
     .insertInto("messages")
@@ -1605,7 +1623,14 @@ describe("canonicalization after thread_id drift", () => {
 
     await db
       .insertInto("threads")
-      .values({ thread_id: oldThreadId, list_id: listId, subject: "Old", started_at: null, last_activity_at: null })
+      .values({
+        id: stableThreadId(),
+        thread_id: oldThreadId,
+        list_id: listId,
+        subject: "Old",
+        started_at: null,
+        last_activity_at: null,
+      })
       .execute();
 
     await db
@@ -1654,7 +1679,14 @@ describe("canonicalization after thread_id drift", () => {
   async function simulateDrift(): Promise<void> {
     await db
       .insertInto("threads")
-      .values({ thread_id: newThreadId, list_id: listId, subject: "New", started_at: null, last_activity_at: null })
+      .values({
+        id: stableThreadId(),
+        thread_id: newThreadId,
+        list_id: listId,
+        subject: "New",
+        started_at: null,
+        last_activity_at: null,
+      })
       .execute();
     await db
       .updateTable("messages")

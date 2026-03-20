@@ -22,6 +22,10 @@ function uid(): string {
   return randomBytes(6).toString("hex");
 }
 
+function stableThreadId(): string {
+  return uid().slice(0, 10).toUpperCase();
+}
+
 describe("API validation (4xx)", () => {
   it("GET /messages/:id returns 400 for non-numeric id", async () => {
     const { status, json } = await get("/messages/abc");
@@ -263,6 +267,7 @@ describe("API not-found and success (require DB)", () => {
       await db
         .insertInto("threads")
         .values({
+          id: stableThreadId(),
           thread_id: threadId,
           list_id: listRow.id,
           subject: "Recent analytics test message",

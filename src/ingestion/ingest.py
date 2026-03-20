@@ -176,13 +176,23 @@ def _overwrite_messages(cur, batch: list) -> dict[str, int]:
     )
 
 
-def _refresh_threads_for_message_ids(cur, list_id: int, message_ids: list[str]):
+def _refresh_threads_for_message_ids(
+    cur,
+    list_id: int,
+    message_ids: list[str],
+    *,
+    fetch_thread_aggregates=store_lib._fetch_thread_aggregates,
+    resolve_stable_thread_ids=store_lib._resolve_stable_thread_ids,
+    upsert_thread_rows=store_lib._upsert_thread_rows,
+):
     return store_lib._refresh_threads_for_message_ids(
         cur,
         list_id,
         message_ids,
         fetch_thread_ids=_fetch_thread_ids,
-        upsert_touched_threads_sql=UPSERT_TOUCHED_THREADS_SQL,
+        fetch_thread_aggregates=fetch_thread_aggregates,
+        resolve_stable_thread_ids=resolve_stable_thread_ids,
+        upsert_thread_rows=upsert_thread_rows,
     )
 
 

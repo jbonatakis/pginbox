@@ -193,7 +193,8 @@ CREATE TABLE public.threads (
     subject text,
     started_at timestamp with time zone,
     last_activity_at timestamp with time zone,
-    message_count integer DEFAULT 1 NOT NULL
+    message_count integer DEFAULT 1 NOT NULL,
+    id text NOT NULL
 );
 
 
@@ -951,6 +952,13 @@ CREATE INDEX idx_people_emails_person_id ON public.people_emails USING btree (pe
 
 
 --
+-- Name: idx_threads_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_threads_id ON public.threads USING btree (id);
+
+
+--
 -- Name: idx_threads_last_activity; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1120,4 +1128,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260317000012'),
     ('20260317000013'),
     ('20260318000014'),
-    ('20260319000015');
+    ('20260319000015'),
+    ('20260320000016');

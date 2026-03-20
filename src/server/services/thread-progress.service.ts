@@ -977,6 +977,7 @@ async function listTrackedThreads(
         .onRef("thread_read_progress.thread_id", "=", "thread_tracking.thread_id")
     )
     .select([
+      "threads.id",
       "threads.thread_id",
       "threads.list_id",
       "threads.subject",

@@ -166,13 +166,13 @@ def test_canonical_thread_ids_use_references_when_in_reply_to_is_missing(ingest)
 
 
 def test_refresh_threads_for_message_ids_uses_persisted_thread_ids(ingest, monkeypatch):
-    calls = []
+    fetched = {}
+    rebuilt = {}
+    resolved = {}
+    upserts = []
 
     class FakeCursor:
-        def execute(self, sql, params):
-            calls.append((sql, params))
-
-    fetched = {}
+        pass
 
     def fake_fetch_thread_ids(cur, list_id, message_ids):
         fetched["list_id"] = list_id
@@ -182,34 +182,55 @@ def test_refresh_threads_for_message_ids_uses_persisted_thread_ids(ingest, monke
             "<two@example.com>": "<root@example.com>",
         }
 
+    def fake_fetch_thread_aggregates(cur, list_id, thread_ids):
+        rebuilt["list_id"] = list_id
+        rebuilt["thread_ids"] = thread_ids
+        return [
+            ("<root@example.com>", 17, "Subject", None, None, 2),
+        ]
+
+    def fake_resolve_stable_thread_ids(cur, thread_ids, assigned_stable_ids_by_thread_id=None):
+        resolved["thread_ids"] = thread_ids
+        resolved["assigned"] = assigned_stable_ids_by_thread_id
+        return {"<root@example.com>": "THREAD0001"}
+
+    def fake_upsert_thread_rows(cur, rows):
+        upserts.append(rows)
+
     monkeypatch.setattr(ingest, "_fetch_thread_ids", fake_fetch_thread_ids)
 
     ingest._refresh_threads_for_message_ids(
         FakeCursor(),
         17,
         ["<one@example.com>", "<two@example.com>"],
+        fetch_thread_aggregates=fake_fetch_thread_aggregates,
+        resolve_stable_thread_ids=fake_resolve_stable_thread_ids,
+        upsert_thread_rows=fake_upsert_thread_rows,
     )
 
     assert fetched == {
         "list_id": 17,
         "message_ids": ["<one@example.com>", "<two@example.com>"],
     }
-    assert calls == [
-        (
-            ingest.UPSERT_TOUCHED_THREADS_SQL,
-            (17, ["<root@example.com>"]),
-        )
+    assert rebuilt == {
+        "list_id": 17,
+        "thread_ids": ["<root@example.com>"],
+    }
+    assert resolved == {
+        "thread_ids": ["<root@example.com>"],
+        "assigned": None,
+    }
+    assert upserts == [
+        [
+            ("<root@example.com>", "THREAD0001", 17, "Subject", None, None, 2),
+        ]
     ]
 
 
 def test_refresh_threads_for_message_ids_scopes_upsert_to_current_list(
     ingest, monkeypatch
 ):
-    calls = []
-
-    class FakeCursor:
-        def execute(self, sql, params):
-            calls.append((sql, params))
+    rebuilt = {}
 
     def fake_fetch_thread_ids(cur, list_id, message_ids):
         assert list_id == 42
@@ -218,16 +239,21 @@ def test_refresh_threads_for_message_ids_scopes_upsert_to_current_list(
             "<b@example.com>": "<shared-root@example.com>",
         }
 
+    def fake_fetch_thread_aggregates(cur, list_id, thread_ids):
+        rebuilt["list_id"] = list_id
+        rebuilt["thread_ids"] = thread_ids
+        return []
+
     monkeypatch.setattr(ingest, "_fetch_thread_ids", fake_fetch_thread_ids)
 
     ingest._refresh_threads_for_message_ids(
-        FakeCursor(),
+        object(),
         42,
         ["<a@example.com>", "<b@example.com>"],
+        fetch_thread_aggregates=fake_fetch_thread_aggregates,
     )
 
-    assert len(calls) == 1
-    sql, params = calls[0]
-    assert sql == ingest.UPSERT_TOUCHED_THREADS_SQL
-    assert params[0] == 42
-    assert params[1] == ["<shared-root@example.com>"]
+    assert rebuilt == {
+        "list_id": 42,
+        "thread_ids": ["<shared-root@example.com>"],
+    }

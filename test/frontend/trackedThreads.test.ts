@@ -42,6 +42,7 @@ function trackedThread(
   overrides: Partial<TrackedThread> = {}
 ): TrackedThread {
   return {
+    id: `stable-${threadId}`,
     thread_id: threadId,
     list_id: 1,
     subject: `Thread ${threadId}`,
