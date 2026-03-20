@@ -33,6 +33,7 @@
   export let threadId: string;
 
   const THREAD_MESSAGES_PAGE_LIMIT = 50;
+  const JUMP_TO_TOP_VISIBILITY_OFFSET = 280;
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
@@ -51,6 +52,7 @@
   let lastLoadedThreadId: string | null = null;
   let requestedPage: number | null = null;
   let requestSequence = 0;
+  let showJumpToTop = false;
   let status: ThreadDetailStatus = "idle";
   let thread: ThreadDetail | null = null;
   let progress: ThreadProgress | null = null;
@@ -198,13 +200,36 @@
       anchorElement.scrollIntoView({ block: "start" });
     }
 
+    syncJumpToTopVisibility();
     lastAppliedHashAnchorKey = anchorKey;
+  };
+
+  const syncJumpToTopVisibility = (): void => {
+    if (typeof window === "undefined") {
+      showJumpToTop = false;
+      return;
+    }
+
+    showJumpToTop = window.scrollY > JUMP_TO_TOP_VISIBILITY_OFFSET;
   };
 
   const scrollToTop = (): void => {
     if (typeof window === "undefined") return;
+    showJumpToTop = false;
     window.requestAnimationFrame(() => {
       window.scrollTo({ left: 0, top: 0 });
+    });
+  };
+
+  const jumpToTop = (): void => {
+    if (typeof window === "undefined") return;
+    showJumpToTop = false;
+
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({
+      left: 0,
+      top: 0,
+      behavior: prefersReducedMotion ? "auto" : "smooth",
     });
   };
 
@@ -270,6 +295,7 @@
       if (mode === "navigate" && shouldScrollToTop) {
         scrollToTop();
       }
+      syncJumpToTopVisibility();
     } catch (rawError) {
       const apiError = toApiErrorShape(rawError);
       if (apiError.code === "ABORTED" || requestId !== requestSequence) return;
@@ -478,6 +504,7 @@
     progress = null;
     progressRequestedThreadId = null;
     requestedPage = null;
+    showJumpToTop = false;
     thread = null;
     status = "error";
   } else if (threadId !== lastLoadedThreadId) {
@@ -534,6 +561,8 @@
 <svelte:head>
   <title>{documentTitle}</title>
 </svelte:head>
+
+<svelte:window on:scroll={syncJumpToTopVisibility} />
 
 <section class="page">
   <h1 class="sr-only" data-route-heading tabindex="-1">Thread Detail</h1>
@@ -704,12 +733,20 @@
       on:next={goToNextPage}
       on:last={goToLastPage}
     />
+
+    {#if showJumpToTop}
+      <button class="jump-to-top-button" type="button" on:click={jumpToTop} aria-label="Jump to top">
+        <span class="jump-to-top-icon" aria-hidden="true">↑</span>
+        <span>Top</span>
+      </button>
+    {/if}
   {/if}
 
   <p class="route-link">
-    <a href={backToThreadsPath} on:click={(event) => onLinkClick(event, backToThreadsPath)}
-      >Back to threads</a
-    >
+    <a href={backToThreadsPath} class="route-link-anchor" on:click={(event) => onLinkClick(event, backToThreadsPath)}>
+      <span class="route-link-icon" aria-hidden="true">←</span>
+      <span>Back to threads</span>
+    </a>
   </p>
 </section>
 
@@ -878,12 +915,66 @@
 
   .route-link {
     margin: 0;
+    display: flex;
+    justify-content: flex-start;
   }
 
-  .route-link a {
-    color: #0b4ea2;
-    font-weight: 600;
-    text-decoration-thickness: 1px;
+  .route-link-anchor {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.5rem;
+    padding: 0.52rem 0.88rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.88);
+    color: #334e68;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    box-shadow: 0 10px 24px rgba(16, 42, 67, 0.06);
+  }
+
+  .route-link-anchor:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .route-link-icon {
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .jump-to-top-button {
+    position: fixed;
+    right: max(1rem, calc(0.75rem + env(safe-area-inset-right)));
+    bottom: max(1rem, calc(0.75rem + env(safe-area-inset-bottom)));
+    z-index: 40;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid rgba(11, 78, 162, 0.25);
+    border-radius: 999px;
+    background: rgba(11, 78, 162, 0.94);
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 0.82rem;
+    line-height: 1;
+    padding: 0.72rem 0.9rem;
+    box-shadow: 0 14px 32px rgba(16, 42, 67, 0.18);
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+  }
+
+  .jump-to-top-button:hover {
+    background: rgba(12, 90, 191, 0.96);
+  }
+
+  .jump-to-top-icon {
+    font-size: 0.95rem;
+    line-height: 1;
   }
 
   .sr-only {
@@ -896,5 +987,13 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  @media (max-width: 640px) {
+    .jump-to-top-button {
+      right: max(0.85rem, calc(0.65rem + env(safe-area-inset-right)));
+      bottom: max(0.85rem, calc(0.65rem + env(safe-area-inset-bottom)));
+      padding: 0.68rem 0.82rem;
+    }
   }
 </style>
