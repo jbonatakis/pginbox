@@ -6,8 +6,6 @@
   import HomePage from "./pages/HomePage.svelte";
   import LoginPage from "./pages/LoginPage.svelte";
   import NotFoundPage from "./pages/NotFoundPage.svelte";
-  import PeoplePage from "./pages/PeoplePage.svelte";
-  import PersonDetailPage from "./pages/PersonDetailPage.svelte";
   import RegisterPage from "./pages/RegisterPage.svelte";
   import ResetPasswordPage from "./pages/ResetPasswordPage.svelte";
   import ThreadDetailPage from "./pages/ThreadDetailPage.svelte";
@@ -23,7 +21,6 @@
     homePath,
     loginPath,
     onLinkClick,
-    peoplePath,
     threadsPath,
     type AppRoute,
   } from "./router";
@@ -40,7 +37,6 @@
   }> = [
     { label: "Home", path: homePath, activeWhen: ["home"] },
     { label: "Threads", path: threadsPath, activeWhen: ["threads", "thread-detail"] },
-    { label: "People", path: peoplePath, activeWhen: ["people", "person-detail"] },
     { label: "Analytics", path: analyticsPath, activeWhen: ["analytics"] },
   ];
 
@@ -64,14 +60,6 @@
     }
 
     if (route.name === "thread-detail") {
-      return [];
-    }
-
-    if (route.name === "people") {
-      return [];
-    }
-
-    if (route.name === "person-detail") {
       return [];
     }
 
@@ -243,10 +231,6 @@
       <ThreadsPage />
     {:else if $currentRoute.name === "thread-detail"}
       <ThreadDetailPage threadId={$currentRoute.params.threadId} />
-    {:else if $currentRoute.name === "people"}
-      <PeoplePage />
-    {:else if $currentRoute.name === "person-detail"}
-      <PersonDetailPage id={$currentRoute.params.id} />
     {:else if $currentRoute.name === "analytics"}
       <AnalyticsPage />
     {:else if $currentRoute.name === "account"}
