@@ -1,5 +1,7 @@
 -- migrate:up
 
+SET LOCAL statement_timeout = 0;
+
 ALTER TABLE threads ADD COLUMN id TEXT;
 
 DO $$
@@ -32,6 +34,8 @@ ALTER TABLE threads ALTER COLUMN id SET NOT NULL;
 CREATE UNIQUE INDEX idx_threads_id ON threads (id);
 
 -- migrate:down
+
+SET LOCAL statement_timeout = 0;
 
 DROP INDEX IF EXISTS idx_threads_id;
 ALTER TABLE threads DROP COLUMN IF EXISTS id;
