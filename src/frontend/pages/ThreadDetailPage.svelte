@@ -7,6 +7,7 @@
   import ThreadPageControls from "../components/thread/ThreadPageControls.svelte";
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import { threadDetailDocumentTitle } from "../lib/documentTitle";
   import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
   import {
     getThreadDetailTrackingView,
@@ -512,6 +513,10 @@
     progress,
     (count) => numberFormatter.format(count)
   );
+  $: documentTitle = threadDetailDocumentTitle(
+    thread?.thread_id === threadId ? thread.subject : null,
+    threadId
+  );
 
   $: if (hashAnchorKey === null) {
     lastAppliedHashAnchorKey = null;
@@ -525,6 +530,10 @@
     clearProgressRequest();
   });
 </script>
+
+<svelte:head>
+  <title>{documentTitle}</title>
+</svelte:head>
 
 <section class="page">
   <h1 class="sr-only" data-route-heading tabindex="-1">Thread Detail</h1>

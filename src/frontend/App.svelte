@@ -14,6 +14,7 @@
   import ThreadsPage from "./pages/ThreadsPage.svelte";
   import VerifyEmailPage from "./pages/VerifyEmailPage.svelte";
   import { buildAuthPath, getCurrentLocationRedirect } from "./lib/authRedirect";
+  import { documentTitleForRoute } from "./lib/documentTitle";
   import { authStore } from "./lib/state/auth";
   import {
     accountPath,
@@ -100,22 +101,6 @@
   let loginLink = loginPath;
   let mobileNavOpen = false;
   let routeContextChips: ContextChip[] = [];
-
-  const documentTitleForRoute = (route: AppRoute): string => {
-    if (route.name === "home") return "pginbox | PostgreSQL mailing list archive";
-    if (route.name === "threads") return "Threads | pginbox";
-    if (route.name === "thread-detail") return `Thread ${clipped(route.params.threadId, 48)} | pginbox`;
-    if (route.name === "people") return "People | pginbox";
-    if (route.name === "person-detail") return `Person ${clipped(route.params.id, 40)} | pginbox`;
-    if (route.name === "analytics") return "Analytics | pginbox";
-    if (route.name === "account") return "My Account | pginbox";
-    if (route.name === "login") return "Log in | pginbox";
-    if (route.name === "register") return "Register | pginbox";
-    if (route.name === "verify-email") return "Verify email | pginbox";
-    if (route.name === "forgot-password") return "Forgot password | pginbox";
-    if (route.name === "reset-password") return "Reset password | pginbox";
-    return "Not Found | pginbox";
-  };
 
   const focusRouteHeading = async (): Promise<void> => {
     await tick();
