@@ -26,15 +26,6 @@ export type AppRoute =
       params: { threadId: string };
     }
   | {
-      name: "people";
-      pathname: typeof peoplePath;
-    }
-  | {
-      name: "person-detail";
-      pathname: string;
-      params: { id: string };
-    }
-  | {
       name: "analytics";
       pathname: typeof analyticsPath;
     }
@@ -170,19 +161,6 @@ function matchRoute(pathname: string): AppRoute {
       name: "thread-detail",
       pathname,
       params: { threadId: decodeRouteParam(threadMatch[1]) },
-    };
-  }
-
-  if (pathname === peoplePath) {
-    return { name: "people", pathname: peoplePath };
-  }
-
-  const personMatch = pathname.match(/^\/people\/([^/]+)$/);
-  if (personMatch) {
-    return {
-      name: "person-detail",
-      pathname,
-      params: { id: decodeRouteParam(personMatch[1]) },
     };
   }
 
