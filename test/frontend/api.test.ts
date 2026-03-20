@@ -3,6 +3,7 @@ import {
   advanceThreadProgress,
   addThreadBackToMyThreads,
   followThread,
+  getMessagePermalink,
   getTrackedThreadCounts,
   getThreadProgress,
   listFollowedThreads,
@@ -115,10 +116,29 @@ afterEach(() => {
 });
 
 describe("frontend tracked-thread api helpers", () => {
+  it("fetches message permalink resolution on the dedicated resolver route", async () => {
+    const responseBody = {
+      messageId: "123",
+      threadId: "7K4MP9XQ2B",
+      page: 3,
+      pageSize: 50,
+    };
+
+    const fetchStub = installFetchStub(async (_input, init) => {
+      expect(init?.method).toBe("GET");
+      expect(init?.credentials).toBeUndefined();
+      return jsonResponse(responseBody);
+    });
+
+    await expect(getMessagePermalink("123")).resolves.toEqual(responseBody);
+    expect(fetchStub.calls[0]?.url).toBe("/api/messages/123/permalink");
+  });
+
   it("lists followed and my threads with cursor pagination", async () => {
     const followedPage = {
       items: [
         {
+          id: "TFOLLOWED1",
           thread_id: "followed-thread",
           list_id: 1,
           subject: "Followed",
@@ -142,6 +162,7 @@ describe("frontend tracked-thread api helpers", () => {
     const myThreadsPage = {
       items: [
         {
+          id: "TMY1",
           thread_id: "my-thread",
           list_id: 1,
           subject: "Mine",

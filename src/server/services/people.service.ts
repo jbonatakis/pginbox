@@ -126,13 +126,14 @@ async function queryPerson(id: number) {
     .innerJoin("threads", "threads.thread_id", "messages.thread_id")
     .innerJoin("people_emails", "people_emails.email", "messages.from_email")
     .select([
+      "threads.id",
       "threads.thread_id",
       "threads.subject",
       "threads.last_activity_at",
       db.fn.countAll<number>().as("message_count"),
     ])
     .where("people_emails.person_id", "=", id)
-    .groupBy(["threads.thread_id", "threads.subject", "threads.last_activity_at"])
+    .groupBy(["threads.id", "threads.thread_id", "threads.subject", "threads.last_activity_at"])
     .orderBy("message_count", "desc")
     .limit(10)
     .execute();

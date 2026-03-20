@@ -193,7 +193,8 @@ CREATE TABLE public.threads (
     subject text,
     started_at timestamp with time zone,
     last_activity_at timestamp with time zone,
-    message_count integer DEFAULT 1 NOT NULL
+    message_count integer DEFAULT 1 NOT NULL,
+    id text NOT NULL
 );
 
 
@@ -513,10 +514,10 @@ CREATE TABLE public.thread_follows (
 --
 
 CREATE TABLE public.thread_read_progress (
-    user_id bigint NOT NULL,
-    thread_id text NOT NULL,
-    last_read_message_id bigint NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    user_id bigint CONSTRAINT thread_read_progress_new_user_id_not_null NOT NULL,
+    thread_id text CONSTRAINT thread_read_progress_new_thread_id_not_null NOT NULL,
+    last_read_message_id bigint CONSTRAINT thread_read_progress_new_last_read_message_id_not_null NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() CONSTRAINT thread_read_progress_new_updated_at_not_null NOT NULL
 );
 
 
@@ -525,14 +526,14 @@ CREATE TABLE public.thread_read_progress (
 --
 
 CREATE TABLE public.thread_tracking (
-    user_id bigint NOT NULL,
-    thread_id text NOT NULL,
-    anchor_message_id bigint NOT NULL,
+    user_id bigint CONSTRAINT thread_tracking_new_user_id_not_null NOT NULL,
+    thread_id text CONSTRAINT thread_tracking_new_thread_id_not_null NOT NULL,
+    anchor_message_id bigint CONSTRAINT thread_tracking_new_anchor_message_id_not_null NOT NULL,
     manual_followed_at timestamp with time zone,
     participated_at timestamp with time zone,
     participation_suppressed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() CONSTRAINT thread_tracking_new_created_at_not_null NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() CONSTRAINT thread_tracking_new_updated_at_not_null NOT NULL,
     CONSTRAINT thread_tracking_source_check CHECK (((manual_followed_at IS NOT NULL) OR (participated_at IS NOT NULL)))
 );
 
@@ -764,19 +765,19 @@ ALTER TABLE ONLY public.thread_follows
 
 
 --
--- Name: thread_read_progress thread_read_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: thread_read_progress thread_read_progress_new_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.thread_read_progress
-    ADD CONSTRAINT thread_read_progress_pkey PRIMARY KEY (user_id, thread_id);
+    ADD CONSTRAINT thread_read_progress_new_pkey PRIMARY KEY (user_id, thread_id);
 
 
 --
--- Name: thread_tracking thread_tracking_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: thread_tracking thread_tracking_new_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.thread_tracking
-    ADD CONSTRAINT thread_tracking_pkey PRIMARY KEY (user_id, thread_id);
+    ADD CONSTRAINT thread_tracking_new_pkey PRIMARY KEY (user_id, thread_id);
 
 
 --
@@ -951,6 +952,13 @@ CREATE INDEX idx_people_emails_person_id ON public.people_emails USING btree (pe
 
 
 --
+-- Name: idx_threads_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_threads_id ON public.threads USING btree (id);
+
+
+--
 -- Name: idx_threads_last_activity; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1071,19 +1079,51 @@ ALTER TABLE ONLY public.thread_follows
 
 
 --
--- Name: thread_read_progress thread_read_progress_last_read_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: thread_read_progress thread_read_progress_new_last_read_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.thread_read_progress
-    ADD CONSTRAINT thread_read_progress_last_read_message_id_fkey FOREIGN KEY (last_read_message_id) REFERENCES public.messages(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT thread_read_progress_new_last_read_message_id_fkey FOREIGN KEY (last_read_message_id) REFERENCES public.messages(id) ON DELETE RESTRICT;
 
 
 --
--- Name: thread_tracking thread_tracking_anchor_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: thread_read_progress thread_read_progress_new_thread_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_read_progress
+    ADD CONSTRAINT thread_read_progress_new_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES public.threads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: thread_read_progress thread_read_progress_new_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_read_progress
+    ADD CONSTRAINT thread_read_progress_new_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: thread_tracking thread_tracking_new_anchor_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.thread_tracking
-    ADD CONSTRAINT thread_tracking_anchor_message_id_fkey FOREIGN KEY (anchor_message_id) REFERENCES public.messages(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT thread_tracking_new_anchor_message_id_fkey FOREIGN KEY (anchor_message_id) REFERENCES public.messages(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: thread_tracking thread_tracking_new_thread_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_tracking
+    ADD CONSTRAINT thread_tracking_new_thread_id_fkey FOREIGN KEY (thread_id) REFERENCES public.threads(id) ON DELETE CASCADE;
+
+
+--
+-- Name: thread_tracking thread_tracking_new_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.thread_tracking
+    ADD CONSTRAINT thread_tracking_new_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -1120,4 +1160,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260317000012'),
     ('20260317000013'),
     ('20260318000014'),
-    ('20260319000015');
+    ('20260319000015'),
+    ('20260320000016'),
+    ('20260320000017');

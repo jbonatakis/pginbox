@@ -5,6 +5,7 @@
   import ForgotPasswordPage from "./pages/ForgotPasswordPage.svelte";
   import HomePage from "./pages/HomePage.svelte";
   import LoginPage from "./pages/LoginPage.svelte";
+  import MessagePermalinkPage from "./pages/MessagePermalinkPage.svelte";
   import NotFoundPage from "./pages/NotFoundPage.svelte";
   import RegisterPage from "./pages/RegisterPage.svelte";
   import ResetPasswordPage from "./pages/ResetPasswordPage.svelte";
@@ -36,7 +37,7 @@
     activeWhen: AppRoute["name"][];
   }> = [
     { label: "Home", path: homePath, activeWhen: ["home"] },
-    { label: "Threads", path: threadsPath, activeWhen: ["threads", "thread-detail"] },
+    { label: "Threads", path: threadsPath, activeWhen: ["threads", "thread-detail", "message-permalink"] },
     { label: "Analytics", path: analyticsPath, activeWhen: ["analytics"] },
   ];
 
@@ -60,6 +61,10 @@
     }
 
     if (route.name === "thread-detail") {
+      return [];
+    }
+
+    if (route.name === "message-permalink") {
       return [];
     }
 
@@ -231,6 +236,8 @@
       <ThreadsPage />
     {:else if $currentRoute.name === "thread-detail"}
       <ThreadDetailPage threadId={$currentRoute.params.threadId} />
+    {:else if $currentRoute.name === "message-permalink"}
+      <MessagePermalinkPage messageId={$currentRoute.params.messageId} />
     {:else if $currentRoute.name === "analytics"}
       <AnalyticsPage />
     {:else if $currentRoute.name === "account"}

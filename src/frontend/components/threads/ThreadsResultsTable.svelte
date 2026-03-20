@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import type { Thread } from "shared/api";
-  import { withThreadsRestoreScroll } from "../../lib/state/threadsQuery";
+  import { withThreadsDetailHistoryContext } from "../../lib/threadDetailNavigation";
   import { isClientNavigationEvent, onLinkClick, threadDetailPath } from "../../router";
 
   export let contextSearch = "";
@@ -45,30 +45,32 @@
     return Math.max(0, Math.trunc(window.scrollY));
   };
 
-  const threadPath = (threadId: string, includeScrollContext = false): string => {
-    const search = includeScrollContext
-      ? withThreadsRestoreScroll(contextSearch, currentScrollY())
-      : contextSearch;
-    return `${threadDetailPath(threadId)}${search}`;
-  };
+  const threadPath = (threadId: string): string => threadDetailPath(threadId);
 
   const persistCurrentListContext = (): void => {
     if (typeof window === "undefined") return;
 
-    const nextSearch = withThreadsRestoreScroll(contextSearch, currentScrollY());
-    const nextUrl = `${window.location.pathname}${nextSearch}${window.location.hash}`;
+    const nextState = withThreadsDetailHistoryContext(
+      window.history.state,
+      contextSearch,
+      currentScrollY()
+    );
+    const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
 
     if (nextUrl !== currentUrl) {
-      window.history.replaceState(window.history.state, "", nextUrl);
+      window.history.replaceState(nextState, "", nextUrl);
+      return;
     }
+
+    window.history.replaceState(nextState, "", currentUrl);
   };
 
-  const handleThreadClick = (event: MouseEvent, threadId: string): void => {
+  const handleThreadClick = (event: MouseEvent, path: string): void => {
     if (!isClientNavigationEvent(event)) return;
 
     persistCurrentListContext();
-    onLinkClick(event, threadPath(threadId, true));
+    onLinkClick(event, path);
   };
 
   const isFollowPending = (threadId: string): boolean => pendingThreadIds.includes(threadId);
@@ -78,7 +80,7 @@
     event.preventDefault();
     event.stopPropagation();
     dispatch("togglefollow", {
-      threadId: thread.thread_id,
+      threadId: thread.id,
       isFollowed: thread.is_followed === true,
     });
   };
@@ -106,12 +108,12 @@
     </thead>
 
     <tbody>
-      {#each items as thread (thread.thread_id)}
-        {@const path = threadPath(thread.thread_id)}
+      {#each items as thread (thread.id)}
+        {@const path = threadPath(thread.id)}
         <tr>
           <td class="subject" data-label="Subject">
             <div class="subject-row">
-              <a href={path} on:click={(event) => handleThreadClick(event, thread.thread_id)}
+              <a href={path} on:click={(event) => handleThreadClick(event, path)}
                 >{subjectLabel(thread.subject)}</a
               >
               {#if canManageFollows && thread.is_followed === true}
@@ -131,10 +133,10 @@
                 title={!hasKnownFollowState(thread) ? "Loading follow state" : thread.is_followed === true ? "Following" : "Follow"}
                 class:followed={thread.is_followed === true}
                 class="follow-button"
-                disabled={isFollowPending(thread.thread_id) || !hasKnownFollowState(thread)}
+                disabled={isFollowPending(thread.id) || !hasKnownFollowState(thread)}
                 on:click={(event) => handleFollowClick(event, thread)}
               >
-                {#if isFollowPending(thread.thread_id) || !hasKnownFollowState(thread)}
+                {#if isFollowPending(thread.id) || !hasKnownFollowState(thread)}
                   <span class="follow-pending" aria-hidden="true"></span>
                 {:else}
                   <svg

@@ -38,8 +38,9 @@ export function hasActiveThreadTracking(
 export function getThreadResumeTarget(
   progress: Pick<
     ThreadProgress,
-    "threadId" | "isFollowed" | "isInMyThreads" | "hasUnread" | "firstUnreadMessageId" | "resumePage" | "latestPage"
-  >
+    "isFollowed" | "isInMyThreads" | "hasUnread" | "firstUnreadMessageId" | "resumePage" | "latestPage"
+  >,
+  publicThreadId: string
 ): ThreadResumeTarget | null {
   if (!hasActiveThreadTracking(progress) || !progress.hasUnread || progress.firstUnreadMessageId === null) {
     return null;
@@ -47,12 +48,12 @@ export function getThreadResumeTarget(
 
   const targetPage = progress.resumePage ?? progress.latestPage;
   const anchorId = `message-${progress.firstUnreadMessageId}`;
-  const basePath = threadDetailPath(progress.threadId);
+  const basePath = threadDetailPath(publicThreadId);
 
   return {
     anchorId,
     targetPage,
-    targetThreadId: progress.threadId,
+    targetThreadId: publicThreadId,
     targetUrl:
       targetPage < progress.latestPage
         ? `${basePath}?page=${targetPage}#${anchorId}`
@@ -104,6 +105,7 @@ export function getThreadParticipationText(
 export function getThreadDetailTrackingView(
   isAuthenticated: boolean,
   progress: ThreadProgress | null,
+  publicThreadId: string,
   formatCount: CountFormatter = (count) => String(count)
 ): ThreadDetailTrackingView | null {
   if (!isAuthenticated || progress === null) {
@@ -111,7 +113,7 @@ export function getThreadDetailTrackingView(
   }
 
   const isTracked = hasActiveThreadTracking(progress);
-  const resumeTarget = getThreadResumeTarget(progress);
+  const resumeTarget = getThreadResumeTarget(progress, publicThreadId);
 
   return {
     followButtonLabel: progress.isFollowed ? "Unfollow" : "Follow",
@@ -124,7 +126,7 @@ export function getThreadDetailTrackingView(
     showResumeReading: resumeTarget !== null,
     statusText: getThreadTrackingStatusText(progress, formatCount),
     timelineFirstUnreadMessageId: progress.firstUnreadMessageId,
-    timelineThreadId: progress.threadId,
+    timelineThreadId: publicThreadId,
     trackReadProgress: isTracked,
   };
 }

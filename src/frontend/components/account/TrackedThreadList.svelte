@@ -52,7 +52,7 @@
     {/if}
 
     <ul class="tracked-threads-list">
-      {#each items as thread (thread.thread_id)}
+      {#each items as thread (thread.id)}
         <li class="thread-item">
           <div class="thread-header">
             <a

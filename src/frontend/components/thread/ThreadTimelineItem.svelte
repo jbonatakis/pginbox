@@ -3,6 +3,7 @@
   import type { MessageWithAttachments } from "shared/api";
   import { parseMessageBody, type MessageBodyBlock } from "../../lib/messageBody";
   import { postgresqlArchiveMessageUrl } from "../../lib/postgresqlArchive";
+  import { isClientNavigationEvent, messagePermalinkPath } from "../../router";
   import ThreadMessageAttachments from "./ThreadMessageAttachments.svelte";
 
   export let message: MessageWithAttachments;
@@ -56,6 +57,27 @@
   const collapseToggleLabel = (collapsed: boolean, messageIndex: number): string =>
     collapsed ? `Expand message ${messageIndex + 1}` : `Collapse message ${messageIndex + 1}`;
 
+  const handlePermalinkClick = (event: MouseEvent): void => {
+    if (!isClientNavigationEvent(event) || typeof window === "undefined") {
+      return;
+    }
+
+    event.preventDefault();
+
+    const anchorElement = document.getElementById(anchorId);
+    if (!anchorElement) {
+      return;
+    }
+
+    const nextUrl = `${window.location.pathname}${window.location.search}#${anchorId}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
+
+    anchorElement.scrollIntoView({ block: "start" });
+  };
+
   $: sender = senderLabel(message.from_name, message.from_email);
   $: subject = normalizedSubject(message.subject);
   $: validTimestamp = isValidTimestamp(message.sent_at);
@@ -68,7 +90,11 @@
   <header class="timeline-item-header">
     <div class="title-row">
       <h4 id={`${anchorId}-heading`}>
-        <a class="anchor-link" href={`#${anchorId}`}>#{index + 1}</a>
+        <a
+          class="anchor-link"
+          href={messagePermalinkPath(String(message.id))}
+          on:click={handlePermalinkClick}>#{index + 1}</a
+        >
       </h4>
 
       <button

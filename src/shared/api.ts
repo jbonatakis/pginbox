@@ -3,6 +3,8 @@
  * JSON over the wire: dates as ISO strings, bigint ids as strings.
  */
 
+export const DEFAULT_THREAD_MESSAGES_PAGE_SIZE = 50;
+
 // ---- Lists ----
 export interface List {
   id: number;
@@ -11,6 +13,7 @@ export interface List {
 
 // ---- Threads ----
 export interface Thread {
+  id: string;
   thread_id: string;
   list_id: number;
   subject: string | null;
@@ -66,6 +69,13 @@ export interface MessageWithAttachments extends Message {
   attachments: AttachmentSummary[];
 }
 
+export interface MessagePermalink {
+  messageId: string;
+  threadId: string;
+  page: number;
+  pageSize: number;
+}
+
 export interface ThreadWithMessages extends Thread {
   messages: MessageWithAttachments[];
 }
@@ -88,6 +98,7 @@ export interface PersonListItem {
 }
 
 export interface PersonTopThread {
+  id: string;
   thread_id: string;
   subject: string | null;
   last_activity_at: string | null;

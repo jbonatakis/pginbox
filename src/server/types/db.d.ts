@@ -143,6 +143,16 @@ export interface ThreadReadProgress {
   user_id: Int8;
 }
 
+export interface Threads {
+  id: string;
+  last_activity_at: Timestamp | null;
+  list_id: number;
+  message_count: Generated<number>;
+  started_at: Timestamp | null;
+  subject: string | null;
+  thread_id: string;
+}
+
 export interface ThreadTracking {
   anchor_message_id: Int8;
   created_at: Generated<Timestamp>;
@@ -152,15 +162,6 @@ export interface ThreadTracking {
   thread_id: string;
   updated_at: Generated<Timestamp>;
   user_id: Int8;
-}
-
-export interface Threads {
-  last_activity_at: Timestamp | null;
-  list_id: number;
-  message_count: Generated<number>;
-  started_at: Timestamp | null;
-  subject: string | null;
-  thread_id: string;
 }
 
 export interface Users {

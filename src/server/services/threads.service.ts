@@ -34,6 +34,26 @@ function decodeCursorSafe(cursor: string): { lastActivityAt: string | null; thre
   }
 }
 
+export async function resolveThreadIdentifier(
+  inputThreadId: string
+): Promise<{ id: string; thread_id: string } | null> {
+  const resolvedByStableId = await db
+    .selectFrom("threads")
+    .select(["id", "thread_id"])
+    .where("id", "=", inputThreadId)
+    .executeTakeFirst();
+
+  if (resolvedByStableId) {
+    return resolvedByStableId;
+  }
+
+  return (await db
+    .selectFrom("threads")
+    .select(["id", "thread_id"])
+    .where("thread_id", "=", inputThreadId)
+    .executeTakeFirst()) ?? null;
+}
+
 export async function listThreads(query: ThreadsQuery) {
   const limit = Math.min(Math.max(1, query.limit), 100);
 
@@ -83,12 +103,15 @@ export async function listThreads(query: ThreadsQuery) {
 
 export async function getThread(threadId: string, query: ThreadMessagesQuery) {
   const limit = Math.min(Math.max(1, query.limit), 100);
+  const resolvedThread = await resolveThreadIdentifier(threadId);
+  if (!resolvedThread) return null;
+
   const thread = await db
     .selectFrom("threads")
     .innerJoin("lists", "lists.id", "threads.list_id")
     .selectAll("threads")
     .select("lists.name as list_name")
-    .where("threads.thread_id", "=", threadId)
+    .where("threads.thread_id", "=", resolvedThread.thread_id)
     .executeTakeFirst();
 
   if (!thread) return null;
@@ -101,7 +124,7 @@ export async function getThread(threadId: string, query: ThreadMessagesQuery) {
   const messages = await db
     .selectFrom("messages")
     .selectAll()
-    .where("messages.thread_id", "=", threadId)
+    .where("messages.thread_id", "=", resolvedThread.thread_id)
     .orderBy(sql`messages.sent_at ASC NULLS LAST`)
     .orderBy("messages.id", "asc")
     .limit(limit)

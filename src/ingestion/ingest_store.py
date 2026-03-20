@@ -1,31 +1,30 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
+import secrets
 
 from psycopg2.extras import execute_batch, execute_values
 
 from src.ingestion.ingest_parse import _decode_subject
 
 
-UPSERT_TOUCHED_THREADS_SQL = """
-    INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
+THREAD_STABLE_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+THREAD_STABLE_ID_LENGTH = 10
+
+
+REBUILD_TOUCHED_THREADS_SQL = """
     SELECT
         thread_id,
         list_id,
-        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]),
-        min(sent_at),
-        max(sent_at),
-        count(*)
+        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]) AS subject,
+        min(sent_at) AS started_at,
+        max(sent_at) AS last_activity_at,
+        count(*) AS message_count
     FROM messages
     WHERE list_id = %s
       AND thread_id = ANY(%s)
     GROUP BY thread_id, list_id
-    ON CONFLICT (thread_id) DO UPDATE SET
-        list_id          = EXCLUDED.list_id,
-        subject          = EXCLUDED.subject,
-        started_at       = EXCLUDED.started_at,
-        last_activity_at = EXCLUDED.last_activity_at,
-        message_count    = EXCLUDED.message_count
 """
 
 INSERT_MESSAGE_COLUMNS = (
@@ -95,29 +94,72 @@ UPDATE_MESSAGE_SUBJECT_SQL = """
 """
 
 REBUILD_THREADS_SQL = """
-    INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
     SELECT
         thread_id,
         list_id,
-        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]),
-        min(sent_at),
-        max(sent_at),
-        count(*)
+        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]) AS subject,
+        min(sent_at) AS started_at,
+        max(sent_at) AS last_activity_at,
+        count(*) AS message_count
     FROM messages
     GROUP BY thread_id, list_id
+"""
+
+UPSERT_TOUCHED_THREADS_SQL = """
+    INSERT INTO threads (thread_id, id, list_id, subject, started_at, last_activity_at, message_count)
+    SELECT
+        v.thread_id,
+        v.id,
+        v.list_id,
+        v.subject,
+        v.started_at,
+        v.last_activity_at,
+        v.message_count
+    FROM (VALUES %s) AS v (thread_id, id, list_id, subject, started_at, last_activity_at, message_count)
+    ON CONFLICT (thread_id) DO UPDATE SET
+        list_id          = EXCLUDED.list_id,
+        subject          = EXCLUDED.subject,
+        started_at       = EXCLUDED.started_at,
+        last_activity_at = EXCLUDED.last_activity_at,
+        message_count    = EXCLUDED.message_count
+"""
+
+UPSERT_REBUILT_THREADS_SQL = UPSERT_TOUCHED_THREADS_SQL
+
+DELETE_STALE_THREADS_SQL = """
+    DELETE FROM threads
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM messages
+        WHERE messages.thread_id = threads.thread_id
+    )
+"""
+
+FETCH_THREAD_STABLE_IDS_SQL = """
+    SELECT thread_id, id
+    FROM threads
+    WHERE thread_id = ANY(%s)
+"""
+
+FETCH_ALL_THREAD_STABLE_IDS_SQL = """
+    SELECT id
+    FROM threads
 """
 
 PARTICIPATION_MATCHES_CTE = """
     WITH ranked_matches AS (
         SELECT
             users.id AS user_id,
-            messages.thread_id,
+            messages.thread_id AS raw_thread_id,
+            threads.id AS stable_thread_id,
             messages.id AS message_id,
             row_number() OVER (
                 PARTITION BY users.id, messages.thread_id
                 ORDER BY messages.sent_at DESC NULLS FIRST, messages.id DESC
             ) AS rank
         FROM messages
+        INNER JOIN threads
+            ON threads.thread_id = messages.thread_id
         INNER JOIN users
             ON lower(users.email) = lower(messages.from_email)
         WHERE messages.id = ANY(%s)
@@ -125,7 +167,7 @@ PARTICIPATION_MATCHES_CTE = """
           AND users.email_verified_at IS NOT NULL
     ),
     matched_messages AS (
-        SELECT user_id, thread_id, message_id
+        SELECT user_id, raw_thread_id, stable_thread_id, message_id
         FROM ranked_matches
         WHERE rank = 1
     )
@@ -153,7 +195,7 @@ UPSERT_PARTICIPATION_TRACKING_SQL = (
     )
     SELECT
         matched_messages.user_id,
-        matched_messages.thread_id,
+        matched_messages.stable_thread_id,
         matched_messages.message_id,
         NULL,
         now(),
@@ -182,16 +224,16 @@ SEED_PARTICIPATION_PROGRESS_SQL = (
     )
     SELECT
         matched_messages.user_id,
-        matched_messages.thread_id,
+        matched_messages.stable_thread_id,
         matched_messages.message_id,
         now()
     FROM matched_messages
     INNER JOIN thread_tracking
         ON thread_tracking.user_id = matched_messages.user_id
-       AND thread_tracking.thread_id = matched_messages.thread_id
+       AND thread_tracking.thread_id = matched_messages.stable_thread_id
     LEFT JOIN thread_read_progress
         ON thread_read_progress.user_id = matched_messages.user_id
-       AND thread_read_progress.thread_id = matched_messages.thread_id
+       AND thread_read_progress.thread_id = matched_messages.stable_thread_id
     WHERE """
     + ACTIVE_TRACKING_SQL
     + """
@@ -208,7 +250,7 @@ DELETE_INACTIVE_PARTICIPATION_PROGRESS_SQL = (
     WHERE thread_read_progress.user_id = thread_tracking.user_id
       AND thread_read_progress.thread_id = thread_tracking.thread_id
       AND matched_messages.user_id = thread_tracking.user_id
-      AND matched_messages.thread_id = thread_tracking.thread_id
+      AND matched_messages.stable_thread_id = thread_tracking.thread_id
       AND thread_tracking.manual_followed_at IS NULL
       AND thread_tracking.participation_suppressed_at IS NOT NULL
 """
@@ -221,19 +263,20 @@ ADVANCE_PARTICIPATION_PROGRESS_SQL = (
     progress_candidates AS (
         SELECT
             matched_messages.user_id,
-            matched_messages.thread_id,
+            matched_messages.stable_thread_id AS thread_id,
+            matched_messages.raw_thread_id,
             matched_messages.message_id AS candidate_message_id,
             thread_read_progress.last_read_message_id AS existing_message_id,
             candidate_messages.sent_at AS candidate_sent_at,
             existing_messages.sent_at AS existing_sent_at,
-            existing_messages.thread_id AS existing_thread_id
+            existing_messages.thread_id AS existing_raw_thread_id
         FROM matched_messages
         INNER JOIN thread_tracking
             ON thread_tracking.user_id = matched_messages.user_id
-           AND thread_tracking.thread_id = matched_messages.thread_id
+           AND thread_tracking.thread_id = matched_messages.stable_thread_id
         INNER JOIN thread_read_progress
             ON thread_read_progress.user_id = matched_messages.user_id
-           AND thread_read_progress.thread_id = matched_messages.thread_id
+           AND thread_read_progress.thread_id = matched_messages.stable_thread_id
         INNER JOIN messages AS candidate_messages
             ON candidate_messages.id = matched_messages.message_id
         LEFT JOIN messages AS existing_messages
@@ -245,7 +288,7 @@ ADVANCE_PARTICIPATION_PROGRESS_SQL = (
     rows_to_advance AS (
         SELECT user_id, thread_id, candidate_message_id
         FROM progress_candidates
-        WHERE existing_thread_id IS DISTINCT FROM thread_id
+        WHERE existing_raw_thread_id IS DISTINCT FROM raw_thread_id
            OR (
                candidate_sent_at IS NULL
                AND existing_sent_at IS NOT NULL
@@ -443,6 +486,116 @@ def _canonical_thread_ids_for_list(records: dict[str, dict]) -> dict[str, str]:
     return canonical
 
 
+def _assign_stable_thread_ids(
+    stable_id_counts_by_thread_id: dict[str, Counter[str]],
+    preferred_stable_ids_by_thread_id: dict[str, str] | None = None,
+) -> dict[str, str]:
+    preferred_stable_ids_by_thread_id = preferred_stable_ids_by_thread_id or {}
+    candidates: list[tuple[int, str, str]] = []
+    for thread_id, stable_id_counts in stable_id_counts_by_thread_id.items():
+        for stable_id, count in stable_id_counts.items():
+            candidates.append((-count, stable_id, thread_id))
+
+    candidates.sort()
+
+    assigned_thread_ids: dict[str, str] = {}
+    used_stable_ids: set[str] = set()
+    for thread_id, stable_id in sorted(preferred_stable_ids_by_thread_id.items()):
+        if stable_id_counts_by_thread_id[thread_id].get(stable_id, 0) <= 0:
+            continue
+        assigned_thread_ids[thread_id] = stable_id
+        used_stable_ids.add(stable_id)
+
+    for _, stable_id, thread_id in candidates:
+        if thread_id in assigned_thread_ids or stable_id in used_stable_ids:
+            continue
+        assigned_thread_ids[thread_id] = stable_id
+        used_stable_ids.add(stable_id)
+
+    return assigned_thread_ids
+
+
+def _generate_thread_stable_id(*, used_stable_ids: set[str]) -> str:
+    while True:
+        candidate = "".join(
+            secrets.choice(THREAD_STABLE_ID_ALPHABET)
+            for _ in range(THREAD_STABLE_ID_LENGTH)
+        )
+        if candidate in used_stable_ids:
+            continue
+        used_stable_ids.add(candidate)
+        return candidate
+
+
+def _fetch_thread_stable_ids(cur, thread_ids: list[str]) -> dict[str, str]:
+    if not thread_ids:
+        return {}
+
+    cur.execute(FETCH_THREAD_STABLE_IDS_SQL, (thread_ids,))
+    return {thread_id: stable_id for thread_id, stable_id in cur.fetchall()}
+
+
+def _fetch_all_thread_stable_ids(cur) -> set[str]:
+    cur.execute(FETCH_ALL_THREAD_STABLE_IDS_SQL)
+    return {stable_id for (stable_id,) in cur.fetchall()}
+
+
+def _resolve_stable_thread_ids(
+    cur,
+    thread_ids: list[str],
+    assigned_stable_ids_by_thread_id: dict[str, str] | None = None,
+    *,
+    fetch_thread_stable_ids=_fetch_thread_stable_ids,
+    fetch_all_thread_stable_ids=_fetch_all_thread_stable_ids,
+    generate_thread_stable_id=_generate_thread_stable_id,
+) -> dict[str, str]:
+    stable_ids_by_thread_id = fetch_thread_stable_ids(cur, thread_ids)
+    if assigned_stable_ids_by_thread_id:
+        stable_ids_by_thread_id.update(assigned_stable_ids_by_thread_id)
+
+    missing_thread_ids = [
+        thread_id for thread_id in thread_ids if thread_id not in stable_ids_by_thread_id
+    ]
+    if not missing_thread_ids:
+        return stable_ids_by_thread_id
+
+    used_stable_ids = fetch_all_thread_stable_ids(cur)
+    used_stable_ids.update(stable_ids_by_thread_id.values())
+    for thread_id in missing_thread_ids:
+        stable_ids_by_thread_id[thread_id] = generate_thread_stable_id(
+            used_stable_ids=used_stable_ids
+        )
+
+    return stable_ids_by_thread_id
+
+
+def _fetch_thread_aggregates(cur, list_id: int, thread_ids: list[str]):
+    if not thread_ids:
+        return []
+
+    cur.execute(REBUILD_TOUCHED_THREADS_SQL, (list_id, thread_ids))
+    return cur.fetchall()
+
+
+def _upsert_thread_rows(
+    cur,
+    rows: list[tuple[str, str, int, str | None, datetime | None, datetime | None, int]],
+    *,
+    upsert_threads_sql=UPSERT_TOUCHED_THREADS_SQL,
+    execute_values_fn=execute_values,
+):
+    if not rows:
+        return
+
+    execute_values_fn(
+        cur,
+        upsert_threads_sql,
+        rows,
+        template="(%s, %s, %s, %s, %s, %s, %s)",
+        page_size=1000,
+    )
+
+
 def _insert_messages(cur, batch: list) -> dict[str, int]:
     """Insert a batch of messages and return DB ids for rows inserted in this batch."""
     if not batch:
@@ -638,12 +791,35 @@ def _refresh_threads_for_message_ids(
     message_ids: list[str],
     *,
     fetch_thread_ids=_fetch_thread_ids,
-    upsert_touched_threads_sql=UPSERT_TOUCHED_THREADS_SQL,
+    fetch_thread_aggregates=_fetch_thread_aggregates,
+    resolve_stable_thread_ids=_resolve_stable_thread_ids,
+    upsert_thread_rows=_upsert_thread_rows,
 ):
     thread_ids = sorted(set(fetch_thread_ids(cur, list_id, message_ids).values()))
     if not thread_ids:
         return
-    cur.execute(upsert_touched_threads_sql, (list_id, thread_ids))
+
+    rebuilt_threads = fetch_thread_aggregates(cur, list_id, thread_ids)
+    if not rebuilt_threads:
+        return
+
+    stable_ids_by_thread_id = resolve_stable_thread_ids(
+        cur,
+        [thread_id for thread_id, *_ in rebuilt_threads],
+    )
+    rows = [
+        (
+            thread_id,
+            stable_ids_by_thread_id[thread_id],
+            rebuilt_list_id,
+            subject,
+            started_at,
+            last_activity_at,
+            message_count,
+        )
+        for thread_id, rebuilt_list_id, subject, started_at, last_activity_at, message_count in rebuilt_threads
+    ]
+    upsert_thread_rows(cur, rows)
 
 
 def _auto_track_participation_for_inserted_messages(
@@ -750,24 +926,45 @@ def rethread_messages(conn):
     print("  [rethread messages]", end="", flush=True)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT list_id, message_id, sent_at, in_reply_to, refs, thread_id FROM messages"
+            """
+            SELECT
+                messages.list_id,
+                messages.message_id,
+                messages.sent_at,
+                messages.in_reply_to,
+                messages.refs,
+                messages.thread_id,
+                threads.id
+            FROM messages
+            LEFT JOIN threads
+                ON threads.thread_id = messages.thread_id
+            """
         )
         rows = cur.fetchall()
 
     records_by_list: dict[int, dict[str, dict]] = {}
     current_thread_ids: dict[tuple[int, str], str] = {}
-    for list_id, message_id, sent_at, in_reply_to, refs, thread_id in rows:
+    current_stable_ids: dict[tuple[int, str], str | None] = {}
+    current_stable_ids_by_thread_id: dict[str, str] = {}
+    for list_id, message_id, sent_at, in_reply_to, refs, thread_id, stable_id in rows:
         records_by_list.setdefault(list_id, {})[message_id] = {
             "sent_at": sent_at,
             "in_reply_to": in_reply_to,
             "refs": refs,
         }
         current_thread_ids[(list_id, message_id)] = thread_id
+        current_stable_ids[(list_id, message_id)] = stable_id
+        if stable_id is not None and thread_id not in current_stable_ids_by_thread_id:
+            current_stable_ids_by_thread_id[thread_id] = stable_id
 
     updates = []
+    stable_id_counts_by_thread_id: dict[str, Counter[str]] = defaultdict(Counter)
     for list_id, records in records_by_list.items():
         canonical_thread_ids = _canonical_thread_ids_for_list(records)
         for message_id, thread_id in canonical_thread_ids.items():
+            stable_id = current_stable_ids[(list_id, message_id)]
+            if stable_id is not None:
+                stable_id_counts_by_thread_id[thread_id][stable_id] += 1
             if current_thread_ids[(list_id, message_id)] != thread_id:
                 updates.append({"message_id": message_id, "thread_id": thread_id})
 
@@ -776,6 +973,10 @@ def rethread_messages(conn):
             execute_batch(cur, UPDATE_MESSAGE_THREAD_SQL, updates, page_size=1000)
     conn.commit()
     print(f" {len(updates)} messages updated")
+    return _assign_stable_thread_ids(
+        stable_id_counts_by_thread_id,
+        current_stable_ids_by_thread_id,
+    )
 
 
 def decode_message_subjects(
@@ -809,14 +1010,45 @@ def derive_threads(
     *,
     rethread_messages_fn=rethread_messages,
     rebuild_threads_sql=REBUILD_THREADS_SQL,
+    upsert_rebuilt_threads_sql=UPSERT_REBUILT_THREADS_SQL,
+    delete_stale_threads_sql=DELETE_STALE_THREADS_SQL,
 ):
     """Rethread messages, then rebuild the derived threads table from messages."""
-    rethread_messages_fn(conn)
+    assigned_stable_thread_ids = rethread_messages_fn(conn)
     print("  [derive threads]", end="", flush=True)
     with conn.cursor() as cur:
-        cur.execute("TRUNCATE threads")
         cur.execute(rebuild_threads_sql)
-        count = cur.rowcount
+        rebuilt_threads = cur.fetchall()
+        stable_ids_by_thread_id = _resolve_stable_thread_ids(
+            cur,
+            [thread_id for thread_id, *_ in rebuilt_threads],
+            assigned_stable_thread_ids,
+        )
+        cur.execute(delete_stale_threads_sql)
+
+        if rebuilt_threads:
+            rows = [
+                (
+                    thread_id,
+                    stable_ids_by_thread_id[thread_id],
+                    list_id,
+                    subject,
+                    started_at,
+                    last_activity_at,
+                    message_count,
+                )
+                for thread_id, list_id, subject, started_at, last_activity_at, message_count in rebuilt_threads
+            ]
+            execute_values(
+                cur,
+                upsert_rebuilt_threads_sql,
+                rows,
+                template="(%s, %s, %s, %s, %s, %s, %s)",
+                page_size=1000,
+            )
+            count = len(rows)
+        else:
+            count = 0
     conn.commit()
     print(f" {count} threads rebuilt")
 

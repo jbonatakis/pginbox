@@ -1,5 +1,10 @@
 <script lang="ts">
-  import type { ThreadDetail, ThreadFollowState, ThreadProgress } from "shared/api";
+  import {
+    DEFAULT_THREAD_MESSAGES_PAGE_SIZE,
+    type ThreadDetail,
+    type ThreadFollowState,
+    type ThreadProgress,
+  } from "shared/api";
   import { onDestroy, tick } from "svelte";
   import { get } from "svelte/store";
   import ErrorState from "../components/ErrorState.svelte";
@@ -7,8 +12,14 @@
   import ThreadPageControls from "../components/thread/ThreadPageControls.svelte";
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
-  import { threadDetailDocumentTitle } from "../lib/documentTitle";
+  import { loadingThreadDetailDocumentTitle, threadDetailDocumentTitle } from "../lib/documentTitle";
   import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
+  import {
+    buildThreadCanonicalSharePath,
+    getThreadsDetailHistoryContext,
+    withThreadsDetailHistoryContext,
+    withoutThreadsDetailHistoryContext,
+  } from "../lib/threadDetailNavigation";
   import {
     getThreadDetailTrackingView,
     mergeThreadProgressTrackingState,
@@ -17,11 +28,11 @@
   import { authStore } from "../lib/state/auth";
   import {
     parseThreadDetailPage,
-    parseThreadsDetailContext,
-    serializeThreadsDetailContext,
+    parseThreadsQuery,
+    serializeThreadsQuery,
     withThreadDetailPage,
   } from "../lib/state/threadsQuery";
-  import { navigate, onLinkClick, threadsPath } from "../router";
+  import { isClientNavigationEvent, navigate, onLinkClick, threadsPath } from "../router";
 
   type ThreadDetailStatus = "idle" | "loading" | "success" | "error";
   type LoadMode = "navigate" | "refresh" | "replace";
@@ -32,7 +43,6 @@
 
   export let threadId: string;
 
-  const THREAD_MESSAGES_PAGE_LIMIT = 50;
   const JUMP_TO_TOP_VISIBILITY_OFFSET = 280;
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
@@ -52,12 +62,16 @@
   let lastLoadedThreadId: string | null = null;
   let requestedPage: number | null = null;
   let requestSequence = 0;
+  let shareLinkStatus: "idle" | "success" | "error" = "idle";
+  let shareLinkStatusTimeoutId: number | null = null;
   let showJumpToTop = false;
   let status: ThreadDetailStatus = "idle";
   let thread: ThreadDetail | null = null;
   let progress: ThreadProgress | null = null;
   let progressRequestedThreadId: string | null = null;
   let backToThreadsPath = threadsPath;
+  let backToThreadsRestoreScrollY: number | null = null;
+  let pendingCanonicalThreadId: string | null = null;
   let lastAppliedHashAnchorKey: string | null = null;
   let retryNavigateOptions: LoadThreadOptions = {};
   let trackingView: ThreadDetailTrackingView | null = null;
@@ -233,6 +247,61 @@
     });
   };
 
+  const clearShareLinkStatusTimeout = (): void => {
+    if (shareLinkStatusTimeoutId === null || typeof window === "undefined") return;
+    window.clearTimeout(shareLinkStatusTimeoutId);
+    shareLinkStatusTimeoutId = null;
+  };
+
+  const setShareLinkStatus = (nextStatus: "success" | "error"): void => {
+    shareLinkStatus = nextStatus;
+    clearShareLinkStatusTimeout();
+
+    if (typeof window === "undefined") return;
+    shareLinkStatusTimeoutId = window.setTimeout(() => {
+      shareLinkStatus = "idle";
+      shareLinkStatusTimeoutId = null;
+    }, 2500);
+  };
+
+  const copyTextToClipboard = async (value: string): Promise<boolean> => {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch {
+        // fall through to the document-based fallback
+      }
+    }
+
+    if (typeof document === "undefined") return false;
+
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
+
+    const didCopy = document.execCommand("copy");
+    textarea.remove();
+    return didCopy;
+  };
+
+  const copyShareLink = async (): Promise<void> => {
+    if (!thread || typeof window === "undefined") return;
+
+    const sharePath = buildThreadCanonicalSharePath(
+      thread.id,
+      thread.messagePagination.page,
+      thread.messagePagination.totalPages,
+      window.location.hash
+    );
+    const didCopy = await copyTextToClipboard(`${window.location.origin}${sharePath}`);
+    setShareLinkStatus(didCopy ? "success" : "error");
+  };
+
   const loadThread = async (
     targetThreadId: string,
     mode: LoadMode,
@@ -277,7 +346,7 @@
       const [response, progressResponse] = await Promise.all([
         api.threads.get(
           targetThreadId,
-          { limit: THREAD_MESSAGES_PAGE_LIMIT, page: targetPage },
+          { limit: DEFAULT_THREAD_MESSAGES_PAGE_SIZE, page: targetPage },
           { signal: requestController.signal }
         ),
         shouldLoadProgress
@@ -288,10 +357,26 @@
 
       thread = response;
       progress = progressResponse;
+      if (progressResponse !== null) {
+        progressRequestedThreadId = response.id;
+      }
       status = "success";
       syncLocationPage(response.messagePagination.page, response.messagePagination.totalPages, {
         preserveHashAnchor,
       });
+      if (typeof window !== "undefined") {
+        const canonicalPath = buildThreadCanonicalSharePath(
+          response.id,
+          response.messagePagination.page,
+          response.messagePagination.totalPages,
+          window.location.hash
+        );
+        const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (canonicalPath !== currentPath) {
+          pendingCanonicalThreadId = response.id;
+          navigate(canonicalPath, { replace: true });
+        }
+      }
       if (mode === "navigate" && shouldScrollToTop) {
         scrollToTop();
       }
@@ -377,8 +462,8 @@
     if (isBannerBusy || trackingView === null || !trackingView.showMarkRead) return;
     isBannerBusy = true;
     try {
-      progress = await api.threads.markRead(progress?.threadId ?? threadId);
-      progressRequestedThreadId = threadId;
+      progress = await api.threads.markRead(thread?.id ?? threadId);
+      progressRequestedThreadId = thread?.id ?? threadId;
     } catch {
       // silently ignore
     } finally {
@@ -391,8 +476,8 @@
     isBannerBusy = true;
     try {
       const result = progress.isFollowed
-        ? await api.threads.unfollow(progress.threadId)
-        : await api.threads.follow(progress.threadId);
+        ? await api.threads.unfollow(thread?.id ?? threadId)
+        : await api.threads.follow(thread?.id ?? threadId);
       await refreshProgressFromTrackingState(result);
     } catch {
       // silently ignore
@@ -412,7 +497,7 @@
     if (isBannerBusy || !progress || trackingView === null || !trackingView.showRemoveFromMyThreads) return;
     isBannerBusy = true;
     try {
-      const result = await api.threads.removeFromMyThreads(progress.threadId);
+      const result = await api.threads.removeFromMyThreads(thread?.id ?? threadId);
       await refreshProgressFromTrackingState(result);
     } catch {
       // silently ignore
@@ -425,7 +510,7 @@
     if (isBannerBusy || !progress || trackingView === null || !trackingView.showAddBackToMyThreads) return;
     isBannerBusy = true;
     try {
-      const result = await api.threads.addBackToMyThreads(progress.threadId);
+      const result = await api.threads.addBackToMyThreads(thread?.id ?? threadId);
       await refreshProgressFromTrackingState(result);
     } catch {
       // silently ignore
@@ -461,21 +546,45 @@
   const syncBackToThreadsPath = (): void => {
     if (typeof window === "undefined") {
       backToThreadsPath = threadsPath;
+      backToThreadsRestoreScrollY = null;
       return;
     }
 
-    const detailContext = parseThreadsDetailContext(window.location.search);
-    const detailSearch = serializeThreadsDetailContext(
-      detailContext.query,
-      detailContext.restoreScrollY
-    );
-    backToThreadsPath = `${threadsPath}${detailSearch}`;
+    const locationSearch = serializeThreadsQuery(parseThreadsQuery(window.location.search));
+    const historyContext = getThreadsDetailHistoryContext(window.history.state);
+    const contextSearch = historyContext?.search ?? locationSearch;
+    backToThreadsPath = `${threadsPath}${contextSearch}`;
+    backToThreadsRestoreScrollY = historyContext?.restoreScrollY ?? null;
+
+    if (historyContext !== null) {
+      const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.replaceState(withoutThreadsDetailHistoryContext(window.history.state), "", nextUrl);
+    }
+  };
+
+  const handleBackToThreadsClick = (event: MouseEvent): void => {
+    if (!isClientNavigationEvent(event)) return;
+
+    if (typeof window !== "undefined" && backToThreadsRestoreScrollY !== null) {
+      const contextSearch = backToThreadsPath.startsWith(threadsPath)
+        ? backToThreadsPath.slice(threadsPath.length)
+        : "";
+      const nextState = withThreadsDetailHistoryContext(
+        window.history.state,
+        contextSearch,
+        backToThreadsRestoreScrollY
+      );
+      const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.replaceState(nextState, "", nextUrl);
+    }
+
+    onLinkClick(event, backToThreadsPath);
   };
 
   $: hasThreadId = threadId.length > 0;
   $: currentPage = thread?.messagePagination.page ?? 1;
   $: totalPages = thread?.messagePagination.totalPages ?? 1;
-  $: pageSize = thread?.messagePagination.pageSize ?? THREAD_MESSAGES_PAGE_LIMIT;
+  $: pageSize = thread?.messagePagination.pageSize ?? DEFAULT_THREAD_MESSAGES_PAGE_SIZE;
   $: startIndex = (currentPage - 1) * pageSize;
   $: pageSummary = pageSummaryLabel(currentPage, totalPages);
   $: rangeSummary = thread ? messageRangeLabel(startIndex, thread.messages.length, thread.message_count) : null;
@@ -494,6 +603,7 @@
     requestSequence += 1;
     clearActiveRequest();
     clearProgressRequest();
+    clearShareLinkStatusTimeout();
 
     error = null;
     errorMode = null;
@@ -501,21 +611,30 @@
     isNavigatingPage = false;
     isRefreshing = false;
     lastLoadedThreadId = null;
+    pendingCanonicalThreadId = null;
     progress = null;
     progressRequestedThreadId = null;
     requestedPage = null;
+    backToThreadsRestoreScrollY = null;
+    shareLinkStatus = "idle";
     showJumpToTop = false;
     thread = null;
     status = "error";
-  } else if (threadId !== lastLoadedThreadId) {
+  } else if (pendingCanonicalThreadId !== null && threadId === pendingCanonicalThreadId) {
+    pendingCanonicalThreadId = null;
+    lastLoadedThreadId = threadId;
+  } else if (threadId !== lastLoadedThreadId && threadId !== pendingCanonicalThreadId) {
+    clearShareLinkStatusTimeout();
+    shareLinkStatus = "idle";
     lastLoadedThreadId = threadId;
     void loadThread(threadId, "replace", locationPage());
   }
 
   $: if (thread && $authStore.isBootstrapped) {
     if ($authStore.isAuthenticated) {
-      if (progressRequestedThreadId !== threadId) {
-        void fetchProgress(threadId).then((response) => {
+      const progressThreadId = pendingCanonicalThreadId ?? threadId;
+      if (progressRequestedThreadId !== progressThreadId) {
+        void fetchProgress(progressThreadId).then((response) => {
           if (threadId !== lastLoadedThreadId) return;
           progress = response;
         });
@@ -538,12 +657,13 @@
   $: trackingView = getThreadDetailTrackingView(
     $authStore.isAuthenticated,
     progress,
+    thread?.id ?? threadId,
     (count) => numberFormatter.format(count)
   );
-  $: documentTitle = threadDetailDocumentTitle(
-    thread?.thread_id === threadId ? thread.subject : null,
-    threadId
-  );
+  $: documentTitle =
+    thread?.id === threadId || thread?.thread_id === threadId
+      ? threadDetailDocumentTitle(thread.subject, threadId)
+      : loadingThreadDetailDocumentTitle();
 
   $: if (hashAnchorKey === null) {
     lastAppliedHashAnchorKey = null;
@@ -555,6 +675,7 @@
     requestSequence += 1;
     clearActiveRequest();
     clearProgressRequest();
+    clearShareLinkStatusTimeout();
   });
 </script>
 
@@ -571,7 +692,7 @@
     <ErrorState
       title="Missing thread ID"
       message="This route does not include a thread identifier."
-      detail="Expected /threads/:threadId"
+      detail="Expected /t/:threadId"
     />
   {:else if isInitialLoad}
     <LoadingState
@@ -643,6 +764,16 @@
           <dd>{pageSummary}</dd>
         </div>
       </dl>
+      <div class="summary-card-actions">
+        <button class="summary-action-button" type="button" on:click={copyShareLink}>Copy share link</button>
+        {#if shareLinkStatus === "success"}
+          <p class="summary-action-status" role="status">Share link copied.</p>
+        {:else if shareLinkStatus === "error"}
+          <p class="summary-action-status summary-action-status--error" role="status">
+            Unable to copy the share link.
+          </p>
+        {/if}
+      </div>
     </article>
 
     {#if trackingView !== null}
@@ -743,7 +874,7 @@
   {/if}
 
   <p class="route-link">
-    <a href={backToThreadsPath} class="route-link-anchor" on:click={(event) => onLinkClick(event, backToThreadsPath)}>
+    <a href={backToThreadsPath} class="route-link-anchor" on:click={handleBackToThreadsClick}>
       <span class="route-link-icon" aria-hidden="true">←</span>
       <span>Back to threads</span>
     </a>
@@ -841,6 +972,46 @@
     font-size: 0.86rem;
     line-height: 1.3;
     overflow-wrap: anywhere;
+  }
+
+  .summary-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  .summary-action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.4rem;
+    padding: 0.52rem 0.88rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #334e68;
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .summary-action-button:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .summary-action-status {
+    margin: 0;
+    color: #486581;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  .summary-action-status--error {
+    color: #8a1c1c;
   }
 
   .progress-banner {

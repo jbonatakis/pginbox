@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { db } from "../db";
 
@@ -10,6 +10,7 @@ const DEFAULT_SPACING_SECONDS = 60;
 type CommandName = "add" | "create";
 const DEFAULT_LIST_LIMIT = 25;
 const DEFAULT_DEV_THREAD_PREFIX = "dev-thread-";
+const THREAD_STABLE_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 export interface ParentMessageContext {
   messageId: string;
@@ -121,6 +122,13 @@ class UsageError extends Error {
     this.name = "UsageError";
     this.exitCode = exitCode;
   }
+}
+
+function createThreadStableId(): string {
+  return Array.from(
+    { length: 10 },
+    () => THREAD_STABLE_ID_ALPHABET[randomInt(THREAD_STABLE_ID_ALPHABET.length)]
+  ).join("");
 }
 
 function compactTimestamp(value: Date): string {
@@ -565,9 +573,10 @@ async function loadReplyTarget(
 
 async function refreshThreadAggregate(threadId: string, listId: number): Promise<void> {
   await sql`
-    INSERT INTO threads (thread_id, list_id, subject, started_at, last_activity_at, message_count)
+    INSERT INTO threads (thread_id, id, list_id, subject, started_at, last_activity_at, message_count)
     SELECT
       thread_id,
+      ${createThreadStableId()},
       list_id,
       _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST, id ASC))[1]),
       min(sent_at),

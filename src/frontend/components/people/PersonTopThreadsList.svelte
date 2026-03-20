@@ -35,8 +35,8 @@
 
   {#if topThreads.length > 0}
     <ol class="thread-list">
-      {#each topThreads as thread (thread.thread_id)}
-        {@const path = threadPath(thread.thread_id)}
+      {#each topThreads as thread (thread.id)}
+        {@const path = threadPath(thread.id)}
         <li>
           <a class="thread-row" href={path} on:click={(event) => onLinkClick(event, path)}>
             <strong>{threadSubject(thread.subject)}</strong>

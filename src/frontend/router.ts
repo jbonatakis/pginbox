@@ -2,6 +2,8 @@ import { readonly, writable } from "svelte/store";
 
 export const homePath = "/";
 export const threadsPath = "/threads";
+export const threadDetailBasePath = "/t";
+export const messagePermalinkBasePath = "/m";
 export const peoplePath = "/people";
 export const analyticsPath = "/analytics";
 export const accountPath = "/account";
@@ -24,6 +26,11 @@ export type AppRoute =
       name: "thread-detail";
       pathname: string;
       params: { threadId: string };
+    }
+  | {
+      name: "message-permalink";
+      pathname: string;
+      params: { messageId: string };
     }
   | {
       name: "analytics";
@@ -72,7 +79,11 @@ if (typeof window !== "undefined") {
 export const currentRoute = readonly(routeStore);
 
 export function threadDetailPath(threadId: string): string {
-  return `${threadsPath}/${encodeURIComponent(threadId)}`;
+  return `${threadDetailBasePath}/${encodeURIComponent(threadId)}`;
+}
+
+export function messagePermalinkPath(messageId: string): string {
+  return `${messagePermalinkBasePath}/${encodeURIComponent(messageId)}`;
 }
 
 export function personDetailPath(id: string): string {
@@ -155,12 +166,21 @@ function matchRoute(pathname: string): AppRoute {
     return { name: "threads", pathname: threadsPath };
   }
 
-  const threadMatch = pathname.match(/^\/threads\/([^/]+)$/);
+  const threadMatch = pathname.match(/^\/(?:t|threads)\/([^/]+)$/);
   if (threadMatch) {
     return {
       name: "thread-detail",
       pathname,
       params: { threadId: decodeRouteParam(threadMatch[1]) },
+    };
+  }
+
+  const messageMatch = pathname.match(/^\/m\/([^/]+)$/);
+  if (messageMatch) {
+    return {
+      name: "message-permalink",
+      pathname,
+      params: { messageId: decodeRouteParam(messageMatch[1]) },
     };
   }
 

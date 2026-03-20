@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "shared/api";
 import { requireAuth, resolveCurrentSession, type ResponseCookieTarget } from "../auth";
 import {
   followThread,
@@ -77,7 +78,7 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
     async ({ params, query, request, set, status }) => {
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
-      const pageSize = parsePageSize(query.pageSize, 50);
+      const pageSize = parsePageSize(query.pageSize, DEFAULT_THREAD_MESSAGES_PAGE_SIZE);
       if (pageSize === null) return status(400, { message: "pageSize must be an integer between 1 and 100" });
       return getProgress(user.id, params.threadId, pageSize);
     },

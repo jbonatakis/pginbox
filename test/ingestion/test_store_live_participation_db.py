@@ -144,7 +144,13 @@ def make_record(
 def fetch_message(conn, message_id: str):
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, thread_id FROM messages WHERE message_id = %s",
+            """
+            SELECT messages.id, messages.thread_id, threads.id
+            FROM messages
+            LEFT JOIN threads
+                ON threads.thread_id = messages.thread_id
+            WHERE messages.message_id = %s
+            """,
             (message_id,),
         )
         row = cur.fetchone()
@@ -206,9 +212,9 @@ def test_live_ingest_tracks_matching_verified_active_user_and_seeds_progress(
 
     ingest.store_batch_live(conn, batch)
 
-    message_db_id, thread_id = fetch_message(conn, batch[0]["message_id"])
-    tracking = fetch_tracking_row(conn, user_id, thread_id)
-    progress = fetch_progress_row(conn, user_id, thread_id)
+    message_db_id, _, stable_thread_id = fetch_message(conn, batch[0]["message_id"])
+    tracking = fetch_tracking_row(conn, user_id, stable_thread_id)
+    progress = fetch_progress_row(conn, user_id, stable_thread_id)
 
     assert tracking is not None
     assert tracking[0] == message_db_id
@@ -248,11 +254,11 @@ def test_live_ingest_matches_email_case_insensitively_but_only_for_exact_email(
 
     ingest.store_batch_live(conn, batch)
 
-    message_db_id, thread_id = fetch_message(conn, batch[0]["message_id"])
-    exact_tracking = fetch_tracking_row(conn, exact_user_id, thread_id)
-    exact_progress = fetch_progress_row(conn, exact_user_id, thread_id)
-    similar_tracking = fetch_tracking_row(conn, similar_user_id, thread_id)
-    similar_progress = fetch_progress_row(conn, similar_user_id, thread_id)
+    message_db_id, _, stable_thread_id = fetch_message(conn, batch[0]["message_id"])
+    exact_tracking = fetch_tracking_row(conn, exact_user_id, stable_thread_id)
+    exact_progress = fetch_progress_row(conn, exact_user_id, stable_thread_id)
+    similar_tracking = fetch_tracking_row(conn, similar_user_id, stable_thread_id)
+    similar_progress = fetch_progress_row(conn, similar_user_id, stable_thread_id)
 
     assert exact_tracking is not None
     assert exact_tracking[0] == message_db_id
@@ -349,7 +355,7 @@ def test_live_ingest_preserves_manual_follow_and_suppression_while_advancing_pro
     )
     ingest.store_batch_live(conn, [root])
 
-    root_db_id, thread_id = fetch_message(conn, root["message_id"])
+    root_db_id, _, stable_thread_id = fetch_message(conn, root["message_id"])
     manual_followed_at = ts(3)
     suppressed_at = ts(4)
     with conn.cursor() as cur:
@@ -369,7 +375,7 @@ def test_live_ingest_preserves_manual_follow_and_suppression_while_advancing_pro
             """,
             (
                 user_id,
-                thread_id,
+                stable_thread_id,
                 root_db_id,
                 manual_followed_at,
                 suppressed_at,
@@ -387,7 +393,7 @@ def test_live_ingest_preserves_manual_follow_and_suppression_while_advancing_pro
             )
             VALUES (%s, %s, %s, %s)
             """,
-            (user_id, thread_id, root_db_id, manual_followed_at),
+            (user_id, stable_thread_id, root_db_id, manual_followed_at),
         )
     conn.commit()
 
@@ -402,9 +408,9 @@ def test_live_ingest_preserves_manual_follow_and_suppression_while_advancing_pro
     )
     ingest.store_batch_live(conn, [reply])
 
-    reply_db_id, _ = fetch_message(conn, reply["message_id"])
-    tracking = fetch_tracking_row(conn, user_id, thread_id)
-    progress = fetch_progress_row(conn, user_id, thread_id)
+    reply_db_id, _, _ = fetch_message(conn, reply["message_id"])
+    tracking = fetch_tracking_row(conn, user_id, stable_thread_id)
+    progress = fetch_progress_row(conn, user_id, stable_thread_id)
 
     assert tracking is not None
     assert tracking[0] == reply_db_id
@@ -435,7 +441,7 @@ def test_live_ingest_keeps_participation_only_thread_suppressed_and_deletes_prog
     )
     ingest.store_batch_live(conn, [root])
 
-    root_db_id, thread_id = fetch_message(conn, root["message_id"])
+    root_db_id, _, stable_thread_id = fetch_message(conn, root["message_id"])
     participated_at = ts(3)
     suppressed_at = ts(4)
     with conn.cursor() as cur:
@@ -455,7 +461,7 @@ def test_live_ingest_keeps_participation_only_thread_suppressed_and_deletes_prog
             """,
             (
                 user_id,
-                thread_id,
+                stable_thread_id,
                 root_db_id,
                 participated_at,
                 suppressed_at,
@@ -473,7 +479,7 @@ def test_live_ingest_keeps_participation_only_thread_suppressed_and_deletes_prog
             )
             VALUES (%s, %s, %s, %s)
             """,
-            (user_id, thread_id, root_db_id, participated_at),
+            (user_id, stable_thread_id, root_db_id, participated_at),
         )
     conn.commit()
 
@@ -488,9 +494,9 @@ def test_live_ingest_keeps_participation_only_thread_suppressed_and_deletes_prog
     )
     ingest.store_batch_live(conn, [reply])
 
-    reply_db_id, _ = fetch_message(conn, reply["message_id"])
-    tracking = fetch_tracking_row(conn, user_id, thread_id)
-    progress = fetch_progress_row(conn, user_id, thread_id)
+    reply_db_id, _, _ = fetch_message(conn, reply["message_id"])
+    tracking = fetch_tracking_row(conn, user_id, stable_thread_id)
+    progress = fetch_progress_row(conn, user_id, stable_thread_id)
 
     assert tracking is not None
     assert tracking[0] == reply_db_id
@@ -521,7 +527,7 @@ def test_live_ingest_keeps_progress_when_existing_row_is_already_ahead(
     )
     ingest.store_batch_live(conn, [root])
 
-    root_db_id, thread_id = fetch_message(conn, root["message_id"])
+    root_db_id, _, stable_thread_id = fetch_message(conn, root["message_id"])
     later = make_record(
         token,
         list_id,
@@ -532,7 +538,7 @@ def test_live_ingest_keeps_progress_when_existing_row_is_already_ahead(
         refs=[root["message_id"]],
     )
     ingest.store_batch_live(conn, [later])
-    later_db_id, _ = fetch_message(conn, later["message_id"])
+    later_db_id, _, _ = fetch_message(conn, later["message_id"])
 
     with conn.cursor() as cur:
         cur.execute(
@@ -541,7 +547,7 @@ def test_live_ingest_keeps_progress_when_existing_row_is_already_ahead(
             SET last_read_message_id = %s, updated_at = %s
             WHERE user_id = %s AND thread_id = %s
             """,
-            (later_db_id, ts(6), user_id, thread_id),
+            (later_db_id, ts(6), user_id, stable_thread_id),
         )
     conn.commit()
 
@@ -556,9 +562,9 @@ def test_live_ingest_keeps_progress_when_existing_row_is_already_ahead(
     )
     ingest.store_batch_live(conn, [backdated_reply])
 
-    backdated_reply_db_id, _ = fetch_message(conn, backdated_reply["message_id"])
-    tracking = fetch_tracking_row(conn, user_id, thread_id)
-    progress = fetch_progress_row(conn, user_id, thread_id)
+    backdated_reply_db_id, _, _ = fetch_message(conn, backdated_reply["message_id"])
+    tracking = fetch_tracking_row(conn, user_id, stable_thread_id)
+    progress = fetch_progress_row(conn, user_id, stable_thread_id)
 
     assert tracking is not None
     assert tracking[0] == backdated_reply_db_id
@@ -588,21 +594,21 @@ def test_live_ingest_rerun_is_idempotent_for_existing_messages(ingest, live_inge
     ]
 
     ingest.store_batch_live(conn, batch)
-    first_message_db_id, thread_id = fetch_message(conn, batch[0]["message_id"])
+    first_message_db_id, _, stable_thread_id = fetch_message(conn, batch[0]["message_id"])
 
     ingest.store_batch_live(conn, batch)
 
-    tracking = fetch_tracking_row(conn, user_id, thread_id)
-    progress = fetch_progress_row(conn, user_id, thread_id)
+    tracking = fetch_tracking_row(conn, user_id, stable_thread_id)
+    progress = fetch_progress_row(conn, user_id, stable_thread_id)
     with conn.cursor() as cur:
         cur.execute(
             "SELECT count(*) FROM thread_tracking WHERE user_id = %s AND thread_id = %s",
-            (user_id, thread_id),
+            (user_id, stable_thread_id),
         )
         tracking_count = cur.fetchone()[0]
         cur.execute(
             "SELECT count(*) FROM thread_read_progress WHERE user_id = %s AND thread_id = %s",
-            (user_id, thread_id),
+            (user_id, stable_thread_id),
         )
         progress_count = cur.fetchone()[0]
 
@@ -637,6 +643,7 @@ def test_historical_ingest_backfill_keeps_matching_participation_quiet(
 
     ingest.store_batch_backfill(conn, batch)
 
-    _, thread_id = fetch_message(conn, batch[0]["message_id"])
-    assert fetch_tracking_row(conn, user_id, thread_id) is None
-    assert fetch_progress_row(conn, user_id, thread_id) is None
+    _, raw_thread_id, stable_thread_id = fetch_message(conn, batch[0]["message_id"])
+    lookup_thread_id = stable_thread_id or raw_thread_id
+    assert fetch_tracking_row(conn, user_id, lookup_thread_id) is None
+    assert fetch_progress_row(conn, user_id, lookup_thread_id) is None
