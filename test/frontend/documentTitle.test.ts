@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   documentTitleForRoute,
+  loadingThreadDetailDocumentTitle,
   messagePermalinkDocumentTitle,
   threadDetailDocumentTitle,
 } from "../../src/frontend/lib/documentTitle";
@@ -16,14 +17,15 @@ describe("document title helpers", () => {
     expect(threadDetailDocumentTitle("   ", "pgsql/abc123")).toBe("Thread pgsql/abc123 | pginbox");
   });
 
-  it("keeps route-level thread titles on the thread id until data is loaded", () => {
+  it("uses a generic thread title until thread detail data is loaded", () => {
+    expect(loadingThreadDetailDocumentTitle()).toBe("Thread | pginbox");
     expect(
       documentTitleForRoute({
         name: "thread-detail",
         pathname: "/threads/pgsql%2Fabc123",
         params: { threadId: "pgsql/abc123" },
       })
-    ).toBe("Thread pgsql/abc123 | pginbox");
+    ).toBe("Thread | pginbox");
   });
 
   it("uses the message id for message permalink routes before redirecting", () => {

@@ -12,7 +12,7 @@
   import ThreadPageControls from "../components/thread/ThreadPageControls.svelte";
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
-  import { threadDetailDocumentTitle } from "../lib/documentTitle";
+  import { loadingThreadDetailDocumentTitle, threadDetailDocumentTitle } from "../lib/documentTitle";
   import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
   import {
     buildThreadCanonicalSharePath,
@@ -660,10 +660,10 @@
     thread?.id ?? threadId,
     (count) => numberFormatter.format(count)
   );
-  $: documentTitle = threadDetailDocumentTitle(
-    thread?.id === threadId || thread?.thread_id === threadId ? thread.subject : null,
-    threadId
-  );
+  $: documentTitle =
+    thread?.id === threadId || thread?.thread_id === threadId
+      ? threadDetailDocumentTitle(thread.subject, threadId)
+      : loadingThreadDetailDocumentTitle();
 
   $: if (hashAnchorKey === null) {
     lastAppliedHashAnchorKey = null;
