@@ -170,7 +170,7 @@ Frontend rule:
 
 Potential future improvement:
 
-- add a URL-safe thread slug/id alias if raw IDs prove awkward in routing or sharing.
+- add a stable short thread id route and message permalink route; see [`docs/SHAREABLE_URLS.md`](./SHAREABLE_URLS.md).
 
 ## Frontend implementation shape
 

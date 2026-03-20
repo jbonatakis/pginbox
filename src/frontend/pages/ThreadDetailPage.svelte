@@ -10,6 +10,12 @@
   import { threadDetailDocumentTitle } from "../lib/documentTitle";
   import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
   import {
+    buildThreadCanonicalSharePath,
+    getThreadsDetailHistoryContext,
+    withThreadsDetailHistoryContext,
+    withoutThreadsDetailHistoryContext,
+  } from "../lib/threadDetailNavigation";
+  import {
     getThreadDetailTrackingView,
     mergeThreadProgressTrackingState,
     type ThreadDetailTrackingView,
@@ -17,11 +23,11 @@
   import { authStore } from "../lib/state/auth";
   import {
     parseThreadDetailPage,
-    parseThreadsDetailContext,
-    serializeThreadsDetailContext,
+    parseThreadsQuery,
+    serializeThreadsQuery,
     withThreadDetailPage,
   } from "../lib/state/threadsQuery";
-  import { navigate, onLinkClick, threadsPath } from "../router";
+  import { isClientNavigationEvent, navigate, onLinkClick, threadsPath } from "../router";
 
   type ThreadDetailStatus = "idle" | "loading" | "success" | "error";
   type LoadMode = "navigate" | "refresh" | "replace";
@@ -52,12 +58,15 @@
   let lastLoadedThreadId: string | null = null;
   let requestedPage: number | null = null;
   let requestSequence = 0;
+  let shareLinkStatus: "idle" | "success" | "error" = "idle";
+  let shareLinkStatusTimeoutId: number | null = null;
   let showJumpToTop = false;
   let status: ThreadDetailStatus = "idle";
   let thread: ThreadDetail | null = null;
   let progress: ThreadProgress | null = null;
   let progressRequestedThreadId: string | null = null;
   let backToThreadsPath = threadsPath;
+  let backToThreadsRestoreScrollY: number | null = null;
   let lastAppliedHashAnchorKey: string | null = null;
   let retryNavigateOptions: LoadThreadOptions = {};
   let trackingView: ThreadDetailTrackingView | null = null;
@@ -231,6 +240,61 @@
       top: 0,
       behavior: prefersReducedMotion ? "auto" : "smooth",
     });
+  };
+
+  const clearShareLinkStatusTimeout = (): void => {
+    if (shareLinkStatusTimeoutId === null || typeof window === "undefined") return;
+    window.clearTimeout(shareLinkStatusTimeoutId);
+    shareLinkStatusTimeoutId = null;
+  };
+
+  const setShareLinkStatus = (nextStatus: "success" | "error"): void => {
+    shareLinkStatus = nextStatus;
+    clearShareLinkStatusTimeout();
+
+    if (typeof window === "undefined") return;
+    shareLinkStatusTimeoutId = window.setTimeout(() => {
+      shareLinkStatus = "idle";
+      shareLinkStatusTimeoutId = null;
+    }, 2500);
+  };
+
+  const copyTextToClipboard = async (value: string): Promise<boolean> => {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch {
+        // fall through to the document-based fallback
+      }
+    }
+
+    if (typeof document === "undefined") return false;
+
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.select();
+
+    const didCopy = document.execCommand("copy");
+    textarea.remove();
+    return didCopy;
+  };
+
+  const copyShareLink = async (): Promise<void> => {
+    if (!thread || typeof window === "undefined") return;
+
+    const sharePath = buildThreadCanonicalSharePath(
+      thread.thread_id,
+      thread.messagePagination.page,
+      thread.messagePagination.totalPages,
+      window.location.hash
+    );
+    const didCopy = await copyTextToClipboard(`${window.location.origin}${sharePath}`);
+    setShareLinkStatus(didCopy ? "success" : "error");
   };
 
   const loadThread = async (
@@ -461,15 +525,39 @@
   const syncBackToThreadsPath = (): void => {
     if (typeof window === "undefined") {
       backToThreadsPath = threadsPath;
+      backToThreadsRestoreScrollY = null;
       return;
     }
 
-    const detailContext = parseThreadsDetailContext(window.location.search);
-    const detailSearch = serializeThreadsDetailContext(
-      detailContext.query,
-      detailContext.restoreScrollY
-    );
-    backToThreadsPath = `${threadsPath}${detailSearch}`;
+    const locationSearch = serializeThreadsQuery(parseThreadsQuery(window.location.search));
+    const historyContext = getThreadsDetailHistoryContext(window.history.state);
+    const contextSearch = historyContext?.search ?? locationSearch;
+    backToThreadsPath = `${threadsPath}${contextSearch}`;
+    backToThreadsRestoreScrollY = historyContext?.restoreScrollY ?? null;
+
+    if (historyContext !== null) {
+      const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.replaceState(withoutThreadsDetailHistoryContext(window.history.state), "", nextUrl);
+    }
+  };
+
+  const handleBackToThreadsClick = (event: MouseEvent): void => {
+    if (!isClientNavigationEvent(event)) return;
+
+    if (typeof window !== "undefined" && backToThreadsRestoreScrollY !== null) {
+      const contextSearch = backToThreadsPath.startsWith(threadsPath)
+        ? backToThreadsPath.slice(threadsPath.length)
+        : "";
+      const nextState = withThreadsDetailHistoryContext(
+        window.history.state,
+        contextSearch,
+        backToThreadsRestoreScrollY
+      );
+      const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.replaceState(nextState, "", nextUrl);
+    }
+
+    onLinkClick(event, backToThreadsPath);
   };
 
   $: hasThreadId = threadId.length > 0;
@@ -494,6 +582,7 @@
     requestSequence += 1;
     clearActiveRequest();
     clearProgressRequest();
+    clearShareLinkStatusTimeout();
 
     error = null;
     errorMode = null;
@@ -504,10 +593,14 @@
     progress = null;
     progressRequestedThreadId = null;
     requestedPage = null;
+    backToThreadsRestoreScrollY = null;
+    shareLinkStatus = "idle";
     showJumpToTop = false;
     thread = null;
     status = "error";
   } else if (threadId !== lastLoadedThreadId) {
+    clearShareLinkStatusTimeout();
+    shareLinkStatus = "idle";
     lastLoadedThreadId = threadId;
     void loadThread(threadId, "replace", locationPage());
   }
@@ -555,6 +648,7 @@
     requestSequence += 1;
     clearActiveRequest();
     clearProgressRequest();
+    clearShareLinkStatusTimeout();
   });
 </script>
 
@@ -643,6 +737,16 @@
           <dd>{pageSummary}</dd>
         </div>
       </dl>
+      <div class="summary-card-actions">
+        <button class="summary-action-button" type="button" on:click={copyShareLink}>Copy share link</button>
+        {#if shareLinkStatus === "success"}
+          <p class="summary-action-status" role="status">Share link copied.</p>
+        {:else if shareLinkStatus === "error"}
+          <p class="summary-action-status summary-action-status--error" role="status">
+            Unable to copy the share link.
+          </p>
+        {/if}
+      </div>
     </article>
 
     {#if trackingView !== null}
@@ -743,7 +847,7 @@
   {/if}
 
   <p class="route-link">
-    <a href={backToThreadsPath} class="route-link-anchor" on:click={(event) => onLinkClick(event, backToThreadsPath)}>
+    <a href={backToThreadsPath} class="route-link-anchor" on:click={handleBackToThreadsClick}>
       <span class="route-link-icon" aria-hidden="true">←</span>
       <span>Back to threads</span>
     </a>
@@ -841,6 +945,46 @@
     font-size: 0.86rem;
     line-height: 1.3;
     overflow-wrap: anywhere;
+  }
+
+  .summary-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+  }
+
+  .summary-action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.4rem;
+    padding: 0.52rem 0.88rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #334e68;
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .summary-action-button:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .summary-action-status {
+    margin: 0;
+    color: #486581;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  .summary-action-status--error {
+    color: #8a1c1c;
   }
 
   .progress-banner {

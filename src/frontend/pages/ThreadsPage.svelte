@@ -8,14 +8,17 @@
   import ThreadsFilters from "../components/threads/ThreadsFilters.svelte";
   import ThreadsResultsTable from "../components/threads/ThreadsResultsTable.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import {
+    getThreadsDetailHistoryContext,
+    withoutThreadsDetailHistoryContext,
+  } from "../lib/threadDetailNavigation";
   import { authStore } from "../lib/state/auth";
   import {
     applyThreadsFilterPatch,
     THREADS_QUERY_DEFAULT_LIMIT,
     clampThreadsQueryLimit,
     createDefaultThreadsQueryState,
-    parseThreadsDetailContext,
-    serializeThreadsDetailContext,
+    parseThreadsQuery,
     serializeThreadsQuery,
     updateThreadsQueryState,
     type ThreadsQueryPatch,
@@ -59,7 +62,7 @@
   let threads: Thread[] = [];
   let threadsError: ApiErrorShape | null = null;
 
-  $: detailContextSearch = serializeThreadsDetailContext(queryState);
+  $: detailContextSearch = serializeThreadsQuery(queryState);
   $: fromDate = toDateInputValue(queryState.from);
   $: hasActiveCursor = typeof queryState.cursor === "string";
   $: hasPreviousPage = pageIndex > 0;
@@ -189,15 +192,24 @@
   const syncStateFromLocation = (): ThreadsQueryState => {
     if (typeof window === "undefined") return queryState;
 
-    const detailContext = parseThreadsDetailContext(window.location.search);
-    const parsed = detailContext.query;
+    const parsed = parseThreadsQuery(window.location.search);
     const canonicalSearch = serializeThreadsQuery(parsed);
+    const historyContext = getThreadsDetailHistoryContext(window.history.state);
+    const matchesHistoryContext = historyContext?.search === canonicalSearch;
 
     queryState = parsed;
-    pendingRestoreScrollY = detailContext.restoreScrollY ?? null;
+    pendingRestoreScrollY = matchesHistoryContext ? historyContext?.restoreScrollY ?? null : null;
 
     if (canonicalSearch !== window.location.search) {
-      navigate(withSearch(threadsPath, canonicalSearch), { replace: true });
+      const nextUrl = withSearch(threadsPath, canonicalSearch);
+      const nextState = matchesHistoryContext
+        ? withoutThreadsDetailHistoryContext(window.history.state)
+        : window.history.state;
+      window.history.replaceState(nextState, "", nextUrl);
+    } else if (matchesHistoryContext) {
+      const nextState = withoutThreadsDetailHistoryContext(window.history.state);
+      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      window.history.replaceState(nextState, "", currentUrl);
     }
 
     return parsed;
