@@ -1,5 +1,7 @@
 -- migrate:up
 
+SET LOCAL statement_timeout = 0;
+
 CREATE TABLE thread_tracking_new (
     user_id                     BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     thread_id                   TEXT        NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
@@ -139,6 +141,8 @@ ALTER TABLE thread_tracking
     RENAME CONSTRAINT thread_tracking_new_source_check TO thread_tracking_source_check;
 
 -- migrate:down
+
+SET LOCAL statement_timeout = 0;
 
 CREATE TABLE thread_tracking_old (
     user_id                     BIGINT      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
