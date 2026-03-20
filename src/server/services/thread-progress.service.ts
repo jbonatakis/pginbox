@@ -4,6 +4,7 @@ import { toDbInt8, type DbInt8Value } from "../db-ids";
 import { BadRequestError } from "../errors";
 import { toTrackedThread, toTrackedThreadCounts, toThreadProgress } from "../serialize";
 import type { DB } from "../types/db";
+import { resolveThreadIdentifier } from "./threads.service";
 import type {
   TrackedThread,
   TrackedThreadCounts,
@@ -874,6 +875,11 @@ function resolveCanonicalThreadId(
     ?? inputThreadId;
 }
 
+async function resolveInputThreadId(inputThreadId: string): Promise<string> {
+  const resolvedThread = await resolveThreadIdentifier(inputThreadId);
+  return resolvedThread?.thread_id ?? inputThreadId;
+}
+
 async function getCanonicalProgressRow(
   userId: DbInt8Value,
   threadId: string
@@ -1060,6 +1066,7 @@ async function listTrackedThreads(
       const progress = buildThreadProgress(row.thread_id, trackingRow, stats, pageSize);
 
       return toTrackedThread({
+        id: row.id,
         thread_id: row.thread_id,
         list_id: row.list_id,
         subject: row.subject,
@@ -1091,8 +1098,9 @@ export async function followThread(
   seedLastReadMessageId?: string | null
 ): Promise<ThreadFollowState> {
   const followedAt = new Date();
+  const resolvedThreadId = await resolveInputThreadId(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (existing) {
@@ -1145,8 +1153,9 @@ export async function unfollowThread(
   userId: DbInt8Value,
   threadId: string
 ): Promise<ThreadFollowState> {
+  const resolvedThreadId = await resolveInputThreadId(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (!existing) {
@@ -1192,8 +1201,9 @@ export async function removeThreadFromMyThreads(
   userId: DbInt8Value,
   threadId: string
 ): Promise<ThreadFollowState> {
+  const resolvedThreadId = await resolveInputThreadId(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (!existing || existing.participated_at == null) {
@@ -1223,8 +1233,9 @@ export async function addThreadBackToMyThreads(
   userId: DbInt8Value,
   threadId: string
 ): Promise<ThreadFollowState> {
+  const resolvedThreadId = await resolveInputThreadId(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
   const existing = await getTrackingRow(userId, canonicalThreadId);
 
   if (!existing || existing.participated_at == null) {
@@ -1307,8 +1318,9 @@ export async function getProgress(
   threadId: string,
   pageSize = 50
 ): Promise<ThreadProgress> {
+  const resolvedThreadId = await resolveInputThreadId(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
   const trackingRow = await getTrackingRow(userId, canonicalThreadId);
   const progressRow = await getCanonicalProgressRow(userId, canonicalThreadId);
   const flags = getTrackingFlags(trackingRow);
@@ -1338,8 +1350,9 @@ export async function advanceProgress(
   lastReadMessageId: string,
   pageSize = 50
 ): Promise<ThreadProgress> {
+  const resolvedThreadId = await resolveInputThreadId(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
   const trackingRow = await getTrackingRow(userId, canonicalThreadId);
   const flags = getTrackingFlags(trackingRow);
 
@@ -1367,8 +1380,9 @@ export async function markRead(
   threadId: string,
   pageSize = 50
 ): Promise<ThreadProgress> {
+  const resolvedThreadId = await resolveInputThreadId(threadId);
   const maps = await canonicalizeUserThreadState(userId);
-  const canonicalThreadId = resolveCanonicalThreadId(threadId, maps);
+  const canonicalThreadId = resolveCanonicalThreadId(resolvedThreadId, maps);
   const trackingRow = await getTrackingRow(userId, canonicalThreadId);
   const flags = getTrackingFlags(trackingRow);
 

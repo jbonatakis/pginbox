@@ -67,6 +67,7 @@
   let progressRequestedThreadId: string | null = null;
   let backToThreadsPath = threadsPath;
   let backToThreadsRestoreScrollY: number | null = null;
+  let pendingCanonicalThreadId: string | null = null;
   let lastAppliedHashAnchorKey: string | null = null;
   let retryNavigateOptions: LoadThreadOptions = {};
   let trackingView: ThreadDetailTrackingView | null = null;
@@ -288,7 +289,7 @@
     if (!thread || typeof window === "undefined") return;
 
     const sharePath = buildThreadCanonicalSharePath(
-      thread.thread_id,
+      thread.id,
       thread.messagePagination.page,
       thread.messagePagination.totalPages,
       window.location.hash
@@ -352,10 +353,26 @@
 
       thread = response;
       progress = progressResponse;
+      if (progressResponse !== null) {
+        progressRequestedThreadId = response.id;
+      }
       status = "success";
       syncLocationPage(response.messagePagination.page, response.messagePagination.totalPages, {
         preserveHashAnchor,
       });
+      if (typeof window !== "undefined") {
+        const canonicalPath = buildThreadCanonicalSharePath(
+          response.id,
+          response.messagePagination.page,
+          response.messagePagination.totalPages,
+          window.location.hash
+        );
+        const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (canonicalPath !== currentPath) {
+          pendingCanonicalThreadId = response.id;
+          navigate(canonicalPath, { replace: true });
+        }
+      }
       if (mode === "navigate" && shouldScrollToTop) {
         scrollToTop();
       }
@@ -441,8 +458,8 @@
     if (isBannerBusy || trackingView === null || !trackingView.showMarkRead) return;
     isBannerBusy = true;
     try {
-      progress = await api.threads.markRead(progress?.threadId ?? threadId);
-      progressRequestedThreadId = threadId;
+      progress = await api.threads.markRead(thread?.id ?? threadId);
+      progressRequestedThreadId = thread?.id ?? threadId;
     } catch {
       // silently ignore
     } finally {
@@ -455,8 +472,8 @@
     isBannerBusy = true;
     try {
       const result = progress.isFollowed
-        ? await api.threads.unfollow(progress.threadId)
-        : await api.threads.follow(progress.threadId);
+        ? await api.threads.unfollow(thread?.id ?? threadId)
+        : await api.threads.follow(thread?.id ?? threadId);
       await refreshProgressFromTrackingState(result);
     } catch {
       // silently ignore
@@ -476,7 +493,7 @@
     if (isBannerBusy || !progress || trackingView === null || !trackingView.showRemoveFromMyThreads) return;
     isBannerBusy = true;
     try {
-      const result = await api.threads.removeFromMyThreads(progress.threadId);
+      const result = await api.threads.removeFromMyThreads(thread?.id ?? threadId);
       await refreshProgressFromTrackingState(result);
     } catch {
       // silently ignore
@@ -489,7 +506,7 @@
     if (isBannerBusy || !progress || trackingView === null || !trackingView.showAddBackToMyThreads) return;
     isBannerBusy = true;
     try {
-      const result = await api.threads.addBackToMyThreads(progress.threadId);
+      const result = await api.threads.addBackToMyThreads(thread?.id ?? threadId);
       await refreshProgressFromTrackingState(result);
     } catch {
       // silently ignore
@@ -590,6 +607,7 @@
     isNavigatingPage = false;
     isRefreshing = false;
     lastLoadedThreadId = null;
+    pendingCanonicalThreadId = null;
     progress = null;
     progressRequestedThreadId = null;
     requestedPage = null;
@@ -598,7 +616,10 @@
     showJumpToTop = false;
     thread = null;
     status = "error";
-  } else if (threadId !== lastLoadedThreadId) {
+  } else if (pendingCanonicalThreadId !== null && threadId === pendingCanonicalThreadId) {
+    pendingCanonicalThreadId = null;
+    lastLoadedThreadId = threadId;
+  } else if (threadId !== lastLoadedThreadId && threadId !== pendingCanonicalThreadId) {
     clearShareLinkStatusTimeout();
     shareLinkStatus = "idle";
     lastLoadedThreadId = threadId;
@@ -607,8 +628,9 @@
 
   $: if (thread && $authStore.isBootstrapped) {
     if ($authStore.isAuthenticated) {
-      if (progressRequestedThreadId !== threadId) {
-        void fetchProgress(threadId).then((response) => {
+      const progressThreadId = pendingCanonicalThreadId ?? threadId;
+      if (progressRequestedThreadId !== progressThreadId) {
+        void fetchProgress(progressThreadId).then((response) => {
           if (threadId !== lastLoadedThreadId) return;
           progress = response;
         });
@@ -631,10 +653,11 @@
   $: trackingView = getThreadDetailTrackingView(
     $authStore.isAuthenticated,
     progress,
+    thread?.id ?? threadId,
     (count) => numberFormatter.format(count)
   );
   $: documentTitle = threadDetailDocumentTitle(
-    thread?.thread_id === threadId ? thread.subject : null,
+    thread?.id === threadId || thread?.thread_id === threadId ? thread.subject : null,
     threadId
   );
 
@@ -665,7 +688,7 @@
     <ErrorState
       title="Missing thread ID"
       message="This route does not include a thread identifier."
-      detail="Expected /threads/:threadId"
+      detail="Expected /t/:threadId"
     />
   {:else if isInitialLoad}
     <LoadingState

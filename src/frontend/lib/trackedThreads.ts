@@ -126,10 +126,10 @@ export function getTrackedThreadErrorTitle(tab: TrackedThreadTab): string {
 export function getTrackedThreadResumeUrl(
   thread: Pick<
     TrackedThread,
-    "thread_id" | "has_unread" | "resume_page" | "first_unread_message_id" | "latest_page"
+    "id" | "thread_id" | "has_unread" | "resume_page" | "first_unread_message_id" | "latest_page"
   >
 ): string {
-  const base = threadDetailPath(thread.thread_id);
+  const base = threadDetailPath(thread.id || thread.thread_id);
 
   if (thread.has_unread && thread.resume_page !== null && thread.first_unread_message_id !== null) {
     return `${base}?page=${thread.resume_page}#message-${thread.first_unread_message_id}`;
@@ -139,9 +139,9 @@ export function getTrackedThreadResumeUrl(
 }
 
 export function getTrackedThreadLatestUrl(
-  thread: Pick<TrackedThread, "thread_id">
+  thread: Pick<TrackedThread, "id" | "thread_id">
 ): string {
-  return threadDetailPath(thread.thread_id);
+  return threadDetailPath(thread.id || thread.thread_id);
 }
 
 function withCounts(

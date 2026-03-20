@@ -5,6 +5,8 @@ import {
   mergeThreadProgressTrackingState,
 } from "../../src/frontend/lib/threadDetailTracking";
 
+const PUBLIC_THREAD_ID = "7K4MP9XQ2B";
+
 function buildProgress(overrides: Partial<ThreadProgress> = {}): ThreadProgress {
   return {
     threadId: "pgsql/thread-1",
@@ -41,7 +43,8 @@ describe("thread detail tracking helpers", () => {
         unreadCount: 3,
         firstUnreadMessageId: "11",
         resumePage: 2,
-      })
+      }),
+      PUBLIC_THREAD_ID
     );
 
     expect(view).not.toBeNull();
@@ -57,8 +60,8 @@ describe("thread detail tracking helpers", () => {
     expect(view?.resumeTarget).toEqual({
       anchorId: "message-11",
       targetPage: 2,
-      targetThreadId: "pgsql/thread-1",
-      targetUrl: "/threads/pgsql%2Fthread-1?page=2#message-11",
+      targetThreadId: PUBLIC_THREAD_ID,
+      targetUrl: "/t/7K4MP9XQ2B?page=2#message-11",
     });
   });
 
@@ -71,7 +74,8 @@ describe("thread detail tracking helpers", () => {
         unreadCount: 2,
         firstUnreadMessageId: "12",
         resumePage: 3,
-      })
+      }),
+      PUBLIC_THREAD_ID
     );
 
     expect(view).not.toBeNull();
@@ -84,7 +88,7 @@ describe("thread detail tracking helpers", () => {
     expect(view?.showAddBackToMyThreads).toBe(false);
     expect(view?.trackReadProgress).toBe(true);
     expect(view?.timelineFirstUnreadMessageId).toBe("12");
-    expect(view?.resumeTarget?.targetUrl).toBe("/threads/pgsql%2Fthread-1?page=3#message-12");
+    expect(view?.resumeTarget?.targetUrl).toBe("/t/7K4MP9XQ2B?page=3#message-12");
   });
 
   it("keeps latest-page resume targets canonical for My Threads participation", () => {
@@ -97,7 +101,8 @@ describe("thread detail tracking helpers", () => {
         firstUnreadMessageId: "12",
         resumePage: 4,
         latestPage: 4,
-      })
+      }),
+      PUBLIC_THREAD_ID
     );
 
     expect(view).not.toBeNull();
@@ -105,8 +110,8 @@ describe("thread detail tracking helpers", () => {
     expect(view?.resumeTarget).toEqual({
       anchorId: "message-12",
       targetPage: 4,
-      targetThreadId: "pgsql/thread-1",
-      targetUrl: "/threads/pgsql%2Fthread-1#message-12",
+      targetThreadId: PUBLIC_THREAD_ID,
+      targetUrl: "/t/7K4MP9XQ2B#message-12",
     });
   });
 
@@ -116,7 +121,8 @@ describe("thread detail tracking helpers", () => {
       buildProgress({
         isFollowed: true,
         isInMyThreads: true,
-      })
+      }),
+      PUBLIC_THREAD_ID
     );
 
     expect(view).not.toBeNull();
@@ -142,7 +148,8 @@ describe("thread detail tracking helpers", () => {
         unreadCount: 4,
         firstUnreadMessageId: "13",
         resumePage: 1,
-      })
+      }),
+      PUBLIC_THREAD_ID
     );
 
     expect(view).not.toBeNull();
@@ -169,7 +176,8 @@ describe("thread detail tracking helpers", () => {
         unreadCount: 0,
         hasUnread: false,
         resumePage: null,
-      })
+      }),
+      PUBLIC_THREAD_ID
     );
 
     expect(view).not.toBeNull();
@@ -195,7 +203,8 @@ describe("thread detail tracking helpers", () => {
         hasUnread: true,
         unreadCount: 5,
         firstUnreadMessageId: "99",
-      })
+      }),
+      PUBLIC_THREAD_ID
     );
 
     expect(view).toBeNull();

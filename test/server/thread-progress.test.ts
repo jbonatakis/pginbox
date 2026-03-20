@@ -199,6 +199,16 @@ async function setThreadActivity(
     .execute();
 }
 
+async function getStableThreadId(threadId: string): Promise<string> {
+  const row = await db
+    .selectFrom("threads")
+    .select("id")
+    .where("thread_id", "=", threadId)
+    .executeTakeFirstOrThrow();
+
+  return row.id;
+}
+
 async function insertFollowRow(userId: string, threadId: string, anchorMessageId: string): Promise<void> {
   const followedAt = new Date();
   await db
@@ -417,6 +427,25 @@ describe("follow/unfollow behavior", () => {
       .where("thread_id", "=", thread.threadId)
       .executeTakeFirst();
     expect(String(progress!.last_read_message_id)).toBe(seedId);
+  });
+
+  it("following accepts the stable thread id", async () => {
+    const stableId = await getStableThreadId(thread.threadId);
+
+    const res = await send(`/threads/${encodeURIComponent(stableId)}/follow`, {
+      method: "POST",
+      cookie: session.cookie,
+    });
+    expect(res.status).toBe(200);
+
+    const progress = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user!.id)
+      .where("thread_id", "=", thread.threadId)
+      .executeTakeFirst();
+    expect(progress).toBeDefined();
+    expect(String(progress!.last_read_message_id)).toBe(thread.msgIds[4]);
   });
 
   it("following again does not reset existing progress (idempotent)", async () => {
@@ -1164,6 +1193,7 @@ describe("tracked thread list contracts and counts", () => {
 
     const followedBody = (await parseJson(followedRes)) as {
       items: Array<{
+        id: string;
         thread_id: string;
         is_followed: boolean;
         is_in_my_threads: boolean;
@@ -1183,8 +1213,10 @@ describe("tracked thread list contracts and counts", () => {
       threads[0]!.threadId,
       threads[1]!.threadId,
     ]);
+    expect(followedBody.items.every((item) => typeof item.id === "string" && item.id.length > 0)).toBe(true);
     expect(myThreadsBody).toEqual(followedBody);
     expect(followedBody.items[0]).toMatchObject({
+      id: expect.any(String),
       thread_id: threads[0]!.threadId,
       list_id: listId,
       subject: "Test",

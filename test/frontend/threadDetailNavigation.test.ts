@@ -56,15 +56,15 @@ describe("thread detail navigation helpers", () => {
 
   it("builds canonical thread share paths without list context", () => {
     expect(buildThreadCanonicalSharePath("pgsql/foo bar", 3, 5, "#message-11")).toBe(
-      "/threads/pgsql%2Ffoo%20bar?page=3#message-11"
+      "/t/pgsql%2Ffoo%20bar?page=3#message-11"
     );
 
     expect(buildThreadCanonicalSharePath("pgsql/foo bar", 5, 5, "#message-11")).toBe(
-      "/threads/pgsql%2Ffoo%20bar#message-11"
+      "/t/pgsql%2Ffoo%20bar#message-11"
     );
 
     expect(buildThreadCanonicalSharePath("pgsql/foo bar", 5, 5)).toBe(
-      "/threads/pgsql%2Ffoo%20bar"
+      "/t/pgsql%2Ffoo%20bar"
     );
   });
 });

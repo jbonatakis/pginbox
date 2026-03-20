@@ -103,10 +103,22 @@ describe("tracked-thread frontend helpers", () => {
       } satisfies TrackedThreadCounts)
     ).toBe("followed");
     expect(getTrackedThreadResumeUrl(unreadThread)).toBe(
-      "/threads/pgsql%2Ffoo%20bar?page=2#message-11"
+      "/t/stable-pgsql%2Ffoo%20bar?page=2#message-11"
     );
-    expect(getTrackedThreadResumeUrl(readThread)).toBe("/threads/pgsql%2Ffoo%20bar?page=4");
-    expect(getTrackedThreadLatestUrl(readThread)).toBe("/threads/pgsql%2Ffoo%20bar");
+    expect(getTrackedThreadResumeUrl(readThread)).toBe("/t/stable-pgsql%2Ffoo%20bar?page=4");
+    expect(getTrackedThreadLatestUrl(readThread)).toBe("/t/stable-pgsql%2Ffoo%20bar");
+  });
+
+  it("falls back to the raw thread id when tracked-thread rows do not include the stable id yet", () => {
+    const legacyThread = trackedThread("pgsql/foo bar", {
+      id: undefined as unknown as string,
+      first_unread_message_id: "11",
+      has_unread: true,
+      resume_page: 2,
+    });
+
+    expect(getTrackedThreadResumeUrl(legacyThread)).toBe("/t/pgsql%2Ffoo%20bar?page=2#message-11");
+    expect(getTrackedThreadLatestUrl(legacyThread)).toBe("/t/pgsql%2Ffoo%20bar");
   });
 
   it("exposes account-page copy and shares unread resume links across followed and My Threads rows", () => {
@@ -145,16 +157,16 @@ describe("tracked-thread frontend helpers", () => {
     expect(getTrackedThreadErrorTitle("followed")).toBe("Unable to load followed threads");
     expect(getTrackedThreadErrorTitle("my")).toBe("Unable to load My Threads");
     expect(getTrackedThreadResumeUrl(followedUnreadThread)).toBe(
-      "/threads/pgsql%2Ffoo%20bar?page=2#message-11"
+      "/t/stable-pgsql%2Ffoo%20bar?page=2#message-11"
     );
     expect(getTrackedThreadResumeUrl(myUnreadThread)).toBe(
-      "/threads/pgsql%2Ffoo%20bar?page=2#message-11"
+      "/t/stable-pgsql%2Ffoo%20bar?page=2#message-11"
     );
     expect(getTrackedThreadResumeUrl(myCaughtUpThread)).toBe(
-      "/threads/pgsql%2Ffoo%20bar?page=6"
+      "/t/stable-pgsql%2Ffoo%20bar?page=6"
     );
-    expect(getTrackedThreadLatestUrl(followedUnreadThread)).toBe("/threads/pgsql%2Ffoo%20bar");
-    expect(getTrackedThreadLatestUrl(myUnreadThread)).toBe("/threads/pgsql%2Ffoo%20bar");
+    expect(getTrackedThreadLatestUrl(followedUnreadThread)).toBe("/t/stable-pgsql%2Ffoo%20bar");
+    expect(getTrackedThreadLatestUrl(myUnreadThread)).toBe("/t/stable-pgsql%2Ffoo%20bar");
   });
 
   it("fetches counts first, loads the default followed tab, and starts prefetching the inactive tab", async () => {

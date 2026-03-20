@@ -201,7 +201,7 @@ describe("API not-found and success (require DB)", () => {
     const threadsResponse = await get("/threads?limit=1");
     expect(threadsResponse.status).toBe(200);
 
-    const items = (threadsResponse.json as { items: Array<{ thread_id: string }> }).items;
+    const items = (threadsResponse.json as { items: Array<{ id: string; thread_id: string }> }).items;
     if (items.length === 0) return;
 
     const threadId = encodeURIComponent(items[0].thread_id);
@@ -215,6 +215,19 @@ describe("API not-found and success (require DB)", () => {
       expect(messages[0]).toHaveProperty("attachments");
       expect(Array.isArray(messages[0].attachments)).toBe(true);
     }
+  });
+
+  it("GET /threads/:threadId accepts the stable thread id", async () => {
+    const threadsResponse = await get("/threads?limit=1");
+    expect(threadsResponse.status).toBe(200);
+
+    const items = (threadsResponse.json as { items: Array<{ id: string }> }).items;
+    if (items.length === 0) return;
+
+    const { status, json } = await get(`/threads/${encodeURIComponent(items[0].id)}?limit=1`);
+    expect(status).toBe(200);
+    expect(json).toHaveProperty("id", items[0].id);
+    expect(json).toHaveProperty("messages");
   });
 
   it("GET /lists returns 200 and array", async () => {

@@ -66,11 +66,11 @@
     window.history.replaceState(nextState, "", currentUrl);
   };
 
-  const handleThreadClick = (event: MouseEvent, threadId: string): void => {
+  const handleThreadClick = (event: MouseEvent, path: string): void => {
     if (!isClientNavigationEvent(event)) return;
 
     persistCurrentListContext();
-    onLinkClick(event, threadPath(threadId));
+    onLinkClick(event, path);
   };
 
   const isFollowPending = (threadId: string): boolean => pendingThreadIds.includes(threadId);
@@ -108,12 +108,12 @@
     </thead>
 
     <tbody>
-      {#each items as thread (thread.thread_id)}
-        {@const path = threadPath(thread.thread_id)}
+      {#each items as thread (thread.id)}
+        {@const path = threadPath(thread.id)}
         <tr>
           <td class="subject" data-label="Subject">
             <div class="subject-row">
-              <a href={path} on:click={(event) => handleThreadClick(event, thread.thread_id)}
+              <a href={path} on:click={(event) => handleThreadClick(event, path)}
                 >{subjectLabel(thread.subject)}</a
               >
               {#if canManageFollows && thread.is_followed === true}
