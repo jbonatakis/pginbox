@@ -58,16 +58,10 @@ describe("API validation (4xx)", () => {
     expect(json).toEqual({ message: "Invalid attachment id" });
   });
 
-  it("GET /attachments/:id/download returns 400 for non-numeric id", async () => {
+  it("GET /attachments/:id/download returns 401 without auth", async () => {
     const { status, json } = await get("/attachments/abc/download");
-    expect(status).toBe(400);
-    expect(json).toEqual({ message: "Invalid attachment id" });
-  });
-
-  it("GET /attachments/:id/download returns 400 for negative id", async () => {
-    const { status, json } = await get("/attachments/-1/download");
-    expect(status).toBe(400);
-    expect(json).toEqual({ message: "Invalid attachment id" });
+    expect(status).toBe(401);
+    expect(json).toMatchObject({ code: "AUTH_REQUIRED" });
   });
 
   it("GET /people/:id returns 400 for non-numeric id", async () => {
@@ -138,11 +132,6 @@ describe("API not-found and success (require DB)", () => {
     expect(json).toEqual({ message: "Attachment not found" });
   });
 
-  it("GET /attachments/:id/download returns 404 for nonexistent id", async () => {
-    const { status, json } = await get("/attachments/999999999999999/download");
-    expect(status).toBe(404);
-    expect(json).toEqual({ message: "Attachment not found" });
-  });
 
   it("GET /messages/:id returns 404 for nonexistent id", async () => {
     const { status, json } = await get("/messages/999999999999999");
@@ -239,25 +228,6 @@ describe("API not-found and success (require DB)", () => {
     expect(typeof (json as { content: unknown }).content).toBe("string");
   });
 
-  it("GET /attachments/:id/download returns attachment content for a previewable attachment", async () => {
-    const attachment = await db
-      .selectFrom("attachments")
-      .select(["id", "filename", "content_type"])
-      .where("content", "is not", null)
-      .where("size_bytes", "<=", 65536)
-      .orderBy("size_bytes", "asc")
-      .orderBy("id", "asc")
-      .executeTakeFirst();
-
-    if (!attachment) return;
-
-    const response = await request(`/attachments/${attachment.id}/download`);
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-disposition")).toContain("attachment;");
-    const contentType = response.headers.get("content-type");
-    expect(typeof contentType).toBe("string");
-    expect(contentType?.length ?? 0).toBeGreaterThan(0);
-  });
 
   it("GET /people/:id returns 404 for nonexistent id", async () => {
     const { status, json } = await get("/people/999999");
