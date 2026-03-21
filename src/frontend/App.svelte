@@ -301,7 +301,7 @@
     margin: 0 auto;
     padding: 0.85rem 1.25rem 2.5rem;
     display: grid;
-    align-content: start;
+    grid-template-rows: auto 1fr auto;
     gap: 1rem;
     min-width: 0;
   }
