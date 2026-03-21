@@ -3,6 +3,7 @@
   import type { AttachmentSummary } from "shared/api";
   import AttachmentPreviewOverlay from "./AttachmentPreviewOverlay.svelte";
   import { api, attachmentDownloadPath, toApiErrorShape } from "../../lib/api";
+  import { authStore } from "../../lib/state/auth";
 
   export let attachments: AttachmentSummary[] = [];
 
@@ -184,7 +185,13 @@
                     {attachmentName(attachment)}
                   </button>
                   {#if attachment.has_content}
-                    <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                    {#if $authStore.isAuthenticated}
+                      <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                    {:else}
+                      <span title="Log in to download">
+                        <button class="attachment-download attachment-download--locked" type="button" aria-disabled="true" tabindex="-1">Download</button>
+                      </span>
+                    {/if}
                   {:else}
                     <button class="attachment-download" type="button" disabled>Download</button>
                   {/if}
@@ -227,7 +234,13 @@
                     {attachmentName(attachment)}
                   </button>
                   {#if attachment.has_content}
-                    <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                    {#if $authStore.isAuthenticated}
+                      <a class="attachment-download" href={attachmentDownloadPath(attachment.id)}>Download</a>
+                    {:else}
+                      <span title="Log in to download">
+                        <button class="attachment-download attachment-download--locked" type="button" aria-disabled="true" tabindex="-1">Download</button>
+                      </span>
+                    {/if}
                   {:else}
                     <button class="attachment-download" type="button" disabled>Download</button>
                   {/if}
@@ -397,6 +410,11 @@
     background: #f1f5f9;
     color: #7b8794;
     cursor: not-allowed;
+  }
+
+  .attachment-download--locked {
+    opacity: 0.5;
+    pointer-events: none;
   }
 
   .family-pill {

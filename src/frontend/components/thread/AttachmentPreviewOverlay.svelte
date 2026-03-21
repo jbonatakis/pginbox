@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import type { AttachmentSummary } from "shared/api";
   import { attachmentDownloadPath } from "../../lib/api";
+  import { authStore } from "../../lib/state/auth";
 
   export let attachment: AttachmentSummary;
   export let canGoNext = false;
@@ -668,7 +669,13 @@
           </button>
         {/if}
         {#if attachment.has_content}
-          <a class="download-button" href={attachmentDownloadPath(attachment.id)}>Download</a>
+          {#if $authStore.isAuthenticated}
+            <a class="download-button" href={attachmentDownloadPath(attachment.id)}>Download</a>
+          {:else}
+            <span title="Log in to download">
+              <button class="download-button download-button--locked" type="button" aria-disabled="true" tabindex="-1">Download</button>
+            </span>
+          {/if}
         {:else}
           <button class="download-button" type="button" disabled>Download</button>
         {/if}
@@ -830,6 +837,11 @@
     background: #f1f5f9;
     color: #7b8794;
     cursor: not-allowed;
+  }
+
+  .download-button--locked {
+    opacity: 0.5;
+    pointer-events: none;
   }
 
   .nav-button:disabled {
