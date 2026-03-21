@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import AnalyticsByHourChart from "../components/analytics/AnalyticsByHourChart.svelte";
+  import AnalyticsByMonthChart from "../components/analytics/AnalyticsByMonthChart.svelte";
+  import AnalyticsDowChart from "../components/analytics/AnalyticsDowChart.svelte";
   import AnalyticsSummaryGrid from "../components/analytics/AnalyticsSummaryGrid.svelte";
-  import AnalyticsTopSendersSection from "../components/analytics/AnalyticsTopSendersSection.svelte";
-  import AnalyticsTrendSection from "../components/analytics/AnalyticsTrendSection.svelte";
+  import AnalyticsTopSendersChart from "../components/analytics/AnalyticsTopSendersChart.svelte";
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
   import { createAnalyticsStore } from "../lib/analytics";
@@ -32,31 +34,6 @@
 
     return `${error.method} ${path} -> ${error.code ?? "NETWORK_ERROR"}`;
   };
-
-  $: monthRows =
-    $analyticsState.data?.byMonth.map((month) => ({
-      id: month.key,
-      label: month.label,
-      messages: month.messages,
-    })) ?? [];
-
-  $: hourRows =
-    $analyticsState.data?.byHour.map((hour) => ({
-      id: String(hour.hour),
-      label: hour.label,
-      messages: hour.messages,
-    })) ?? [];
-
-  $: dayRows =
-    $analyticsState.data?.byDow.map((day) => ({
-      id: String(day.dow),
-      label: day.label,
-      messages: day.messages,
-    })) ?? [];
-
-  $: hasMonthData = monthRows.length > 0;
-  $: hasHourData = hourRows.some((hour) => hour.messages > 0);
-  $: hasDayData = dayRows.some((day) => day.messages > 0);
 
   $: isInitialLoad =
     $analyticsState.status === "idle" || ($analyticsState.status === "loading" && !$analyticsState.data);
@@ -92,37 +69,14 @@
 
     <AnalyticsSummaryGrid metrics={$analyticsState.data.summaryMetrics} />
 
-    <section class="section-grid" aria-label="Monthly and sender breakdowns">
-      <AnalyticsTrendSection
-        title="Messages by Month"
-        rows={monthRows}
-        hasData={hasMonthData}
-        emptyMessage="No month-level activity has been ingested yet."
-      />
+    <AnalyticsByHourChart hours={$analyticsState.data.byHour} />
 
-      <AnalyticsTopSendersSection
-        senders={$analyticsState.data.topSenders}
-        emptyMessage="No sender activity has been ingested yet."
-      />
+    <section class="two-col" aria-label="Day-of-week and top sender breakdowns">
+      <AnalyticsDowChart days={$analyticsState.data.byDow} />
+      <AnalyticsTopSendersChart senders={$analyticsState.data.topSenders} />
     </section>
 
-    <section class="section-grid" aria-label="Hourly and day-of-week breakdowns">
-      <AnalyticsTrendSection
-        title="Messages by Hour (UTC)"
-        rows={hourRows}
-        hasData={hasHourData}
-        emptyMessage="No hourly distribution is available yet."
-        dense
-      />
-
-      <AnalyticsTrendSection
-        title="Messages by Weekday"
-        rows={dayRows}
-        hasData={hasDayData}
-        emptyMessage="No day-of-week distribution is available yet."
-        dense
-      />
-    </section>
+    <AnalyticsByMonthChart months={$analyticsState.data.byMonth} />
   {/if}
 </section>
 
@@ -164,7 +118,7 @@
     color: var(--text-muted);
   }
 
-  .section-grid {
+  .two-col {
     display: grid;
     gap: 0.6rem;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));

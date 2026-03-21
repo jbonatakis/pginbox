@@ -8,7 +8,7 @@
   const metricLabels: Record<AnalyticsSummaryMetric["id"], string> = {
     totalMessages: "Total messages",
     totalThreads: "Total threads",
-    uniqueSenders: "Unique senders",
+    uniqueSenders: "Unique contributors",
     monthsIngested: "Months ingested",
   };
 
