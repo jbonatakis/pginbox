@@ -220,7 +220,7 @@
     {:else if $currentRoute.name === "reset-password"}
       <ResetPasswordPage />
     {:else}
-      <NotFoundPage pathname={$currentRoute.pathname} />
+      <NotFoundPage />
     {/if}
   </main>
 
