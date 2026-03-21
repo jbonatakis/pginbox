@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import type { AdminStats, AdminUser } from "shared/api";
+  import AdminConfirmModal from "../components/admin/AdminConfirmModal.svelte";
   import AdminDisableModal from "../components/admin/AdminDisableModal.svelte";
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
@@ -27,6 +28,8 @@
   let actionError: Record<string, string> = {};
 
   let disableModalUser: AdminUser | null = null;
+  let disableConfirmUser: AdminUser | null = null;
+  let resetPasswordConfirmUser: AdminUser | null = null;
 
   let activeRequestController: AbortController | null = null;
 
@@ -90,7 +93,7 @@
   };
 
   const handleDisable = (user: AdminUser): void => {
-    disableModalUser = user;
+    disableConfirmUser = user;
   };
 
   const handleDisabled = (event: CustomEvent<AdminUser>): void => {
@@ -115,7 +118,14 @@
     }
   };
 
-  const handleResetPassword = async (user: AdminUser): Promise<void> => {
+  const handleResetPassword = (user: AdminUser): void => {
+    resetPasswordConfirmUser = user;
+  };
+
+  const confirmResetPassword = async (): Promise<void> => {
+    const user = resetPasswordConfirmUser;
+    resetPasswordConfirmUser = null;
+    if (!user) return;
     actionInProgress = `reset-${user.id}`;
     actionError = { ...actionError };
     delete actionError[user.id];
@@ -181,11 +191,32 @@
   $: isLoading = pageStatus === "loading";
 </script>
 
+{#if disableConfirmUser}
+  <AdminConfirmModal
+    title="Disable account"
+    message="Are you sure you want to disable {disableConfirmUser.email}? Their sessions will be revoked immediately."
+    confirmLabel="Continue"
+    danger={true}
+    on:confirm={() => { disableModalUser = disableConfirmUser; disableConfirmUser = null; }}
+    on:cancel={() => { disableConfirmUser = null; }}
+  />
+{/if}
+
 {#if disableModalUser}
   <AdminDisableModal
     user={disableModalUser}
     on:disabled={handleDisabled}
     on:cancel={() => { disableModalUser = null; }}
+  />
+{/if}
+
+{#if resetPasswordConfirmUser}
+  <AdminConfirmModal
+    title="Reset password"
+    message="Send a password reset email to {resetPasswordConfirmUser.email}?"
+    confirmLabel="Send reset email"
+    on:confirm={confirmResetPassword}
+    on:cancel={() => { resetPasswordConfirmUser = null; }}
   />
 {/if}
 
