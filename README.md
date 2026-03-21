@@ -1,83 +1,44 @@
 # pginbox
 
-pginbox is a searchable, explorable inbox for PostgreSQL mailing lists.
+pginbox is a searchable, browsable archive for PostgreSQL mailing lists. It is meant to complement,
+not replace, the existing mailing lists and archive.
 
-It turns years of mailing-list discussion into something you can browse, query, and learn from quickly.
+It turns years of mailing-list discussion into something you can actually navigate — threads, messages, contributors, and activity patterns, all in one place.
 
-## What it is
+The browsing experience is open to the public with no account. Some features do require an account,
+but pginbox is now and always will be a free service.
 
-- A living archive of PostgreSQL list discussions
-- A way to explore threads, messages, contributors, and activity patterns
-- A foundation for building product and community insights from mailing-list history
+<table>
+  <tr>
+    <td><img src="static/homepage.png" alt="Homepage" height="210" /></td>
+    <td><img src="static/followed-threads.png" alt="Tracked threads" height="210" /></td>
+  </tr>
+  <tr>
+    <td><img src="static/diff.png" alt="Diff viewer" /></td>
+    <td><img src="static/analytics.png" alt="Analytics" /></td>
+  </tr>
+</table>
 
-## Why this exists
+## Why it exists
 
-Mailing lists contain a huge amount of project memory:
+PostgreSQL's mailing lists hold an enormous amount of project history: design decisions, bug investigations, feature debates, contributor context. That history is genuinely valuable, but hard to explore in raw archive form. pginbox makes it easier to find and understand.
 
-- design decisions
-- bug investigations
-- feature debates
-- contributor context
-
-That history is valuable, but hard to navigate in raw archive form. pginbox makes it easier to find and understand the signal.
-
-## What you can do with it today
+## What you can do
 
 - Browse lists and discussion threads
 - Open full thread views with message timelines
-- Inspect individual messages and attachment metadata
-- Explore people/contributor activity
-- View high-level activity summaries over time
+- Follow certain threads and receive unobtrustive notifications when they have new messages
+- Signed in users will automatically follow threads in which they participate
+- Read attachments with diff highlighting and navigation in a clean overlay
+- View activity summaries over time
 
-## Who it is for
+## Who it's for
 
-- PostgreSQL contributors and maintainers
-- Engineers trying to understand historical context
-- People doing research on open-source collaboration patterns
-- Anyone building tools on top of PostgreSQL mailing-list data
+- PostgreSQL contributors and maintainers looking to understand past context
+- Engineers researching how a feature or bug was discussed
+- Researchers studying open-source collaboration patterns
+- Anyone who finds mailing list archives useful but hard to navigate
 
-## Project status
+## Status
 
-pginbox is actively evolving. The core archive + API foundation is in place, and the frontend experience is being built out.
-
-## Direction
-
-The long-term goal is simple:
-
-make PostgreSQL mailing-list history easy to search, understand, and learn from.
-
-## Frontend (MVP) local usage
-
-The frontend app lives in `src/frontend` and expects the API at `/api`.
-
-1. Start the API (from repo root):
-   ```bash
-   make api
-   ```
-   Alternative:
-   ```bash
-   bun src/server/index.ts
-   ```
-2. Run the frontend (new terminal):
-   ```bash
-   cd src/frontend
-   npm install
-   npm run dev
-   ```
-3. Build the frontend:
-   ```bash
-   cd src/frontend
-   npm run build
-   ```
-
-Dev server details:
-- Frontend: `http://localhost:5173`
-- API proxy: `/api` -> `http://localhost:3000`
-
-## MVP verification docs
-
-Frontend MVP QA checklist, scope boundaries, API assumptions, and build verification notes:
-- `docs/frontend-mvp-checklist.md`
-
-Current implemented search behavior and limitations:
-- `docs/SEARCH.md`
+pginbox is actively evolving. The core archive and API are in place, and the frontend experience is being built out. The long-term goal: make PostgreSQL mailing-list history easy to search, understand, and learn from.
