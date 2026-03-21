@@ -112,21 +112,39 @@ fi
 
 YEAR="$(date +%Y)"
 MONTH="$(date +%-m)"
+DAY="$(date +%-d)"
 
 INGEST_ARGS=()
 for LIST_NAME in "${LIST_NAMES[@]}"; do
   INGEST_ARGS+=(--list "$LIST_NAME")
 done
 
-log "run started: ingesting ${#LIST_NAMES[@]} list(s) for $YEAR-$MONTH using a shared auth session"
+# On the first day of a new month, also ingest the previous month to catch
+# messages that arrived after the last hourly run (between ~23:17 and 23:59:59
+# on the final day). The previous month's mbox is now frozen so this adds one
+# extra download per hour on the 1st only.
+if [[ "$DAY" -eq 1 ]]; then
+  if [[ "$MONTH" -eq 1 ]]; then
+    PREV_YEAR=$(( YEAR - 1 ))
+    PREV_MONTH=12
+  else
+    PREV_YEAR="$YEAR"
+    PREV_MONTH=$(( MONTH - 1 ))
+  fi
+  DATE_ARGS=(--from "${PREV_YEAR}-${PREV_MONTH}" --to "${YEAR}-${MONTH}")
+  log "run started: ingesting ${#LIST_NAMES[@]} list(s) for ${PREV_YEAR}-${PREV_MONTH} through ${YEAR}-${MONTH} (day-1 catch-up) using a shared auth session"
+else
+  DATE_ARGS=(--year "$YEAR" --month "$MONTH")
+  log "run started: ingesting ${#LIST_NAMES[@]} list(s) for $YEAR-$MONTH using a shared auth session"
+fi
+
 INGEST_CMD=(
   "$UV_BIN"
   run
   python3
   src/ingestion/ingest.py
   "${INGEST_ARGS[@]}"
-  --year "$YEAR"
-  --month "$MONTH"
+  "${DATE_ARGS[@]}"
   --force-download
   --dsn "$DSN"
 )
