@@ -120,6 +120,7 @@ export interface AuthUser {
   id: string;
   email: string;
   displayName: string | null;
+  role: string;
   status: AuthUserStatus;
   emailVerifiedAt: string | null;
   createdAt: string;
@@ -180,6 +181,31 @@ export type AuthLogoutResponse = void;
 export type AuthForgotPasswordResponse = AuthMessageResponse;
 export type AuthResetPasswordResponse = AuthUserResponse;
 export type AccountProfileUpdateResponse = AuthUserResponse;
+
+// ---- Admin ----
+export interface AdminUser {
+  id: string;
+  email: string;
+  displayName: string | null;
+  role: string;
+  status: AuthUserStatus;
+  emailVerifiedAt: string | null;
+  createdAt: string;
+  activeSessionCount: number;
+  lastSeenAt: string | null;
+}
+
+export interface AdminUserListResponse {
+  items: AdminUser[];
+  nextCursor: string | null;
+}
+
+export interface AdminStats {
+  userCount: number;
+  messageCount: number;
+  threadCount: number;
+  latestMessageAt: string | null;
+}
 
 export type AuthVerifyEmailErrorCode = "TOKEN_INVALID" | "TOKEN_EXPIRED";
 export type AuthLoginErrorCode =

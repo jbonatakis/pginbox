@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import AdminPage from "./pages/AdminPage.svelte";
   import AnalyticsPage from "./pages/AnalyticsPage.svelte";
   import AccountPage from "./pages/AccountPage.svelte";
   import ForgotPasswordPage from "./pages/ForgotPasswordPage.svelte";
@@ -17,6 +18,7 @@
   import { authStore } from "./lib/state/auth";
   import {
     accountPath,
+    adminPath,
     analyticsPath,
     currentRoute,
     homePath,
@@ -144,6 +146,7 @@
     }
   }
 
+  $: isAdmin = $authStore.user?.role === "admin";
   $: authNavActive = $authStore.isAuthenticated
     ? $currentRoute.name === "account"
     : $currentRoute.name === "login";
@@ -203,6 +206,19 @@
               >
             {/each}
 
+            {#if isAdmin}
+              <a
+                href={adminPath}
+                class="nav-link"
+                class:active={$currentRoute.name === "admin"}
+                aria-current={$currentRoute.name === "admin" ? "page" : undefined}
+                on:click={(event) => {
+                  closeMobileNav();
+                  onLinkClick(event, adminPath);
+                }}>Admin</a
+              >
+            {/if}
+
             <a
               href={$authStore.isAuthenticated ? accountLink : loginLink}
               class="nav-link auth-link"
@@ -242,6 +258,8 @@
       <AnalyticsPage />
     {:else if $currentRoute.name === "account"}
       <AccountPage />
+    {:else if $currentRoute.name === "admin"}
+      <AdminPage />
     {:else if $currentRoute.name === "login"}
       <LoginPage />
     {:else if $currentRoute.name === "register"}
