@@ -159,8 +159,9 @@
       year: "numeric",
       month: "short",
       day: "numeric",
-      hour: "numeric",
+      hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
     });
   };
 
@@ -221,7 +222,7 @@
         </div>
         <div class="stat-card">
           <span class="stat-label">Latest message</span>
-          <strong class="stat-value">{formatDate(stats.latestMessageAt)}</strong>
+          <strong class="stat-value">{formatDateTime(stats.latestMessageAt)}</strong>
         </div>
       </div>
     {/if}
