@@ -5,6 +5,7 @@
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import { authStore } from "../lib/state/auth";
 
   const UserRole = { Member: "member", Admin: "admin" } as const;
 
@@ -204,6 +205,12 @@
           <span class="stat-label">Users</span>
           <strong class="stat-value">{formatCount(stats.userCount)}</strong>
         </div>
+        {#if stats.pendingVerificationCount > 0}
+          <div class="stat-card stat-card-warn">
+            <span class="stat-label">Pending verification</span>
+            <strong class="stat-value">{formatCount(stats.pendingVerificationCount)}</strong>
+          </div>
+        {/if}
         <div class="stat-card">
           <span class="stat-label">Messages</span>
           <strong class="stat-value">{formatCount(stats.messageCount)}</strong>
@@ -273,8 +280,9 @@
                     <select
                       class="role-select"
                       value={user.role}
-                      disabled={isBusy}
+                      disabled={isBusy || user.id === $authStore.user?.id}
                       aria-label="Role for {user.email}"
+                      title={user.id === $authStore.user?.id ? "You cannot change your own role" : undefined}
                       on:change={(e) => handleRoleChange(user, e.currentTarget.value)}
                     >
                       <option value={UserRole.Member}>Member</option>
@@ -390,6 +398,19 @@
     border: 1px solid var(--border-soft);
     border-radius: 0.65rem;
     background: var(--bg-elevated);
+  }
+
+  .stat-card-warn {
+    border-color: #f5e09a;
+    background: #fef9e7;
+  }
+
+  .stat-card-warn .stat-label {
+    color: #7d5a00;
+  }
+
+  .stat-card-warn .stat-value {
+    color: #7d5a00;
   }
 
   .stat-label {

@@ -201,10 +201,15 @@ export async function sendAdminPasswordReset(userId: string): Promise<void> {
 
 export async function setAdminUserRole(
   userId: string,
-  role: string
+  role: string,
+  currentUserId: string
 ): Promise<AdminUser> {
   if (role !== UserRole.Member && role !== UserRole.Admin) {
     throw new BadRequestError(`Invalid role: ${role}`);
+  }
+
+  if (userId === currentUserId && role === UserRole.Member) {
+    throw new BadRequestError("You cannot demote your own admin account");
   }
 
   const updated = await defaultDb
@@ -225,10 +230,15 @@ export async function setAdminUserRole(
 }
 
 export async function getAdminStats(): Promise<AdminStats> {
-  const [userRow, messageRow, threadRow] = await Promise.all([
+  const [userRow, pendingRow, messageRow, threadRow] = await Promise.all([
     defaultDb
       .selectFrom("users")
       .select(defaultDb.fn.countAll<string>().as("count"))
+      .executeTakeFirstOrThrow(),
+    defaultDb
+      .selectFrom("users")
+      .select(defaultDb.fn.countAll<string>().as("count"))
+      .where("status", "=", "pending_verification")
       .executeTakeFirstOrThrow(),
     defaultDb
       .selectFrom("messages")
@@ -245,6 +255,7 @@ export async function getAdminStats(): Promise<AdminStats> {
 
   return {
     userCount: Number(userRow.count),
+    pendingVerificationCount: Number(pendingRow.count),
     messageCount: Number(messageRow.count),
     threadCount: Number(threadRow.count),
     latestMessageAt: dateToIso(messageRow.latest_at as Date | string | null),

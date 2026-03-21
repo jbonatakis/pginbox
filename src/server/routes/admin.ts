@@ -85,8 +85,8 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     "/users/:id/role",
     async ({ body, params, request, set }) => {
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
-      await requireAdminAuth(resolved);
-      return setAdminUserRole(params.id, body.role);
+      const { user } = await requireAdminAuth(resolved);
+      return setAdminUserRole(params.id, body.role, String(user.id));
     },
     {
       params: t.Object({ id: t.String() }),

@@ -202,6 +202,7 @@ export interface AdminUserListResponse {
 
 export interface AdminStats {
   userCount: number;
+  pendingVerificationCount: number;
   messageCount: number;
   threadCount: number;
   latestMessageAt: string | null;
