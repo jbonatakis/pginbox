@@ -106,3 +106,89 @@ def test_main_derive_only_skip_analytics_suppresses_refresh(ingest, monkeypatch)
         ("derive_threads",),
         ("close",),
     ]
+
+
+def test_main_retries_archive_access_preflight_with_reauth(ingest, monkeypatch):
+    events = []
+    sleeps = []
+
+    class FakeConn:
+        def close(self):
+            events.append(("close",))
+
+    session_counter = {"value": 0}
+
+    def fake_make_session(username, password):
+        session_counter["value"] += 1
+        session = f"session-{session_counter['value']}"
+        events.append(("make_session", username, password, session))
+        return session
+
+    def fake_ensure_archive_access(session, list_name, year, month):
+        events.append(("ensure_archive_access", session, list_name, year, month))
+        if session == "session-1":
+            raise ingest.ArchiveAuthError("Authentication token too old")
+
+    def fake_ingest(
+        conn,
+        session,
+        year,
+        month,
+        list_name,
+        force_download=False,
+        backfill=False,
+        overwrite_existing=False,
+        derive=True,
+        refresh_analytics=True,
+    ):
+        events.append(
+            (
+                "ingest",
+                session,
+                year,
+                month,
+                list_name,
+                force_download,
+                overwrite_existing,
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(ingest.psycopg2, "connect", lambda dsn: FakeConn())
+    monkeypatch.setattr(ingest, "is_cached", lambda year, month, list_name: False)
+    monkeypatch.setattr(ingest, "make_session", fake_make_session)
+    monkeypatch.setattr(ingest, "ensure_archive_access", fake_ensure_archive_access)
+    monkeypatch.setattr(ingest, "ingest", fake_ingest)
+    monkeypatch.setattr(ingest.time, "sleep", lambda delay: sleeps.append(delay))
+    monkeypatch.setattr(
+        ingest.sys,
+        "argv",
+        [
+            "ingest.py",
+            "--dsn",
+            "postgresql://example",
+            "--pg-user",
+            "user",
+            "--pg-pass",
+            "pass",
+            "--skip-analytics",
+            "--list",
+            "pgsql-hackers",
+            "--year",
+            "2026",
+            "--month",
+            "3",
+        ],
+    )
+
+    ingest.main()
+
+    assert sleeps == [1.0]
+    assert events == [
+        ("make_session", "user", "pass", "session-1"),
+        ("ensure_archive_access", "session-1", "pgsql-hackers", 2026, 3),
+        ("make_session", "user", "pass", "session-2"),
+        ("ensure_archive_access", "session-2", "pgsql-hackers", 2026, 3),
+        ("ingest", "session-2", 2026, 3, "pgsql-hackers", False, False),
+        ("close",),
+    ]
