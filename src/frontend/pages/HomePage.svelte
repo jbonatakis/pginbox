@@ -10,7 +10,25 @@
     "repack",
   ];
   const messageCountFormatter = new Intl.NumberFormat("en-US");
-  let messagesLast24h: number | null = null;
+
+  type Slide =
+    | { type: "total"; count: number }
+    | { type: "list"; listName: string; count: number };
+
+  let slides: Slide[] = [];
+  let slideIndex = 0;
+  let animState: "" | "roll-out" | "roll-in" = "";
+
+  $: currentSlide = slides[slideIndex] ?? null;
+
+  function slideLabel(slide: Slide): string {
+    const n = messageCountFormatter.format(slide.count);
+    const word = slide.count === 1 ? "message" : "messages";
+    if (slide.type === "total") {
+      return `${n} ${word} from all lists in the past 24 hours`;
+    }
+    return `${n} ${word} from ${slide.listName} in the past 24 hours`;
+  }
 
   const threadsSearchPath = (query: string): string => {
     const normalized = query.trim();
@@ -31,17 +49,45 @@
 
   onMount(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
 
-    void api.analytics
-      .getMessagesLast24h()
-      .then((result) => {
+    void Promise.all([
+      api.analytics.getMessagesLast24h(),
+      api.analytics.getMessagesLast24hByList(),
+    ])
+      .then(([total, byList]) => {
         if (cancelled) return;
-        messagesLast24h = result.messages;
+
+        slides = [
+          { type: "total", count: total.messages },
+          ...byList.map((item) => ({
+            type: "list" as const,
+            listName: item.listName,
+            count: item.messages,
+          })),
+        ];
+
+        if (slides.length > 1) {
+          timer = setInterval(() => {
+            if (cancelled) return;
+            animState = "roll-out";
+            setTimeout(() => {
+              if (cancelled) return;
+              slideIndex = (slideIndex + 1) % slides.length;
+              animState = "roll-in";
+              setTimeout(() => {
+                if (cancelled) return;
+                animState = "";
+              }, 300);
+            }, 300);
+          }, 5000);
+        }
       })
       .catch(() => undefined);
 
     return () => {
       cancelled = true;
+      if (timer !== undefined) clearInterval(timer);
     };
   });
 </script>
@@ -76,9 +122,9 @@
       {/each}
     </div>
 
-    {#if messagesLast24h !== null}
-      <p class="freshness">
-        {messageCountFormatter.format(messagesLast24h)} messages sent in the last 24 hours
+    {#if currentSlide !== null}
+      <p class="freshness" class:roll-out={animState === "roll-out"} class:roll-in={animState === "roll-in"}>
+        {slideLabel(currentSlide)}
       </p>
     {/if}
   </div>
@@ -233,6 +279,25 @@
     color: var(--text-muted);
     font-size: 0.82rem;
     line-height: 1.3;
+    overflow: hidden;
+  }
+
+  .freshness.roll-out {
+    animation: roll-out 420ms ease forwards;
+  }
+
+  .freshness.roll-in {
+    animation: roll-in 420ms ease forwards;
+  }
+
+  @keyframes roll-out {
+    from { transform: translateY(0); opacity: 1; }
+    to   { transform: translateY(100%); opacity: 0; }
+  }
+
+  @keyframes roll-in {
+    from { transform: translateY(-100%); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
   }
 
   .suggestion-chip {

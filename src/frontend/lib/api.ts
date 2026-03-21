@@ -6,6 +6,7 @@ import type {
   AttachmentDetail,
   AnalyticsSummary,
   AnalyticsMessagesLast24h,
+  ListMessagesLast24h,
   AccountProfileUpdateRequest,
   AccountProfileUpdateResponse,
   AuthForgotPasswordRequest,
@@ -536,6 +537,12 @@ export async function getAnalyticsMessagesLast24h(
   return requestJson<AnalyticsMessagesLast24h>(withApiBase("/analytics/messages-last-24h"), options);
 }
 
+export async function getAnalyticsMessagesLast24hByList(
+  options: RequestOptions = {}
+): Promise<ListMessagesLast24h[]> {
+  return requestJson<ListMessagesLast24h[]>(withApiBase("/analytics/messages-last-24h-by-list"), options);
+}
+
 export interface GetThreadProgressParams {
   pageSize?: number;
 }
@@ -739,6 +746,7 @@ export const api = {
     getByDow: getAnalyticsByDow,
     getByHour: getAnalyticsByHour,
     getMessagesLast24h: getAnalyticsMessagesLast24h,
+    getMessagesLast24hByList: getAnalyticsMessagesLast24hByList,
     getByMonth: getAnalyticsByMonth,
     getSummary: getAnalyticsSummary,
     getTopSenders: getAnalyticsTopSenders,

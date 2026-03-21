@@ -227,6 +227,12 @@ export interface AnalyticsMessagesLast24h {
   messages: number;
 }
 
+export interface ListMessagesLast24h {
+  listId: number;
+  listName: string;
+  messages: number;
+}
+
 export interface ByMonth {
   year: number;
   month: number;

@@ -38,7 +38,14 @@ type MessagesLast24hRow = {
   messages: IntLike;
 };
 
+type MessagesLast24hByListRow = {
+  list_id: IntLike;
+  list_name: string;
+  messages: IntLike;
+};
+
 const MESSAGES_LAST_24H_CACHE_KEY = "analytics:messages-last-24h";
+const MESSAGES_LAST_24H_BY_LIST_CACHE_KEY = "analytics:messages-last-24h-by-list";
 const SUMMARY_CACHE_KEY = "analytics:summary";
 const BY_MONTH_CACHE_KEY = "analytics:by-month";
 const TOP_SENDERS_CACHE_KEY = "analytics:top-senders";
@@ -170,4 +177,39 @@ async function queryMessagesLast24h() {
   return {
     messages: row ? toNumber(row.messages) : 0,
   };
+}
+
+export async function getMessagesLast24hByList() {
+  try {
+    return await serverCache.getOrLoad(
+      MESSAGES_LAST_24H_BY_LIST_CACHE_KEY,
+      MESSAGES_LAST_24H_TTL_MS,
+      queryMessagesLast24hByList,
+    );
+  } catch (error) {
+    if (error instanceof InvalidCacheTtlError) {
+      console.error(`[cache] ${error.message}`);
+      return queryMessagesLast24hByList();
+    }
+
+    throw error;
+  }
+}
+
+async function queryMessagesLast24hByList() {
+  const result = await sql<MessagesLast24hByListRow>`
+    SELECT l.id AS list_id, l.name AS list_name, count(m.id)::bigint AS messages
+    FROM lists l
+    LEFT JOIN messages m ON m.list_id = l.id
+      AND m.sent_at IS NOT NULL
+      AND m.sent_at >= now() - interval '24 hours'
+    GROUP BY l.id, l.name
+    ORDER BY l.name
+  `.execute(db);
+
+  return result.rows.map((row) => ({
+    listId: toNumber(row.list_id),
+    listName: row.list_name,
+    messages: toNumber(row.messages),
+  }));
 }
