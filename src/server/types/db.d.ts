@@ -174,6 +174,7 @@ export interface Users {
   id: Generated<Int8>;
   last_login_at: Timestamp | null;
   password_hash: string;
+  role: Generated<string>;
   status: string;
   updated_at: Generated<Timestamp>;
 }

@@ -45,6 +45,7 @@ interface UserCredentialsRow {
   id: bigint | number | string;
   last_login_at: Date | string | null;
   password_hash: string;
+  role: string;
   status: AuthUserRecord["status"];
 }
 
@@ -141,6 +142,7 @@ function toAuthUserRecord(row: {
   email: string;
   email_verified_at: Date | string | null;
   id: bigint | number | string;
+  role: string;
   status: string;
 }): AuthUserRecord {
   return {
@@ -149,6 +151,7 @@ function toAuthUserRecord(row: {
     email: row.email,
     email_verified_at: row.email_verified_at,
     id: row.id,
+    role: row.role,
     status: row.status as AuthUserRecord["status"],
   };
 }
@@ -423,7 +426,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
               password_hash: passwordHash,
               status: "pending_verification",
             })
-            .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
+            .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
             .executeTakeFirstOrThrow();
 
           const user = toAuthUserRecord(insertedUser);
@@ -443,7 +446,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
             password_hash: passwordHash,
           })
           .where("id", "=", toDbInt8(pendingUser.id))
-          .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
+          .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
           .executeTakeFirstOrThrow();
 
         const user = toAuthUserRecord(updatedUser);
@@ -560,7 +563,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
             status: "active",
           })
           .where("id", "=", toDbInt8(tokenRecord.user_id))
-          .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
+          .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
           .executeTakeFirstOrThrow();
 
         const user = toAuthUserRecord(updatedUser);
@@ -715,7 +718,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           .updateTable("users")
           .set({ password_hash: nextPasswordHash })
           .where("id", "=", toDbInt8(tokenRecord.user_id))
-          .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
+          .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
           .executeTakeFirstOrThrow();
 
         const user = toAuthUserRecord(updatedUser);
@@ -740,7 +743,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         .updateTable("users")
         .set({ display_name: displayName })
         .where("id", "=", toDbInt8(userId))
-        .returning(["id", "email", "display_name", "status", "email_verified_at", "created_at"])
+        .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
         .executeTakeFirst();
 
       if (!updatedUser) {

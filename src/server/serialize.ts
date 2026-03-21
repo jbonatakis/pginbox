@@ -43,6 +43,7 @@ type AuthUserRow = {
   id: bigint | number | string;
   email: string;
   display_name: string | null;
+  role: string;
   status: AuthUser["status"];
   email_verified_at: Date | string | null;
   created_at: Date | string;
@@ -53,6 +54,7 @@ export function toAuthUser(row: AuthUserRow): AuthUser {
     id: bigintToString(row.id),
     email: row.email,
     displayName: row.display_name,
+    role: row.role,
     status: row.status,
     emailVerifiedAt: dateToIso(row.email_verified_at),
     createdAt: dateToIso(row.created_at)!,

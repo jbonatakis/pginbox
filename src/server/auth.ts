@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Kysely } from "kysely";
 import type { AuthUser } from "shared/api";
+import { UserRole } from "./types/user";
 import { toDbInt8 } from "./db-ids";
 import { db as defaultDb } from "./db";
 import { BadRequestError } from "./errors";
@@ -25,6 +26,7 @@ export interface AuthUserRecord {
   email: string;
   email_verified_at: Date | string | null;
   id: bigint | number | string;
+  role: string;
   status: AuthUser["status"];
 }
 
@@ -76,6 +78,7 @@ interface SessionLookupRow {
   ip_address: string | null;
   last_seen_at: Date | string;
   revoked_at: Date | string | null;
+  role: string;
   session_token_hash: string;
   status: AuthUser["status"];
   user_agent: string | null;
@@ -369,6 +372,7 @@ export async function resolveCurrentSession(
       "auth_sessions.token_hash as session_token_hash",
       "users.email",
       "users.display_name",
+      "users.role",
       "users.status",
       "users.email_verified_at",
       "users.created_at as user_created_at",
@@ -432,6 +436,7 @@ export async function resolveCurrentSession(
       email: lookupRow.email,
       email_verified_at: lookupRow.email_verified_at,
       id: lookupRow.user_id,
+      role: lookupRow.role,
       status: lookupRow.status,
     },
   };
@@ -447,4 +452,16 @@ export async function requireAuth(
   }
 
   return resolved as AuthenticatedSession;
+}
+
+export async function requireAdminAuth(
+  input: ResolveCurrentSessionOptions | ResolvedCurrentSession
+): Promise<AuthenticatedSession> {
+  const session = await requireAuth(input);
+
+  if (session.user.role !== UserRole.Admin) {
+    throw new AuthError(403, "ADMIN_REQUIRED", "Admin access required");
+  }
+
+  return session;
 }

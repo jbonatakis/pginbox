@@ -554,7 +554,9 @@ CREATE TABLE public.users (
     disable_reason text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    role text DEFAULT 'member'::text NOT NULL,
     CONSTRAINT users_email_lowercase_check CHECK ((email = lower(email))),
+    CONSTRAINT users_role_check CHECK ((role = ANY (ARRAY['member'::text, 'admin'::text]))),
     CONSTRAINT users_status_check CHECK ((status = ANY (ARRAY['pending_verification'::text, 'active'::text, 'disabled'::text]))),
     CONSTRAINT users_status_state_check CHECK ((((status = 'pending_verification'::text) AND (email_verified_at IS NULL) AND (disabled_at IS NULL) AND (disable_reason IS NULL)) OR ((status = 'active'::text) AND (email_verified_at IS NOT NULL) AND (disabled_at IS NULL) AND (disable_reason IS NULL)) OR ((status = 'disabled'::text) AND (disabled_at IS NOT NULL)))),
     CONSTRAINT users_updated_after_create_check CHECK ((updated_at >= created_at))
@@ -1162,4 +1164,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260318000014'),
     ('20260319000015'),
     ('20260320000016'),
-    ('20260320000017');
+    ('20260320000017'),
+    ('20260321000018');

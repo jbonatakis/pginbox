@@ -7,6 +7,7 @@ export const messagePermalinkBasePath = "/m";
 export const peoplePath = "/people";
 export const analyticsPath = "/analytics";
 export const accountPath = "/account";
+export const adminPath = "/admin";
 export const loginPath = "/login";
 export const registerPath = "/register";
 export const verifyEmailPath = "/verify-email";
@@ -39,6 +40,10 @@ export type AppRoute =
   | {
       name: "account";
       pathname: typeof accountPath;
+    }
+  | {
+      name: "admin";
+      pathname: typeof adminPath;
     }
   | {
       name: "login";
@@ -190,6 +195,10 @@ function matchRoute(pathname: string): AppRoute {
 
   if (pathname === accountPath) {
     return { name: "account", pathname: accountPath };
+  }
+
+  if (pathname === adminPath) {
+    return { name: "admin", pathname: adminPath };
   }
 
   if (pathname === loginPath) {

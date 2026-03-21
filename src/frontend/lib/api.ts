@@ -1,5 +1,8 @@
 import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "shared/api";
 import type {
+  AdminStats,
+  AdminUser,
+  AdminUserListResponse,
   AttachmentDetail,
   AnalyticsSummary,
   AnalyticsMessagesLast24h,
@@ -90,6 +93,12 @@ export interface ListThreadsParams {
 }
 
 export interface ListPeopleParams {
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ListAdminUsersParams {
+  q?: string;
   cursor?: string;
   limit?: number;
 }
@@ -658,7 +667,71 @@ export async function getThreadFollowStates(
   );
 }
 
+export async function getAdminStats(options: RequestOptions = {}): Promise<AdminStats> {
+  return requestAuthJson<AdminStats>(withApiBase("/admin/stats"), options);
+}
+
+export async function listAdminUsers(
+  params: ListAdminUsersParams = {},
+  options: RequestOptions = {}
+): Promise<AdminUserListResponse> {
+  const path = withApiBase("/admin/users", {
+    q: params.q,
+    cursor: params.cursor,
+    limit: params.limit,
+  });
+  return requestAuthJson<AdminUserListResponse>(path, options);
+}
+
+export async function disableAdminUser(
+  userId: string,
+  reason: string,
+  options: RequestOptions = {}
+): Promise<AdminUser> {
+  return postAuthJson<AdminUser>(withApiBase(`/admin/users/${encodePathParam(userId)}/disable`), { reason }, options);
+}
+
+export async function enableAdminUser(
+  userId: string,
+  options: RequestOptions = {}
+): Promise<AdminUser> {
+  return requestAuthJson<AdminUser>(
+    withApiBase(`/admin/users/${encodePathParam(userId)}/enable`),
+    { ...options, method: "POST" }
+  );
+}
+
+export async function resetAdminUserPassword(
+  userId: string,
+  options: RequestOptions = {}
+): Promise<{ message: string }> {
+  return requestAuthJson<{ message: string }>(
+    withApiBase(`/admin/users/${encodePathParam(userId)}/reset-password`),
+    { ...options, method: "POST" }
+  );
+}
+
+export async function setAdminUserRole(
+  userId: string,
+  role: string,
+  options: RequestOptions = {}
+): Promise<AdminUser> {
+  return patchAuthJson<AdminUser>(
+    withApiBase(`/admin/users/${encodePathParam(userId)}/role`),
+    { role },
+    options
+  );
+}
+
 export const api = {
+  admin: {
+    disable: disableAdminUser,
+    enable: enableAdminUser,
+    getStats: getAdminStats,
+    listUsers: listAdminUsers,
+    resetPassword: resetAdminUserPassword,
+    setRole: setAdminUserRole,
+  },
   attachments: {
     get: getAttachment,
   },

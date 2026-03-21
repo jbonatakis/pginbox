@@ -32,6 +32,7 @@ export function documentTitleForRoute(route: AppRoute): string {
   if (route.name === "message-permalink") return messagePermalinkDocumentTitle(route.params.messageId);
   if (route.name === "analytics") return "Analytics | pginbox";
   if (route.name === "account") return "My Account | pginbox";
+  if (route.name === "admin") return "Admin | pginbox";
   if (route.name === "login") return "Log in | pginbox";
   if (route.name === "register") return "Register | pginbox";
   if (route.name === "verify-email") return "Verify email | pginbox";
