@@ -2,6 +2,7 @@
   "name": "pginbox",
   "module": "src/server/index.ts",
   "type": "module",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "auth:cleanup": "bun src/server/jobs/auth-cleanup.ts",
     "my-threads:backfill": "bun src/server/jobs/my-threads-historical-backfill.ts",
