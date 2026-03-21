@@ -78,6 +78,10 @@
       return [];
     }
 
+    if (route.name === "admin") {
+      return [];
+    }
+
     if (authRouteNames.has(route.name)) {
       return [];
     }
