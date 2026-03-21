@@ -40,6 +40,8 @@
   let lastSyncedFilterState = "";
   let fromInputElement: HTMLInputElement | null = null;
   let toInputElement: HTMLInputElement | null = null;
+  let fromDateBadInput = false;
+  let toDateBadInput = false;
 
   const normalizedDraftText = (value: string): string | null => {
     const normalized = value.trim();
@@ -130,13 +132,20 @@
     } else {
       lastSyncedFilterState = nextSyncedFilterState;
       fromDateDraft = fromDate;
+      fromDateBadInput = false;
       limitDraft = limit;
       searchDraft = searchQuery;
       selectedListDraft = selectedList ?? "";
       toDateDraft = toDate;
+      toDateBadInput = false;
     }
   }
 
+  $: hasInvalidDateDraft =
+    fromDateBadInput ||
+    toDateBadInput ||
+    (useCompactDateInputs && fromDateDraft !== "" && !isValidDateDraft(normalizeDateDraftInput(fromDateDraft))) ||
+    (useCompactDateInputs && toDateDraft !== "" && !isValidDateDraft(normalizeDateDraftInput(toDateDraft)));
   $: hasUnknownSelectedList =
     selectedListDraft.length > 0 &&
     !listOptions.some((candidate) => candidate.name === selectedListDraft);
@@ -155,10 +164,21 @@
 
   const emitClear = (): void => {
     fromDateDraft = "";
+    fromDateBadInput = false;
+    if (fromInputElement) fromInputElement.value = "";
     limitDraft = defaultLimit;
     searchDraft = "";
     selectedListDraft = "";
     toDateDraft = "";
+    toDateBadInput = false;
+    if (toInputElement) toInputElement.value = "";
+    dispatch("searchsubmit", {
+      from: null,
+      limit: defaultLimit,
+      list: null,
+      q: null,
+      to: null,
+    });
   };
 
   const emitRetryLists = (): void => {
@@ -169,11 +189,17 @@
     isExpanded = !isExpanded;
   };
 
-  const normalizeFromDateDraft = (): void => {
+  const normalizeFromDateDraft = (event?: Event): void => {
+    if (!useCompactDateInputs && event?.currentTarget instanceof HTMLInputElement) {
+      fromDateBadInput = event.currentTarget.validity.badInput;
+    }
     fromDateDraft = normalizeDateDraftInput(fromDateDraft);
   };
 
-  const normalizeToDateDraft = (): void => {
+  const normalizeToDateDraft = (event?: Event): void => {
+    if (!useCompactDateInputs && event?.currentTarget instanceof HTMLInputElement) {
+      toDateBadInput = event.currentTarget.validity.badInput;
+    }
     toDateDraft = normalizeDateDraftInput(toDateDraft);
   };
 
@@ -187,6 +213,31 @@
     const target = event.currentTarget;
     if (!(target instanceof HTMLInputElement) || !useCompactDateInputs) return;
     toDateDraft = normalizeDateDraftInput(target.value);
+  };
+
+  const reopenPickerIfBadInput = (target: HTMLInputElement): void => {
+    if (!target.validity.badInput) return;
+    try {
+      target.showPicker();
+    } catch {
+      target.value = "";
+    }
+  };
+
+  const handleFromDateChange = (event: Event): void => {
+    if (useCompactDateInputs) return;
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement)) return;
+    fromDateBadInput = target.validity.badInput;
+    reopenPickerIfBadInput(target);
+  };
+
+  const handleToDateChange = (event: Event): void => {
+    if (useCompactDateInputs) return;
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement)) return;
+    toDateBadInput = target.validity.badInput;
+    reopenPickerIfBadInput(target);
   };
 
   const emitSearchSubmit = (): void => {
@@ -275,7 +326,7 @@
           placeholder="Search threads"
           disabled={isBusy}
         />
-        <button type="submit" class="search-button" disabled={isBusy}>Search</button>
+        <button type="submit" class="search-button" disabled={isBusy || hasInvalidDateDraft}>Search</button>
       </div>
     </div>
 
@@ -318,6 +369,7 @@
         disabled={isBusy}
         bind:this={fromInputElement}
         on:input={handleFromDateInput}
+        on:change={handleFromDateChange}
         on:blur={normalizeFromDateDraft}
       />
     </div>
@@ -335,6 +387,7 @@
         disabled={isBusy}
         bind:this={toInputElement}
         on:input={handleToDateInput}
+        on:change={handleToDateChange}
         on:blur={normalizeToDateDraft}
       />
     </div>
@@ -469,6 +522,10 @@
   select:disabled {
     opacity: 0.7;
     cursor: not-allowed;
+  }
+
+  input:invalid {
+    border-color: var(--error, #c0392b);
   }
 
   input[type="date"] {
