@@ -14,7 +14,8 @@ from urllib.parse import quote
 # Prefer PGINBOX_LOCUST_SESSION_COOKIE for authenticated runs on live systems.
 # It avoids login bursts and auth rate limits while still exercising the
 # authenticated read path (`/api/auth/me`, `/api/me/thread-follow-states`,
-# `/api/threads/:threadId/progress`, and `/api/me/followed-threads`).
+# `/api/threads/:threadId/progress`, `/api/messages/:messageId/permalink`,
+# and `/api/me/followed-threads`).
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -132,7 +133,7 @@ class BasePginboxUser(HttpUser):
         for item in items:
             if not isinstance(item, dict):
                 continue
-            thread_id = item.get("thread_id")
+            thread_id = item.get("id")
             if isinstance(thread_id, str) and thread_id:
                 thread_ids.append(thread_id)
 
@@ -154,25 +155,68 @@ class BasePginboxUser(HttpUser):
         *,
         include_page: bool,
         include_progress: bool = False,
-    ) -> None:
+    ):
         encoded_thread_id = quote(thread_id, safe="")
 
         if include_page:
             self.client.get(
-                f"/threads/{encoded_thread_id}",
-                name="/threads/:threadId (page)",
+                f"/t/{encoded_thread_id}",
+                name="/t/:threadId (page)",
             )
 
-        self.client.get(
+        response = self.client.get(
             f"/api/threads/{encoded_thread_id}?limit={THREAD_DETAIL_LIMIT}",
             name="/api/threads/:threadId",
         )
 
         if include_progress:
+            self.read_thread_progress(thread_id)
+
+        return response
+
+    def read_thread_progress(self, thread_id: str) -> None:
+        encoded_thread_id = quote(thread_id, safe="")
+        self.client.get(
+            f"/api/threads/{encoded_thread_id}/progress",
+            name="/api/threads/:threadId/progress",
+        )
+
+    def read_message_permalink(self, message_id: str, *, include_page: bool) -> None:
+        encoded_message_id = quote(message_id, safe="")
+
+        if include_page:
             self.client.get(
-                f"/api/threads/{encoded_thread_id}/progress",
-                name="/api/threads/:threadId/progress",
+                f"/m/{encoded_message_id}",
+                name="/m/:messageId (page)",
             )
+
+        self.client.get(
+            f"/api/messages/{encoded_message_id}/permalink",
+            name="/api/messages/:messageId/permalink",
+        )
+
+    def pick_message_id_from_thread(self, thread_id: str) -> str | None:
+        response = self.read_thread_detail(thread_id, include_page=False)
+        payload = self._load_json(response)
+        if not isinstance(payload, dict):
+            return None
+
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return None
+
+        message_ids = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            message_id = message.get("id")
+            if isinstance(message_id, str) and message_id:
+                message_ids.append(message_id)
+
+        if not message_ids:
+            return None
+
+        return random.choice(message_ids)
 
 
 class AnonymousBrowsingUser(BasePginboxUser):
@@ -191,13 +235,20 @@ class AnonymousBrowsingUser(BasePginboxUser):
         self.read_thread_detail(thread_id, include_page=True)
 
     @task(1)
-    def hit_homepage(self) -> None:
-        self.client.get("/", name="/ (page)")
+    def open_message_permalink(self) -> None:
+        thread_id = self.pick_thread_id(include_page=False)
+        if thread_id is None:
+            return
+
+        message_id = self.pick_message_id_from_thread(thread_id)
+        if message_id is None:
+            return
+
+        self.read_message_permalink(message_id, include_page=True)
 
     @task(1)
-    def browse_people(self) -> None:
-        self.client.get("/people", name="/people (page)")
-        self.client.get("/api/people", name="/api/people")
+    def hit_homepage(self) -> None:
+        self.client.get("/", name="/ (page)")
 
     @task(1)
     def browse_analytics(self) -> None:
@@ -315,14 +366,29 @@ class AuthenticatedReadingUser(BasePginboxUser):
         if not thread_ids:
             return
 
+        thread_id = random.choice(thread_ids)
         self.read_thread_detail(
-            random.choice(thread_ids),
+            thread_id,
             include_page=False,
             include_progress=True,
         )
 
     @task(1)
+    def open_message_permalink(self) -> None:
+        thread_id = self.pick_thread_id(include_page=False)
+        if thread_id is None:
+            return
+
+        message_id = self.pick_message_id_from_thread(thread_id)
+        if message_id is None:
+            return
+
+        self.read_message_permalink(message_id, include_page=True)
+
+    @task(1)
     def view_followed_threads(self) -> None:
         self.client.get("/account", name="/account (page)")
         self.client.get("/api/auth/me", name="/api/auth/me")
+        self.client.get("/api/me/tracked-thread-counts", name="/api/me/tracked-thread-counts")
         self.client.get("/api/me/followed-threads?limit=25", name="/api/me/followed-threads")
+        self.client.get("/api/me/my-threads?limit=25", name="/api/me/my-threads")

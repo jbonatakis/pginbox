@@ -68,6 +68,9 @@ parse_mbox = ingest_parse.parse_mbox
 
 load_dotenv()
 
+ARCHIVE_AUTH_MAX_ATTEMPTS = 3
+ARCHIVE_AUTH_RETRY_BASE_DELAY = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Store
@@ -269,6 +272,44 @@ def derive_threads(conn):
 
 def refresh_analytics_views(conn):
     return store_lib.refresh_analytics_views(conn)
+
+
+def _ensure_archive_access_with_reauth(
+    session: requests.Session,
+    list_name: str,
+    year: int,
+    month: int,
+    pg_user: str,
+    pg_pass: str,
+    *,
+    max_attempts: int = ARCHIVE_AUTH_MAX_ATTEMPTS,
+    retry_base_delay: float = ARCHIVE_AUTH_RETRY_BASE_DELAY,
+    make_session_fn=None,
+    ensure_archive_access_fn=None,
+    sleep_fn=None,
+) -> requests.Session:
+    make_session_fn = make_session if make_session_fn is None else make_session_fn
+    ensure_archive_access_fn = (
+        ensure_archive_access if ensure_archive_access_fn is None else ensure_archive_access_fn
+    )
+    sleep_fn = time.sleep if sleep_fn is None else sleep_fn
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            ensure_archive_access_fn(session, list_name, year, month)
+            return session
+        except ArchiveAuthError:
+            if attempt >= max_attempts:
+                raise
+            delay = retry_base_delay * (2 ** (attempt - 1))
+            print(
+                "  [auth] archive access failed, re-authenticating and retrying "
+                f"in {delay:.1f}s ({attempt}/{max_attempts - 1})..."
+            )
+            sleep_fn(delay)
+            session = make_session_fn(pg_user, pg_pass)
+
+    return session
 
 
 def ingest(
@@ -579,7 +620,13 @@ def main():
                 for y, m in months
                 if args.force_download or not is_cached(y, m, list_name)
             )
-            ensure_archive_access(session, list_name, *first_download_month)
+            session = _ensure_archive_access_with_reauth(
+                session,
+                list_name,
+                *first_download_month,
+                args.pg_user,
+                args.pg_pass,
+            )
     else:
         session = requests.Session()
 
@@ -620,11 +667,14 @@ def main():
                         args.force_download,
                     )
                 except ArchiveAuthError:
-                    print(
-                        "  [auth] archive access failed, re-authenticating and retrying once..."
+                    session = _ensure_archive_access_with_reauth(
+                        session,
+                        list_name,
+                        year,
+                        month,
+                        args.pg_user,
+                        args.pg_pass,
                     )
-                    session = make_session(args.pg_user, args.pg_pass)
-                    ensure_archive_access(session, list_name, year, month)
                     month_stats = repair_attachments(
                         conn,
                         session,
@@ -684,11 +734,14 @@ def main():
                         False,
                     )
                 except ArchiveAuthError:
-                    print(
-                        "  [auth] archive access failed, re-authenticating and retrying once..."
+                    session = _ensure_archive_access_with_reauth(
+                        session,
+                        list_name,
+                        year,
+                        month,
+                        args.pg_user,
+                        args.pg_pass,
                     )
-                    session = make_session(args.pg_user, args.pg_pass)
-                    ensure_archive_access(session, list_name, year, month)
                     list_total += ingest(
                         conn,
                         session,
