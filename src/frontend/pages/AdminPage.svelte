@@ -104,7 +104,9 @@
     delete actionError[user.id];
     try {
       const updated = await api.admin.enable(user.id);
-      users = users.map((u) => (u.id === updated.id ? updated : u));
+      users = users.map((u) =>
+        u.id === updated.id ? { ...u, status: updated.status } : u
+      );
     } catch (err) {
       actionError = { ...actionError, [user.id]: toApiErrorShape(err).message };
     } finally {
@@ -131,7 +133,9 @@
     delete actionError[user.id];
     try {
       const updated = await api.admin.setRole(user.id, role);
-      users = users.map((u) => (u.id === updated.id ? updated : u));
+      users = users.map((u) =>
+        u.id === updated.id ? { ...u, role: updated.role } : u
+      );
     } catch (err) {
       actionError = { ...actionError, [user.id]: toApiErrorShape(err).message };
     } finally {
