@@ -28,11 +28,6 @@
     type AppRoute,
   } from "./router";
 
-  type ContextChip = {
-    label: string;
-    value: string;
-  };
-
   const navItems: Array<{
     label: string;
     path: string;
@@ -54,44 +49,6 @@
     "reset-password",
   ]);
 
-  const clipped = (value: string, maxLength: number): string =>
-    value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
-
-  const contextChipsForRoute = (route: AppRoute): ContextChip[] => {
-    if (route.name === "threads") {
-      return [];
-    }
-
-    if (route.name === "thread-detail") {
-      return [];
-    }
-
-    if (route.name === "message-permalink") {
-      return [];
-    }
-
-    if (route.name === "analytics") {
-      return [];
-    }
-
-    if (route.name === "account") {
-      return [];
-    }
-
-    if (route.name === "admin") {
-      return [];
-    }
-
-    if (authRouteNames.has(route.name)) {
-      return [];
-    }
-
-    return [
-      { label: "View", value: "Unknown route" },
-      { label: "Path", value: clipped(route.pathname, 40) },
-      { label: "Session", value: "Recoverable state" },
-    ];
-  };
 
   let contentElement: HTMLElement | null = null;
   let handledRoutePathname: string | null =
@@ -99,7 +56,6 @@
   let accountLink = accountPath;
   let loginLink = loginPath;
   let mobileNavOpen = false;
-  let routeContextChips: ContextChip[] = [];
 
   const focusRouteHeading = async (): Promise<void> => {
     await tick();
@@ -155,7 +111,6 @@
     ? $currentRoute.name === "account"
     : $currentRoute.name === "login";
   $: authNavLabel = $authStore.isAuthenticated ? "My Account" : "Sign In";
-  $: routeContextChips = contextChipsForRoute($currentRoute);
 </script>
 
 <svelte:window on:keydown={handleWindowKeydown} />
@@ -238,16 +193,6 @@
     </div>
   </header>
 
-  {#if $currentRoute.name !== "home" && routeContextChips.length > 0}
-    <section class="context-strip" aria-label="Current context">
-      {#each routeContextChips as chip}
-        <p class="context-chip">
-          <span>{chip.label}</span>
-          <strong>{chip.value}</strong>
-        </p>
-      {/each}
-    </section>
-  {/if}
 
   <main id="main-content" class="content" tabindex="-1" bind:this={contentElement}>
     {#if $currentRoute.name === "home"}
@@ -275,7 +220,7 @@
     {:else if $currentRoute.name === "reset-password"}
       <ResetPasswordPage />
     {:else}
-      <NotFoundPage pathname={$currentRoute.pathname} />
+      <NotFoundPage />
     {/if}
   </main>
 
@@ -554,39 +499,6 @@
     padding-left: 0.74rem;
   }
 
-  .context-strip {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.55rem;
-    padding: 0.6rem 0;
-  }
-
-  .context-chip {
-    margin: 0;
-    display: grid;
-    gap: 0.08rem;
-    min-width: 9.2rem;
-    padding: 0.42rem 0.62rem;
-    border: 1px solid #d9e2ec;
-    border-radius: 0.6rem;
-    background: rgba(255, 255, 255, 0.9);
-  }
-
-  .context-chip span {
-    color: #627d98;
-    font-size: 0.72rem;
-    line-height: 1.1;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .context-chip strong {
-    color: #102a43;
-    font-size: 0.88rem;
-    line-height: 1.2;
-    font-weight: 650;
-    word-break: break-word;
-  }
 
   .content {
     display: grid;
@@ -743,14 +655,5 @@
       margin-top: 0.15rem;
     }
 
-    .context-strip {
-      gap: 0.45rem;
-      padding-top: 0.2rem;
-    }
-
-    .context-chip {
-      flex: 1 1 8.4rem;
-      min-width: 0;
-    }
   }
 </style>
