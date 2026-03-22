@@ -9,7 +9,7 @@ import mailbox
 import re
 import shutil
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -138,6 +138,18 @@ def _parse_attachments(msg) -> list:
         )
 
     return attachments
+
+
+_MAX_PG_TZ_OFFSET = timedelta(hours=15, minutes=59, seconds=59)
+
+
+def _clamp_tz(dt: datetime) -> datetime:
+    """Convert to UTC if the timezone offset is outside PostgreSQL's accepted range."""
+    if dt.tzinfo is not None:
+        offset = dt.utcoffset()
+        if offset is not None and abs(offset) > _MAX_PG_TZ_OFFSET:
+            return dt.astimezone(timezone.utc)
+    return dt
 
 
 def _decode_header(value: str) -> str:
@@ -360,7 +372,7 @@ def parse_mbox(path: Path, list_id: int):
         date_str = msg.get("Date") or ""
         if date_str:
             try:
-                sent_at = email.utils.parsedate_to_datetime(date_str)
+                sent_at = _clamp_tz(email.utils.parsedate_to_datetime(date_str))
                 used_date_header = True
             except Exception:
                 pass
@@ -369,7 +381,7 @@ def parse_mbox(path: Path, list_id: int):
             from_line_parts = from_line.split(" ", 1)
             if len(from_line_parts) == 2:
                 try:
-                    parsed = email.utils.parsedate_to_datetime(from_line_parts[1])
+                    parsed = _clamp_tz(email.utils.parsedate_to_datetime(from_line_parts[1]))
                     if parsed.year > 2001:
                         sent_at = parsed
                 except Exception:
