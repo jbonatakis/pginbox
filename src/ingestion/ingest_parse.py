@@ -145,7 +145,10 @@ def _decode_header(value: str) -> str:
     parts = []
     for part, charset in email.header.decode_header(value):
         if isinstance(part, bytes):
-            parts.append(part.decode(charset or "utf-8", errors="replace"))
+            try:
+                parts.append(part.decode(charset or "utf-8", errors="replace"))
+            except LookupError:
+                parts.append(part.decode("latin-1", errors="replace"))
         else:
             parts.append(part)
     return "".join(parts)
