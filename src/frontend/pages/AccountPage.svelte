@@ -30,6 +30,7 @@
     timeStyle: "short",
   });
 
+  let isEditingDisplayName = false;
   let logoutError: ApiErrorShape | null = null;
   let profileDisplayName = "";
   let profileError: ApiErrorShape | null = null;
@@ -129,6 +130,7 @@
       const nextDisplayName = response.user.displayName ?? "";
       profileDisplayName = nextDisplayName;
       syncedDisplayName = nextDisplayName;
+      isEditingDisplayName = false;
       profileMessage =
         nextDisplayName.length > 0
           ? "Display name updated."
@@ -136,6 +138,12 @@
     } catch (error) {
       profileError = toApiErrorShape(error);
     }
+  };
+
+  const cancelEditDisplayName = (): void => {
+    isEditingDisplayName = false;
+    profileDisplayName = syncedDisplayName ?? "";
+    profileError = null;
   };
 
   const handleResendVerification = async (): Promise<void> => {
@@ -167,6 +175,16 @@
   $: statusDescriptor = currentUser ? describeStatus(currentUser.status) : null;
   $: currentUserLabel = currentUser?.displayName?.trim() || currentUser?.email || "Account";
   $: currentUserDisplayName = currentUser?.displayName?.trim() || "";
+  $: accountInitials = (() => {
+    const name = currentUser?.displayName?.trim();
+    if (name) {
+      const parts = name.split(/\s+/);
+      return parts.length >= 2
+        ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+        : name.slice(0, 2).toUpperCase();
+    }
+    return (currentUser?.email ?? "?").slice(0, 2).toUpperCase();
+  })();
   $: verificationTooltip = formatVerificationTooltip(currentUser?.emailVerifiedAt);
   $: if (currentUser && syncedDisplayName !== currentUserDisplayName && !isUpdatingProfile) {
     profileDisplayName = currentUserDisplayName;
@@ -352,25 +370,50 @@
       message="You need to sign in before opening the account page."
     />
   {:else if currentUser}
-    <section class="account-grid" aria-label="Account summary and actions">
-      <article class="account-card">
-        <header class="card-header">
-          <div>
-            <p class="eyebrow">Account</p>
-            <h2>{currentUserLabel}</h2>
-          </div>
-          {#if statusDescriptor}
-            <p class:warning={statusDescriptor.tone === "warning"} class="status-pill">
-              {statusDescriptor.label}
-            </p>
-          {/if}
-        </header>
-
-        <dl class="facts">
-          <div>
-            <dt>Email</dt>
-            <dd class="email-row">
-              <span>{currentUser.email}</span>
+    <div class="account-strip">
+      <div class="account-identity">
+        <div class="account-avatar" aria-hidden="true">{accountInitials}</div>
+        <div class="account-identity-body">
+          {#if isEditingDisplayName}
+            <form class="display-name-form" on:submit|preventDefault={handleProfileSubmit}>
+              <div class="display-name-field">
+                <input
+                  class="display-name-input"
+                  name="displayName"
+                  autocomplete="nickname"
+                  bind:value={profileDisplayName}
+                  maxlength="120"
+                  placeholder="Optional display name"
+                />
+                <div class="display-name-actions">
+                  <button type="submit" class="primary-button" disabled={isUpdatingProfile || !isProfileDirty}>
+                    {isUpdatingProfile ? "Saving…" : "Save"}
+                  </button>
+                  <button type="button" class="secondary-button" on:click={cancelEditDisplayName}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              {#if profileError}
+                <ErrorState
+                  title="Unable to update profile"
+                  message={profileError.message}
+                  detail={formatErrorDetail(profileError)}
+                />
+              {/if}
+            </form>
+          {:else}
+            <div class="account-name-row">
+              <span class="account-name">{currentUserLabel}</span>
+              <button type="button" class="edit-name-btn" on:click={() => { isEditingDisplayName = true; }}>
+                Edit name
+              </button>
+            </div>
+            {#if profileMessage}
+              <p class="profile-saved-message" role="status">{profileMessage}</p>
+            {/if}
+            <div class="account-email-row">
+              <span class="account-email">{currentUser.email}</span>
               {#if verificationTooltip}
                 <button
                   type="button"
@@ -382,136 +425,82 @@
                   Verified
                 </button>
               {/if}
-              <button type="button" class="add-email-button" on:click={handleOpenEmailsOverlay}>
-                Manage emails
-              </button>
-            </dd>
-          </div>
+            </div>
+          {/if}
+        </div>
+      </div>
 
-          <div>
-            <dt>Member since</dt>
-            <dd>{formatDateTime(currentUser.createdAt)}</dd>
-          </div>
-        </dl>
-
-        {#if currentUser.status === "pending_verification"}
-          <p class="inline-status warning" role="status">
-            This account is still waiting on email verification.
+      <div class="account-strip-right">
+        {#if statusDescriptor && statusDescriptor.tone !== "neutral"}
+          <p class:warning={statusDescriptor.tone === "warning"} class="status-pill">
+            {statusDescriptor.label}
           </p>
-
-          <div class="actions">
-            <button
-              type="button"
-              class="primary-button"
-              disabled={isResending}
-              on:click={handleResendVerification}
-            >
-              {isResending ? "Sending..." : "Resend verification email"}
-            </button>
-          </div>
-
-          {#if resendError}
-            <ErrorState
-              title="Unable to resend verification"
-              message={resendError.message}
-              detail={formatErrorDetail(resendError)}
-            />
-          {/if}
-
-          {#if resendMessage}
-            <SuccessState
-              title="Verification email queued"
-              message={resendMessage}
-              detail={currentUser.email}
-            />
-          {/if}
         {/if}
-
-        {#if logoutError}
-          <ErrorState
-            title="Unable to sign out"
-            message={logoutError.message}
-            detail={formatErrorDetail(logoutError)}
-          />
-        {/if}
-
-        <div class="actions">
-          <button type="button" class="primary-button" disabled={isLoggingOut} on:click={handleLogout}>
-            {isLoggingOut ? "Signing out..." : "Sign out"}
+        <div class="account-strip-actions">
+          <button type="button" class="ghost-button" on:click={handleOpenEmailsOverlay}>
+            Manage emails
           </button>
-
-          <a href={forgotPasswordLink} class="secondary-link" on:click={(event) => onLinkClick(event, forgotPasswordLink)}>
+          <a
+            href={forgotPasswordLink}
+            class="ghost-link"
+            on:click={(event) => onLinkClick(event, forgotPasswordLink)}
+          >
             Reset password
           </a>
+          <button
+            type="button"
+            class="primary-button"
+            disabled={isLoggingOut}
+            on:click={handleLogout}
+          >
+            {isLoggingOut ? "Signing out…" : "Sign out"}
+          </button>
         </div>
-      </article>
+      </div>
+    </div>
 
-      <article class="account-card">
-        <header class="card-header stacked">
-          <div>
-            <p class="eyebrow">Profile</p>
-            <h2>Display name</h2>
-          </div>
-          <p class="support-copy">
-            This name appears anywhere pginbox needs a human-readable label for your account.
-          </p>
-        </header>
+    {#if logoutError}
+      <ErrorState
+        title="Unable to sign out"
+        message={logoutError.message}
+        detail={formatErrorDetail(logoutError)}
+      />
+    {/if}
 
-        {#if profileError}
+    {#if currentUser.status === "pending_verification"}
+      <div class="verification-notice" role="status">
+        <p class="verification-notice-text">
+          This account is still waiting on email verification.
+        </p>
+        <div class="verification-notice-actions">
+          <button
+            type="button"
+            class="primary-button"
+            disabled={isResending}
+            on:click={handleResendVerification}
+          >
+            {isResending ? "Sending…" : "Resend verification email"}
+          </button>
+        </div>
+        {#if resendError}
           <ErrorState
-            title="Unable to update profile"
-            message={profileError.message}
-            detail={formatErrorDetail(profileError)}
+            title="Unable to resend verification"
+            message={resendError.message}
+            detail={formatErrorDetail(resendError)}
           />
         {/if}
-
-        {#if profileMessage}
+        {#if resendMessage}
           <SuccessState
-            title="Profile updated"
-            message={profileMessage}
+            title="Verification email queued"
+            message={resendMessage}
+            detail={currentUser.email}
           />
         {/if}
-
-        <form class="profile-form" on:submit|preventDefault={handleProfileSubmit}>
-          <label class="field">
-            <span>Display name</span>
-            <input
-              name="displayName"
-              autocomplete="nickname"
-              bind:value={profileDisplayName}
-              maxlength="120"
-              placeholder="Optional display name"
-            />
-          </label>
-
-          <p class="field-hint">
-            Leave it blank to fall back to your email address in account surfaces.
-          </p>
-
-          <div class="actions">
-            <button
-              type="submit"
-              class="primary-button"
-              disabled={isUpdatingProfile || !isProfileDirty}
-            >
-              {isUpdatingProfile ? "Saving..." : "Save display name"}
-            </button>
-          </div>
-        </form>
-      </article>
-
-    </section>
+      </div>
+    {/if}
 
     <section class="tracked-threads-section" aria-label="Tracked threads">
-      <header class="tracked-threads-header">
-        <div>
-          <p class="eyebrow">Threads</p>
-          <h2 class="section-heading">Tracked Threads</h2>
-        </div>
-        <p class="support-copy">
-          Followed discussions and threads you started or replied to live here.
-        </p>
-      </header>
+      <h2 class="section-heading">Tracked Threads</h2>
 
       {#if trackedThreadCountsLoading}
         <LoadingState
@@ -744,6 +733,7 @@
   .account-page {
     display: grid;
     gap: 0.85rem;
+    align-content: start;
     min-width: 0;
   }
 
@@ -754,17 +744,13 @@
     line-height: 1.1;
   }
 
-  .account-grid {
-    display: grid;
+  .account-strip {
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.75rem;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
-    min-width: 0;
-  }
-
-  .account-card {
-    display: grid;
-    gap: 0.8rem;
-    padding: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1rem;
     border: 1px solid #d9e2ec;
     border-radius: 1rem;
     background: rgba(255, 255, 255, 0.92);
@@ -774,35 +760,193 @@
     min-width: 0;
   }
 
-  .card-header {
+  .account-identity {
     display: flex;
-    justify-content: space-between;
+    align-items: center;
     gap: 0.75rem;
-    align-items: start;
+    min-width: 0;
+    flex: 1;
   }
 
-  .card-header.stacked {
-    display: grid;
-    gap: 0.35rem;
-  }
-
-  .eyebrow {
-    margin: 0 0 0.15rem;
-    color: #627d98;
-    font-size: 0.72rem;
-    line-height: 1.1;
-    text-transform: uppercase;
+  .account-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 999px;
+    background: #0b4ea2;
+    color: #fff;
+    font-size: 0.88rem;
+    font-weight: 700;
     letter-spacing: 0.04em;
+    flex-shrink: 0;
+    user-select: none;
   }
 
-  h2 {
-    margin: 0;
+  .account-identity-body {
+    display: grid;
+    gap: 0.22rem;
+    min-width: 0;
+  }
+
+  .account-name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .account-name {
     color: #102a43;
-    font-size: 1.08rem;
+    font-size: 1rem;
+    font-weight: 700;
     line-height: 1.2;
+    word-break: break-word;
   }
 
-  .support-copy,
+  .edit-name-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.35rem;
+    padding: 0.12rem 0.5rem;
+    border: 1px solid rgba(11, 78, 162, 0.22);
+    border-radius: 999px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .edit-name-btn:hover {
+    background: #dcebff;
+    border-color: rgba(11, 78, 162, 0.38);
+  }
+
+  .profile-saved-message {
+    margin: 0;
+    color: #1f6f43;
+    font-size: 0.8rem;
+    line-height: 1.3;
+  }
+
+  .account-email-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .account-email {
+    color: #486581;
+    font-size: 0.88rem;
+    line-height: 1.3;
+    word-break: break-all;
+  }
+
+  .account-strip-right {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .account-strip-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .ghost-button,
+  .ghost-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2rem;
+    padding: 0.38rem 0.7rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.88);
+    color: #486581;
+    font-size: 0.82rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .ghost-button:hover,
+  .ghost-link:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .display-name-form {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .display-name-field {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .display-name-input {
+    flex: 1;
+    min-width: 10rem;
+    min-height: 2.3rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #bcccdc;
+    border-radius: 0.8rem;
+    background: rgba(255, 255, 255, 0.96);
+    color: #102a43;
+    font: inherit;
+    font-size: 0.9rem;
+  }
+
+  .display-name-input::placeholder {
+    color: #829ab1;
+  }
+
+  .display-name-actions {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+  }
+
+  .verification-notice {
+    display: grid;
+    gap: 0.6rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid #f2d58a;
+    border-radius: 0.85rem;
+    background: #fff7df;
+  }
+
+  .verification-notice-text {
+    margin: 0;
+    color: #8b6200;
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .verification-notice-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
   .inline-status {
     margin: 0;
     color: #486581;
@@ -810,61 +954,27 @@
     line-height: 1.45;
   }
 
-  .facts {
-    display: grid;
-    gap: 0.7rem;
-    margin: 0;
-  }
-
-  .facts div {
-    display: grid;
-    gap: 0.18rem;
-  }
-
-  dt {
-    color: #627d98;
-    font-size: 0.75rem;
-    line-height: 1.1;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  dd {
-    margin: 0;
-    color: #102a43;
-    font-size: 0.95rem;
-    line-height: 1.4;
-    word-break: break-word;
-  }
-
-  .email-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-    align-items: center;
-  }
-
   .verification-indicator {
     display: inline-flex;
     align-items: center;
-    gap: 0.38rem;
-    min-height: 1.75rem;
-    padding: 0.18rem 0.55rem;
+    gap: 0.32rem;
+    min-height: 1.35rem;
+    padding: 0.12rem 0.5rem;
     border: 1px solid #9fd5b3;
     border-radius: 999px;
     background: #eefbf1;
     color: #1f6f43;
-    font-size: 0.78rem;
+    font: inherit;
+    font-size: 0.72rem;
     font-weight: 700;
     line-height: 1;
     cursor: help;
     white-space: nowrap;
-    font: inherit;
   }
 
   .verification-dot {
-    width: 0.5rem;
-    height: 0.5rem;
+    width: 0.44rem;
+    height: 0.44rem;
     border-radius: 999px;
     background: currentColor;
     flex: 0 0 auto;
@@ -885,8 +995,7 @@
     white-space: nowrap;
   }
 
-  .status-pill.warning,
-  .inline-status.warning {
+  .status-pill.warning {
     color: #8b6200;
   }
 
@@ -902,8 +1011,7 @@
     align-items: center;
   }
 
-  .primary-button,
-  .secondary-link {
+  .primary-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -936,23 +1044,6 @@
     background: #e8f2ff;
   }
 
-  .secondary-link {
-    border: 1px solid #d9e2ec;
-    background: rgba(255, 255, 255, 0.88);
-    color: #334e68;
-  }
-
-  .secondary-link:hover {
-    background: #f0f7ff;
-    border-color: #9fb3c8;
-    color: #243b53;
-  }
-
-  .profile-form {
-    display: grid;
-    gap: 0.65rem;
-  }
-
   .field {
     display: grid;
     gap: 0.3rem;
@@ -978,36 +1069,6 @@
 
   .field input::placeholder {
     color: #829ab1;
-  }
-
-  .field-hint {
-    margin: 0;
-    color: #627d98;
-    font-size: 0.82rem;
-    line-height: 1.4;
-  }
-
-  .add-email-button {
-    display: inline-flex;
-    align-items: center;
-    min-height: 1.6rem;
-    padding: 0.18rem 0.55rem;
-    border: 1px solid #bcccdc;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.88);
-    color: #486581;
-    font-size: 0.76rem;
-    font-weight: 700;
-    line-height: 1;
-    cursor: pointer;
-    font: inherit;
-    white-space: nowrap;
-  }
-
-  .add-email-button:hover {
-    background: #f0f7ff;
-    border-color: #9fb3c8;
-    color: #243b53;
   }
 
   .emails-overlay {
@@ -1221,11 +1282,6 @@
     min-width: 0;
   }
 
-  .tracked-threads-header {
-    display: grid;
-    gap: 0.35rem;
-  }
-
   .section-heading {
     margin: 0;
     color: #102a43;
@@ -1237,6 +1293,7 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+    align-items: center;
   }
 
   .tracked-thread-tab {
@@ -1276,27 +1333,26 @@
   }
 
   @media (max-width: 640px) {
-    .account-card {
-      padding: 0.9rem;
-    }
-
-    .card-header {
-      grid-template-columns: 1fr;
-      display: grid;
-    }
-
-    .status-pill {
-      justify-self: start;
-      white-space: normal;
-    }
-
-    .actions {
+    .account-strip {
+      flex-direction: column;
       align-items: stretch;
     }
 
-    .primary-button,
-    .secondary-link {
+    .account-strip-right {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .account-strip-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .ghost-button,
+    .ghost-link,
+    .primary-button {
       width: 100%;
+      justify-content: center;
     }
 
     .tracked-thread-tab {
