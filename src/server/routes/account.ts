@@ -44,8 +44,7 @@ function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTar
   return target as ResponseCookieTarget;
 }
 
-const ADD_EMAIL_RESPONSE_MESSAGE =
-  "If that email can be used, a verification email has been sent.";
+const ADD_EMAIL_RESPONSE_MESSAGE = "Request submitted.";
 const RESEND_EMAIL_VERIFICATION_MESSAGE =
   "If the email is pending verification, a new email has been sent.";
 
