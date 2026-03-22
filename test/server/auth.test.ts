@@ -263,6 +263,25 @@ async function createActiveUser(
   };
 }
 
+async function getUserIdByEmail(email: string): Promise<bigint> {
+  const row = await getAuthDb()
+    .selectFrom("user_emails")
+    .select("user_id")
+    .where("email", "=", email)
+    .executeTakeFirstOrThrow();
+  return row.user_id as bigint;
+}
+
+async function getPendingRegistrationUserIdByEmail(email: string): Promise<bigint> {
+  const row = await getAuthDb()
+    .selectFrom("user_email_claims")
+    .select("user_id")
+    .where("email", "=", email)
+    .where("claim_kind", "=", "registration")
+    .executeTakeFirstOrThrow();
+  return row.user_id as bigint;
+}
+
 async function insertSessionForUser(
   userId: bigint | number | string,
   token: string
@@ -301,13 +320,23 @@ describeAuth("auth lifecycle coverage", () => {
 
     const firstUser = await getAuthDb()
       .selectFrom("users")
-      .select(["id", "display_name", "password_hash", "status"])
-      .where("email", "=", email)
+      .innerJoin("user_email_claims", "user_email_claims.user_id", "users.id")
+      .select(["users.id", "users.display_name", "users.password_hash", "users.status"])
+      .where("user_email_claims.email", "=", email)
+      .where("user_email_claims.claim_kind", "=", "registration")
       .executeTakeFirstOrThrow();
 
     expect(firstUser.display_name).toBe("First Pending");
     expect(firstUser.status).toBe("pending_verification");
     expect(await verifyPassword(initialPassword, firstUser.password_hash)).toBe(true);
+
+    const pendingOwnedEmail = await getAuthDb()
+      .selectFrom("user_emails")
+      .select("id")
+      .where("email", "=", email)
+      .executeTakeFirst();
+
+    expect(pendingOwnedEmail).toBeUndefined();
 
     const firstTokenRow = await getAuthDb()
       .selectFrom("email_verification_tokens")
@@ -340,8 +369,10 @@ describeAuth("auth lifecycle coverage", () => {
 
     const updatedUser = await getAuthDb()
       .selectFrom("users")
-      .select(["id", "display_name", "password_hash", "status"])
-      .where("email", "=", email)
+      .innerJoin("user_email_claims", "user_email_claims.user_id", "users.id")
+      .select(["users.id", "users.display_name", "users.password_hash", "users.status"])
+      .where("user_email_claims.email", "=", email)
+      .where("user_email_claims.claim_kind", "=", "registration")
       .executeTakeFirstOrThrow();
 
     expect(updatedUser.id).toBe(firstUser.id);
@@ -531,11 +562,9 @@ describeAuth("auth lifecycle coverage", () => {
 
     const pendingEmail = "pending-session@example.com";
     await registerPendingUser(app, mailer, { email: pendingEmail });
-    const pendingUser = await getAuthDb()
-      .selectFrom("users")
-      .select("id")
-      .where("email", "=", pendingEmail)
-      .executeTakeFirstOrThrow();
+    const pendingUser = {
+      id: await getPendingRegistrationUserIdByEmail(pendingEmail),
+    };
     const pendingToken = "pending-session-token";
     await insertSessionForUser(pendingUser.id, pendingToken);
 
@@ -558,6 +587,7 @@ describeAuth("auth lifecycle coverage", () => {
     expect(revokedPendingSession.revoked_at).not.toBeNull();
 
     const disabledUser = await createActiveUser(app, mailer, "disabled-session@example.com");
+    const disabledSessionUserId = await getUserIdByEmail("disabled-session@example.com");
     await getAuthDb()
       .updateTable("users")
       .set({
@@ -565,7 +595,7 @@ describeAuth("auth lifecycle coverage", () => {
         disabled_at: new Date(),
         status: "disabled",
       })
-      .where("email", "=", "disabled-session@example.com")
+      .where("id", "=", disabledSessionUserId)
       .execute();
 
     const disabledResponse = await send(app, "/auth/me", {
@@ -581,8 +611,8 @@ describeAuth("auth lifecycle coverage", () => {
     const disabledSessionRows = await getAuthDb()
       .selectFrom("auth_sessions")
       .select("revoked_at")
-      .innerJoin("users", "users.id", "auth_sessions.user_id")
-      .where("users.email", "=", "disabled-session@example.com")
+      .innerJoin("user_emails", "user_emails.user_id", "auth_sessions.user_id")
+      .where("user_emails.email", "=", "disabled-session@example.com")
       .execute();
 
     expect(disabledSessionRows.every((row) => row.revoked_at !== null)).toBe(true);
@@ -709,6 +739,7 @@ describeAuth("auth lifecycle coverage", () => {
         message: "Invalid email or password",
       });
 
+      const activeEmailUserId = await getUserIdByEmail(activeEmail);
       await getAuthDb()
         .updateTable("users")
         .set({
@@ -716,7 +747,7 @@ describeAuth("auth lifecycle coverage", () => {
           disabled_at: new Date(),
           status: "disabled",
         })
-        .where("email", "=", activeEmail)
+        .where("id", "=", activeEmailUserId)
         .execute();
 
       const disabledLogin = await send(app, "/auth/login", {
@@ -780,6 +811,7 @@ describeAuth("auth lifecycle coverage", () => {
         email: disabledVerifyEmail,
       });
 
+      const disabledVerifyUserId = await getPendingRegistrationUserIdByEmail(disabledVerifyEmail);
       await getAuthDb()
         .updateTable("users")
         .set({
@@ -787,7 +819,7 @@ describeAuth("auth lifecycle coverage", () => {
           disabled_at: new Date(),
           status: "disabled",
         })
-        .where("email", "=", disabledVerifyEmail)
+        .where("id", "=", disabledVerifyUserId)
         .execute();
 
       const disabledVerify = await send(app, "/auth/verify-email", {
@@ -853,8 +885,9 @@ describeAuth("auth lifecycle coverage", () => {
 
       const passwordBeforeReset = await getAuthDb()
         .selectFrom("users")
-        .select(["id", "password_hash"])
-        .where("email", "=", email)
+        .innerJoin("user_emails", "user_emails.user_id", "users.id")
+        .select(["users.id", "users.password_hash"])
+        .where("user_emails.email", "=", email)
         .executeTakeFirstOrThrow();
 
       const forgotPasswordResponse = await send(app, "/auth/forgot-password", {
@@ -897,8 +930,9 @@ describeAuth("auth lifecycle coverage", () => {
 
       const passwordAfterReset = await getAuthDb()
         .selectFrom("users")
-        .select("password_hash")
-        .where("email", "=", email)
+        .innerJoin("user_emails", "user_emails.user_id", "users.id")
+        .select("users.password_hash")
+        .where("user_emails.email", "=", email)
         .executeTakeFirstOrThrow();
 
       expect(passwordAfterReset.password_hash).not.toBe(passwordBeforeReset.password_hash);

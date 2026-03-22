@@ -97,6 +97,15 @@ async function clearAuthTables(): Promise<void> {
   await authDb.deleteFrom("users").execute();
 }
 
+async function getUserIdByEmail(email: string): Promise<bigint> {
+  const row = await getAuthDb()
+    .selectFrom("user_emails")
+    .select("user_id")
+    .where("email", "=", email)
+    .executeTakeFirstOrThrow();
+  return row.user_id as bigint;
+}
+
 function extractToken(deliveryUrl: string): string {
   const token = new URL(deliveryUrl).searchParams.get("token");
 
@@ -268,8 +277,10 @@ describeAuthRoutes("auth routes", () => {
 
     const pendingUser = await getAuthDb()
       .selectFrom("users")
-      .select(["email", "status"])
-      .where("email", "=", email)
+      .innerJoin("user_email_claims", "user_email_claims.user_id", "users.id")
+      .select(["user_email_claims.email", "users.status"])
+      .where("user_email_claims.email", "=", email)
+      .where("user_email_claims.claim_kind", "=", "registration")
       .executeTakeFirstOrThrow();
 
     expect(pendingUser).toEqual({
@@ -416,6 +427,7 @@ describeAuthRoutes("auth routes", () => {
 
     const activeEmail = "disabled-login@example.com";
     await createActiveUser(app, mailer, activeEmail);
+    const activeEmailUserId = await getUserIdByEmail(activeEmail);
     await getAuthDb()
       .updateTable("users")
       .set({
@@ -423,7 +435,7 @@ describeAuthRoutes("auth routes", () => {
         disabled_at: new Date(),
         status: "disabled",
       })
-      .where("email", "=", activeEmail)
+      .where("id", "=", activeEmailUserId)
       .execute();
 
     const disabledLoginResponse = await send(app, "/auth/login", {
@@ -533,8 +545,9 @@ describeAuthRoutes("auth routes", () => {
     const activeUser = await createActiveUser(app, mailer, email);
     const beforeUpdate = await getAuthDb()
       .selectFrom("users")
-      .select(["display_name", "updated_at"])
-      .where("email", "=", email)
+      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .select(["users.display_name", "users.updated_at"])
+      .where("user_emails.email", "=", email)
       .executeTakeFirstOrThrow();
 
     const updateResponse = await send(app, "/account/profile", {
@@ -558,13 +571,15 @@ describeAuthRoutes("auth routes", () => {
 
     const userRow = await getAuthDb()
       .selectFrom("users")
-      .select(["email", "display_name", "updated_at"])
-      .where("email", "=", email)
+      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .select(["user_emails.email", "users.display_name", "users.updated_at"])
+      .where("user_emails.email", "=", email)
       .executeTakeFirstOrThrow();
     const timestampCheck = await getAuthDb()
       .selectFrom("users")
-      .select(sql<boolean>`updated_at > ${beforeUpdate.updated_at}`.as("updated_after_previous"))
-      .where("email", "=", email)
+      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .select(sql<boolean>`users.updated_at > ${beforeUpdate.updated_at}`.as("updated_after_previous"))
+      .where("user_emails.email", "=", email)
       .executeTakeFirstOrThrow();
 
     expect(userRow.email).toBe(email);
@@ -622,6 +637,399 @@ describeAuthRoutes("auth routes", () => {
     expect(await parseJson(wrongOriginResponse)).toEqual({
       code: "ORIGIN_NOT_ALLOWED",
       message: "Origin not allowed",
+    });
+  });
+
+  it("manages secondary email claims and verified secondary emails through account routes", async () => {
+    const { app, mailer } = createTestApp();
+    const primaryEmail = "account-primary@example.com";
+    const secondaryEmail = "account-secondary@example.com";
+    const activeUser = await createActiveUser(app, mailer, primaryEmail);
+
+    mailer.verificationUrls.length = 0;
+
+    const addEmailResponse = await send(app, "/account/emails", {
+      body: { email: secondaryEmail },
+      headers: {
+        cookie: activeUser.cookie,
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(addEmailResponse.status).toBe(202);
+    expect(await parseJson(addEmailResponse)).toEqual({
+      message: "Request submitted.",
+    });
+    expect(mailer.verificationUrls).toHaveLength(1);
+
+    const pendingEmailsResponse = await send(app, "/account/emails", {
+      headers: {
+        cookie: activeUser.cookie,
+      },
+    });
+
+    expect(pendingEmailsResponse.status).toBe(200);
+    const pendingEmailsBody = await parseJson(pendingEmailsResponse) as {
+      emails: Array<{
+        createdAt: string;
+        email: string;
+        id: string;
+        isPrimary: boolean;
+        verifiedAt: string | null;
+      }>;
+    };
+    const pendingPrimaryEmail = pendingEmailsBody.emails.find((entry) => entry.email === primaryEmail);
+    const pendingSecondaryEmail = pendingEmailsBody.emails.find((entry) => entry.email === secondaryEmail);
+
+    expect(pendingPrimaryEmail).toMatchObject({
+      email: primaryEmail,
+      isPrimary: true,
+    });
+    expect(pendingPrimaryEmail?.id).toStartWith("email:");
+    expect(pendingSecondaryEmail).toMatchObject({
+      email: secondaryEmail,
+      isPrimary: false,
+      verifiedAt: null,
+    });
+    expect(pendingSecondaryEmail?.id).toStartWith("claim:");
+
+    mailer.verificationUrls.length = 0;
+
+    const resendSecondaryResponse = await send(
+      app,
+      `/account/emails/${encodeURIComponent(pendingSecondaryEmail!.id)}/resend-verification`,
+      {
+        headers: {
+          cookie: activeUser.cookie,
+          origin: frontendOrigin,
+        },
+        method: "POST",
+      }
+    );
+
+    expect(resendSecondaryResponse.status).toBe(202);
+    expect(await parseJson(resendSecondaryResponse)).toEqual({
+      message: "If the email is pending verification, a new email has been sent.",
+    });
+    expect(mailer.verificationUrls).toHaveLength(1);
+
+    const verifySecondaryResponse = await send(app, "/auth/verify-email", {
+      body: {
+        token: extractToken(mailer.verificationUrls[0]!),
+      },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(verifySecondaryResponse.status).toBe(200);
+    expect(await parseJson(verifySecondaryResponse)).toMatchObject({
+      isRegistration: false,
+      user: {
+        email: primaryEmail,
+        status: "active",
+      },
+    });
+    expect(verifySecondaryResponse.headers.get("set-cookie")).toBeNull();
+
+    const verifiedEmailsResponse = await send(app, "/account/emails", {
+      headers: {
+        cookie: activeUser.cookie,
+      },
+    });
+
+    expect(verifiedEmailsResponse.status).toBe(200);
+    const verifiedEmailsBody = await parseJson(verifiedEmailsResponse) as {
+      emails: Array<{
+        createdAt: string;
+        email: string;
+        id: string;
+        isPrimary: boolean;
+        verifiedAt: string | null;
+      }>;
+    };
+    const verifiedSecondaryEmail = verifiedEmailsBody.emails.find((entry) => entry.email === secondaryEmail);
+
+    expect(verifiedSecondaryEmail).toMatchObject({
+      email: secondaryEmail,
+      isPrimary: false,
+    });
+    expect(verifiedSecondaryEmail?.id).toStartWith("email:");
+    expect(verifiedSecondaryEmail?.verifiedAt).toBeString();
+
+    const makePrimaryResponse = await send(
+      app,
+      `/account/emails/${encodeURIComponent(verifiedSecondaryEmail!.id)}/make-primary`,
+      {
+        headers: {
+          cookie: activeUser.cookie,
+          origin: frontendOrigin,
+        },
+        method: "POST",
+      }
+    );
+
+    expect(makePrimaryResponse.status).toBe(200);
+    const makePrimaryBody = await parseJson(makePrimaryResponse) as {
+      emails: Array<{
+        createdAt: string;
+        email: string;
+        id: string;
+        isPrimary: boolean;
+        verifiedAt: string | null;
+      }>;
+    };
+    const updatedPrimaryEmail = makePrimaryBody.emails.find((entry) => entry.email === secondaryEmail);
+    const demotedPrimaryEmail = makePrimaryBody.emails.find((entry) => entry.email === primaryEmail);
+
+    expect(updatedPrimaryEmail?.isPrimary).toBe(true);
+    expect(demotedPrimaryEmail?.isPrimary).toBe(false);
+
+    const removeOriginalPrimaryResponse = await send(
+      app,
+      `/account/emails/${encodeURIComponent(demotedPrimaryEmail!.id)}`,
+      {
+        headers: {
+          cookie: activeUser.cookie,
+          origin: frontendOrigin,
+        },
+        method: "DELETE",
+      }
+    );
+
+    expect(removeOriginalPrimaryResponse.status).toBe(200);
+    expect(await parseJson(removeOriginalPrimaryResponse)).toEqual({
+      emails: [
+        expect.objectContaining({
+          email: secondaryEmail,
+          isPrimary: true,
+        }),
+      ],
+    });
+  });
+
+  it("does not let unverified secondary claims squat a registration email", async () => {
+    const { app, mailer } = createTestApp();
+    const squatterEmail = "squatter@example.com";
+    const claimedEmail = "tom.lane@example.com";
+    const squatter = await createActiveUser(app, mailer, squatterEmail);
+
+    mailer.verificationUrls.length = 0;
+
+    const addClaimResponse = await send(app, "/account/emails", {
+      body: { email: claimedEmail },
+      headers: {
+        cookie: squatter.cookie,
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(addClaimResponse.status).toBe(202);
+    expect(await parseJson(addClaimResponse)).toEqual({
+      message: "Request submitted.",
+    });
+
+    const squatterClaimToken = extractToken(mailer.verificationUrls.at(-1)!);
+    const squatterEmailsBeforeResponse = await send(app, "/account/emails", {
+      headers: {
+        cookie: squatter.cookie,
+      },
+    });
+
+    expect(squatterEmailsBeforeResponse.status).toBe(200);
+    const squatterEmailsBefore = await parseJson(squatterEmailsBeforeResponse) as {
+      emails: Array<{
+        createdAt: string;
+        email: string;
+        id: string;
+        isPrimary: boolean;
+        verifiedAt: string | null;
+      }>;
+    };
+    const squattedClaim = squatterEmailsBefore.emails.find((entry) => entry.email === claimedEmail);
+
+    expect(squattedClaim).toMatchObject({
+      email: claimedEmail,
+      isPrimary: false,
+      verifiedAt: null,
+    });
+    expect(squattedClaim?.id).toStartWith("claim:");
+
+    mailer.verificationUrls.length = 0;
+    const ownerRegistrationToken = await registerPendingUser(app, mailer, claimedEmail);
+    await verifyUser(app, ownerRegistrationToken);
+
+    const squatterEmailsAfterResponse = await send(app, "/account/emails", {
+      headers: {
+        cookie: squatter.cookie,
+      },
+    });
+
+    expect(squatterEmailsAfterResponse.status).toBe(200);
+    const squatterEmailsAfter = await parseJson(squatterEmailsAfterResponse) as {
+      emails: Array<{ email: string }>;
+    };
+    expect(squatterEmailsAfter.emails.some((entry) => entry.email === claimedEmail)).toBe(false);
+
+    const staleSquatterVerification = await send(app, "/auth/verify-email", {
+      body: { token: squatterClaimToken },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(staleSquatterVerification.status).toBe(400);
+    expect(await parseJson(staleSquatterVerification)).toEqual({
+      code: "TOKEN_INVALID",
+      message: "The token is invalid",
+    });
+  });
+
+  it("deletes orphaned pending users when a registration claim loses to a verified secondary email", async () => {
+    const { app, mailer } = createTestApp();
+    const pendingEmail = "pending-owner@example.com";
+    const verifierPrimaryEmail = "verified-owner@example.com";
+
+    const pendingRegistrationToken = await registerPendingUser(app, mailer, pendingEmail);
+    const pendingUser = await getAuthDb()
+      .selectFrom("users")
+      .innerJoin("user_email_claims", "user_email_claims.user_id", "users.id")
+      .select("users.id")
+      .where("user_email_claims.email", "=", pendingEmail)
+      .where("user_email_claims.claim_kind", "=", "registration")
+      .executeTakeFirstOrThrow();
+
+    const verifier = await createActiveUser(app, mailer, verifierPrimaryEmail);
+    mailer.verificationUrls.length = 0;
+
+    const addClaimResponse = await send(app, "/account/emails", {
+      body: { email: pendingEmail },
+      headers: {
+        cookie: verifier.cookie,
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(addClaimResponse.status).toBe(202);
+
+    const secondaryClaimToken = extractToken(mailer.verificationUrls.at(-1)!);
+    const secondaryVerificationResponse = await send(app, "/auth/verify-email", {
+      body: { token: secondaryClaimToken },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(secondaryVerificationResponse.status).toBe(200);
+    expect(await parseJson(secondaryVerificationResponse)).toMatchObject({
+      isRegistration: false,
+      user: {
+        email: verifierPrimaryEmail,
+        status: "active",
+      },
+    });
+
+    const staleRegistrationResponse = await send(app, "/auth/verify-email", {
+      body: { token: pendingRegistrationToken },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(staleRegistrationResponse.status).toBe(400);
+    expect(await parseJson(staleRegistrationResponse)).toEqual({
+      code: "TOKEN_INVALID",
+      message: "The token is invalid",
+    });
+
+    const orphanedUser = await getAuthDb()
+      .selectFrom("users")
+      .select("id")
+      .where("id", "=", pendingUser.id)
+      .executeTakeFirst();
+
+    expect(orphanedUser).toBeUndefined();
+  });
+
+  it("invalidates pending email verification tokens when the email is removed", async () => {
+    const { app, mailer } = createTestApp();
+    const primaryEmail = "remove-token-primary@example.com";
+    const secondaryEmail = "remove-token-secondary@example.com";
+    const activeUser = await createActiveUser(app, mailer, primaryEmail);
+
+    mailer.verificationUrls.length = 0;
+
+    const addEmailResponse = await send(app, "/account/emails", {
+      body: { email: secondaryEmail },
+      headers: {
+        cookie: activeUser.cookie,
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(addEmailResponse.status).toBe(202);
+    const staleToken = extractToken(mailer.verificationUrls.at(-1)!);
+
+    const pendingEmailsResponse = await send(app, "/account/emails", {
+      headers: {
+        cookie: activeUser.cookie,
+      },
+    });
+
+    expect(pendingEmailsResponse.status).toBe(200);
+    const pendingEmailsBody = await parseJson(pendingEmailsResponse) as {
+      emails: Array<{ email: string; id: string; verifiedAt: string | null }>;
+    };
+    const pendingSecondaryEmail = pendingEmailsBody.emails.find((entry) => entry.email === secondaryEmail);
+
+    expect(pendingSecondaryEmail).toMatchObject({
+      email: secondaryEmail,
+      verifiedAt: null,
+    });
+
+    const removeEmailResponse = await send(
+      app,
+      `/account/emails/${encodeURIComponent(pendingSecondaryEmail!.id)}`,
+      {
+        headers: {
+          cookie: activeUser.cookie,
+          origin: frontendOrigin,
+        },
+        method: "DELETE",
+      }
+    );
+
+    expect(removeEmailResponse.status).toBe(200);
+
+    const tokenRows = await getAuthDb()
+      .selectFrom("email_verification_tokens")
+      .select("token_hash")
+      .where("user_id", "=", await getUserIdByEmail(primaryEmail))
+      .where("email", "=", secondaryEmail)
+      .execute();
+
+    expect(tokenRows).toHaveLength(0);
+
+    const staleVerificationResponse = await send(app, "/auth/verify-email", {
+      body: { token: staleToken },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(staleVerificationResponse.status).toBe(400);
+    expect(await parseJson(staleVerificationResponse)).toEqual({
+      code: "TOKEN_INVALID",
+      message: "The token is invalid",
     });
   });
 

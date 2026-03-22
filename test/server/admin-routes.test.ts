@@ -27,20 +27,43 @@ async function createTestUser(role: "admin" | "member" = "member"): Promise<Test
   const row = await db
     .insertInto("users")
     .values({
-      email,
       password_hash: "placeholder",
       status: "active",
       role,
-      created_at: now,
-      email_verified_at: now,
       display_name: null,
       disabled_at: null,
       disable_reason: null,
       last_login_at: null,
-      updated_at: now,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+  await db
+    .insertInto("user_emails")
+    .values({ user_id: row.id, email, is_primary: true, verified_at: now })
+    .execute();
+  return { id: String(row.id), email };
+}
+
+async function createPendingTestUser(): Promise<TestUser> {
+  const now = new Date();
+  const email = `test-pending-${uid()}@example.com`;
+  const row = await db
+    .insertInto("users")
+    .values({
+      password_hash: "placeholder",
+      status: "pending_verification",
+      role: "member",
+      display_name: null,
+      disabled_at: null,
+      disable_reason: null,
+      last_login_at: null,
+    })
+    .returning("id")
+    .executeTakeFirstOrThrow();
+  await db
+    .insertInto("user_email_claims")
+    .values({ user_id: row.id, email, claim_kind: "registration", created_at: now })
+    .execute();
   return { id: String(row.id), email };
 }
 
@@ -249,6 +272,36 @@ describe("GET /admin/stats", () => {
     expect(typeof body.messageCount).toBe("number");
     expect(typeof body.threadCount).toBe("number");
   });
+
+  it("ignores orphaned pending users without a registration email", async () => {
+    const beforeResponse = await send("/admin/stats", { cookie: adminSession.cookie });
+    expect(beforeResponse.status).toBe(200);
+    const beforeBody = await parseJson(beforeResponse) as { pendingVerificationCount: number };
+
+    const row = await db
+      .insertInto("users")
+      .values({
+        password_hash: "placeholder",
+        status: "pending_verification",
+        role: "member",
+        display_name: null,
+        disabled_at: null,
+        disable_reason: null,
+        last_login_at: null,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    try {
+      const afterResponse = await send("/admin/stats", { cookie: adminSession.cookie });
+      expect(afterResponse.status).toBe(200);
+      const afterBody = await parseJson(afterResponse) as { pendingVerificationCount: number };
+
+      expect(afterBody.pendingVerificationCount).toBe(beforeBody.pendingVerificationCount);
+    } finally {
+      await deleteUser(String(row.id));
+    }
+  });
 });
 
 // ── GET /admin/users ──────────────────────────────────────────────────────────
@@ -277,6 +330,30 @@ describe("GET /admin/users", () => {
     const body = await parseJson(res) as { items: { email: string }[] };
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.items.every((u) => u.email.includes("test-admin-"))).toBe(true);
+  });
+
+  it("includes pending users backed by registration claims", async () => {
+    const pendingUser = await createPendingTestUser();
+    try {
+      const res = await send(`/admin/users?q=${encodeURIComponent(pendingUser.email)}`, {
+        cookie: adminSession.cookie,
+      });
+
+      expect(res.status).toBe(200);
+      const body = await parseJson(res) as {
+        items: Array<{ email: string; emailVerifiedAt: string | null; id: string; status: string }>;
+      };
+      expect(body.items).toContainEqual(
+        expect.objectContaining({
+          id: pendingUser.id,
+          email: pendingUser.email,
+          status: "pending_verification",
+          emailVerifiedAt: null,
+        })
+      );
+    } finally {
+      await deleteUser(pendingUser.id);
+    }
   });
 
   it("returns 400 for invalid limit", async () => {
@@ -372,6 +449,31 @@ describe("POST /admin/users/:id/enable", () => {
       cookie: adminSession.cookie,
     });
     expect(res.status).toBe(400);
+  });
+
+  it("restores disabled pending users to pending verification", async () => {
+    const pendingUser = await createPendingTestUser();
+    try {
+      await send(`/admin/users/${pendingUser.id}/disable`, {
+        method: "POST",
+        cookie: adminSession.cookie,
+        body: { reason: "Needs verification" },
+      });
+
+      const res = await send(`/admin/users/${pendingUser.id}/enable`, {
+        method: "POST",
+        cookie: adminSession.cookie,
+      });
+
+      expect(res.status).toBe(200);
+      const body = await parseJson(res) as { email: string; status: string };
+      expect(body).toMatchObject({
+        email: pendingUser.email,
+        status: "pending_verification",
+      });
+    } finally {
+      await deleteUser(pendingUser.id);
+    }
   });
 });
 

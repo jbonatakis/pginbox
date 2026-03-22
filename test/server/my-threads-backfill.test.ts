@@ -38,6 +38,8 @@ async function createUser(
 ): Promise<{ email: string; id: string }> {
   const createdAt = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
   const email = overrides.email ?? `my-threads-backfill-${uid()}@example.com`;
+  const emailVerifiedAt =
+    overrides.emailVerifiedAt === undefined ? createdAt : overrides.emailVerifiedAt;
   const row = await db
     .insertInto("users")
     .values({
@@ -45,11 +47,6 @@ async function createUser(
       disable_reason: overrides.disabledAt ? "test disable" : null,
       disabled_at: overrides.disabledAt ?? null,
       display_name: null,
-      email,
-      email_verified_at:
-        overrides.emailVerifiedAt === undefined
-          ? createdAt
-          : overrides.emailVerifiedAt,
       last_login_at: null,
       password_hash: "placeholder-not-verified",
       status: overrides.status ?? "active",
@@ -57,6 +54,22 @@ async function createUser(
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+  if (emailVerifiedAt === null) {
+    await db
+      .insertInto("user_email_claims")
+      .values({
+        user_id: row.id,
+        email,
+        claim_kind: "registration",
+        created_at: overrides.createdAt ?? createdAt,
+      })
+      .execute();
+  } else {
+    await db
+      .insertInto("user_emails")
+      .values({ user_id: row.id, email, is_primary: true, verified_at: emailVerifiedAt })
+      .execute();
+  }
 
   const id = String(row.id);
   createdUserIds.push(id);

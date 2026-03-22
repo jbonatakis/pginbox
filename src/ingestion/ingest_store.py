@@ -160,11 +160,13 @@ PARTICIPATION_MATCHES_CTE = """
         FROM messages
         INNER JOIN threads
             ON threads.thread_id = messages.thread_id
+        INNER JOIN user_emails
+            ON lower(user_emails.email) = lower(messages.from_email)
         INNER JOIN users
-            ON lower(users.email) = lower(messages.from_email)
+            ON users.id = user_emails.user_id
         WHERE messages.id = ANY(%s)
           AND users.status = 'active'
-          AND users.email_verified_at IS NOT NULL
+          AND user_emails.verified_at IS NOT NULL
     ),
     matched_messages AS (
         SELECT user_id, raw_thread_id, stable_thread_id, message_id

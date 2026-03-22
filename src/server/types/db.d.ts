@@ -164,13 +164,28 @@ export interface ThreadTracking {
   user_id: Int8;
 }
 
+export interface UserEmails {
+  created_at: Generated<Timestamp>;
+  email: string;
+  id: Generated<Int8>;
+  is_primary: Generated<boolean>;
+  user_id: Int8;
+  verified_at: Timestamp;
+}
+
+export interface UserEmailClaims {
+  claim_kind: string;
+  created_at: Generated<Timestamp>;
+  email: string;
+  id: Generated<Int8>;
+  user_id: Int8;
+}
+
 export interface Users {
   created_at: Generated<Timestamp>;
   disable_reason: string | null;
   disabled_at: Timestamp | null;
   display_name: string | null;
-  email: string;
-  email_verified_at: Timestamp | null;
   id: Generated<Int8>;
   last_login_at: Timestamp | null;
   password_hash: string;
@@ -199,5 +214,7 @@ export interface DB {
   thread_read_progress: ThreadReadProgress;
   thread_tracking: ThreadTracking;
   threads: Threads;
+  user_email_claims: UserEmailClaims;
+  user_emails: UserEmails;
   users: Users;
 }

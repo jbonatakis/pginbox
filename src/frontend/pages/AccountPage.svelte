@@ -5,7 +5,15 @@
   import LoadingState from "../components/LoadingState.svelte";
   import SuccessState from "../components/SuccessState.svelte";
   import { buildAuthPath } from "../lib/authRedirect";
-  import { toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import {
+    addAccountEmail,
+    listAccountEmails,
+    makeAccountEmailPrimary,
+    removeAccountEmail,
+    resendAccountEmailVerification,
+    toApiErrorShape,
+    type ApiErrorShape,
+  } from "../lib/api";
   import { authStore } from "../lib/state/auth";
   import {
     createTrackedThreadTabsController,
@@ -14,6 +22,7 @@
     TRACKED_THREAD_TABS,
     type TrackedThreadTab,
   } from "../lib/trackedThreads";
+  import type { UserEmail } from "shared/api";
   import { accountPath, forgotPasswordPath, homePath, loginPath, navigate, onLinkClick } from "../router";
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -30,6 +39,21 @@
   let redirectTimer: number | null = null;
   let syncedDisplayName: string | null = null;
   let trackedThreadUserId: string | null = null;
+
+  // Email management state
+  let emails: UserEmail[] = [];
+  let emailsLoading = false;
+  let emailsError: ApiErrorShape | null = null;
+  let emailsLoadedForUserId: string | null = null;
+  let addEmailValue = "";
+  let addEmailError: ApiErrorShape | null = null;
+  let addEmailMessage: string | null = null;
+  let addEmailBusy = false;
+  let emailActionBusy: string | null = null; // emailId of in-progress action
+  let emailActionError: ApiErrorShape | null = null;
+  let confirmMakePrimaryId: string | null = null; // emailId awaiting confirmation
+  let confirmRemoveId: string | null = null; // emailId awaiting remove confirmation
+  let emailsDialog: HTMLDialogElement;
 
   const trackedThreadTabs = createTrackedThreadTabsController();
   const trackedThreadTabsStore = trackedThreadTabs.state;
@@ -174,6 +198,140 @@
     void trackedThreadTabs.loadMore(tab);
   };
 
+  const loadEmails = async (): Promise<void> => {
+    emailsLoading = true;
+    emailsError = null;
+    try {
+      const response = await listAccountEmails();
+      emails = response.emails;
+    } catch (error) {
+      emailsError = toApiErrorShape(error);
+    } finally {
+      emailsLoading = false;
+    }
+  };
+
+  const handleAddEmail = async (): Promise<void> => {
+    const email = addEmailValue.trim();
+    if (!email) return;
+
+    addEmailError = null;
+    addEmailMessage = null;
+    addEmailBusy = true;
+    try {
+      const response = await addAccountEmail({ email });
+
+      if (response.developmentVerificationUrl) {
+        const parsed = new URL(response.developmentVerificationUrl, window.location.origin);
+        navigate(`${parsed.pathname}${parsed.search}`, { replace: false });
+        return;
+      }
+
+      addEmailMessage = response.message;
+      addEmailValue = "";
+      await loadEmails();
+    } catch (error) {
+      addEmailError = toApiErrorShape(error);
+    } finally {
+      addEmailBusy = false;
+    }
+  };
+
+  const handleMakePrimary = (emailId: string): void => {
+    confirmMakePrimaryId = emailId;
+  };
+
+  const handleConfirmMakePrimary = async (): Promise<void> => {
+    const emailId = confirmMakePrimaryId;
+    if (!emailId) return;
+
+    confirmMakePrimaryId = null;
+    emailActionBusy = emailId;
+    emailActionError = null;
+    try {
+      const response = await makeAccountEmailPrimary(emailId);
+      emails = response.emails;
+      // Re-bootstrap auth store so user.email reflects the new primary
+      void authStore.bootstrap();
+    } catch (error) {
+      emailActionError = toApiErrorShape(error);
+    } finally {
+      emailActionBusy = null;
+    }
+  };
+
+  const handleCancelMakePrimary = (): void => {
+    confirmMakePrimaryId = null;
+  };
+
+  const handleRemoveEmail = (emailId: string): void => {
+    confirmRemoveId = emailId;
+  };
+
+  const handleConfirmRemoveEmail = async (): Promise<void> => {
+    const emailId = confirmRemoveId;
+    if (!emailId) return;
+
+    confirmRemoveId = null;
+    emailActionBusy = emailId;
+    emailActionError = null;
+    try {
+      const response = await removeAccountEmail(emailId);
+      emails = response.emails;
+    } catch (error) {
+      emailActionError = toApiErrorShape(error);
+    } finally {
+      emailActionBusy = null;
+    }
+  };
+
+  const handleCancelRemoveEmail = (): void => {
+    confirmRemoveId = null;
+  };
+
+  const handleOpenEmailsOverlay = (): void => {
+    emailsDialog.showModal();
+  };
+
+  const handleCloseEmailsOverlay = (): void => {
+    addEmailValue = "";
+    addEmailError = null;
+    addEmailMessage = null;
+    emailActionError = null;
+    confirmMakePrimaryId = null;
+    confirmRemoveId = null;
+    emailsDialog.close();
+  };
+
+  const handleResendEmailVerification = async (emailId: string): Promise<void> => {
+    emailActionBusy = emailId;
+    emailActionError = null;
+    try {
+      const response = await resendAccountEmailVerification(emailId);
+
+      if (response.developmentVerificationUrl) {
+        const parsed = new URL(response.developmentVerificationUrl, window.location.origin);
+        navigate(`${parsed.pathname}${parsed.search}`, { replace: false });
+        return;
+      }
+
+      addEmailMessage = response.message;
+    } catch (error) {
+      emailActionError = toApiErrorShape(error);
+    } finally {
+      emailActionBusy = null;
+    }
+  };
+
+  $: if (currentUserId && emailsLoadedForUserId !== currentUserId) {
+    emailsLoadedForUserId = currentUserId;
+    void loadEmails();
+  }
+  $: if (!currentUserId && emailsLoadedForUserId !== null) {
+    emailsLoadedForUserId = null;
+    emails = [];
+  }
+
   onDestroy(() => {
     clearRedirectTimer();
     trackedThreadTabs.reset();
@@ -224,6 +382,9 @@
                   Verified
                 </button>
               {/if}
+              <button type="button" class="add-email-button" on:click={handleOpenEmailsOverlay}>
+                Manage emails
+              </button>
             </dd>
           </div>
 
@@ -401,6 +562,181 @@
         </div>
       {/if}
     </section>
+    <dialog bind:this={emailsDialog} class="emails-overlay" aria-labelledby="emails-overlay-title">
+      <header class="overlay-header">
+        <h2 id="emails-overlay-title">Email addresses</h2>
+        <button type="button" class="overlay-close" aria-label="Close" on:click={handleCloseEmailsOverlay}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </header>
+
+      {#if emailActionError}
+        <ErrorState
+          title="Unable to update email"
+          message={emailActionError.message}
+          detail={formatErrorDetail(emailActionError)}
+        />
+      {/if}
+
+      {#if emailsLoading}
+        <p class="inline-status">Loading email addresses…</p>
+      {:else if emailsError}
+        <ErrorState
+          title="Unable to load email addresses"
+          message={emailsError.message}
+          detail={formatErrorDetail(emailsError)}
+        />
+      {:else if emails.length > 0}
+        <ul class="email-list">
+          {#each emails as email (email.id)}
+            <li class="email-item">
+              <div class="email-item-info">
+                <span class="email-address">{email.email}</span>
+                <div class="email-badges">
+                  {#if email.isPrimary}
+                    <span class="badge badge-primary">Primary</span>
+                  {/if}
+                  {#if email.verifiedAt}
+                    <button
+                      type="button"
+                      class="verification-indicator"
+                      title="Verified since {formatDateTime(email.verifiedAt)}"
+                      aria-label="Verified since {formatDateTime(email.verifiedAt)}"
+                    >
+                      <span class="verification-dot" aria-hidden="true"></span>
+                      Verified
+                    </button>
+                  {:else}
+                    <span class="badge badge-unverified">Unverified</span>
+                  {/if}
+                </div>
+              </div>
+
+              {#if confirmMakePrimaryId === email.id}
+                <div class="confirm-panel">
+                  <p class="confirm-message">
+                    Make <strong>{email.email}</strong> your primary email? Password resets and account emails will go here.
+                  </p>
+                  <div class="actions">
+                    <button
+                      type="button"
+                      class="primary-button"
+                      disabled={emailActionBusy === email.id}
+                      on:click={handleConfirmMakePrimary}
+                    >
+                      {emailActionBusy === email.id ? "Updating…" : "Yes, make primary"}
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      on:click={handleCancelMakePrimary}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              {:else if confirmRemoveId === email.id}
+                <div class="confirm-panel">
+                  <p class="confirm-message">
+                    Remove <strong>{email.email}</strong> from your account? This cannot be undone.
+                  </p>
+                  <div class="actions">
+                    <button
+                      type="button"
+                      class="danger-button"
+                      disabled={emailActionBusy === email.id}
+                      on:click={handleConfirmRemoveEmail}
+                    >
+                      {emailActionBusy === email.id ? "Removing…" : "Yes, remove"}
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      on:click={handleCancelRemoveEmail}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              {:else}
+                <div class="email-item-actions">
+                  {#if !email.isPrimary && email.verifiedAt}
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      disabled={emailActionBusy === email.id}
+                      on:click={() => handleMakePrimary(email.id)}
+                    >
+                      Make primary
+                    </button>
+                  {/if}
+                  {#if !email.isPrimary && !email.verifiedAt}
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      disabled={emailActionBusy === email.id}
+                      on:click={() => handleResendEmailVerification(email.id)}
+                    >
+                      {emailActionBusy === email.id ? "Sending…" : "Resend verification"}
+                    </button>
+                  {/if}
+                  {#if !email.isPrimary}
+                    <button
+                      type="button"
+                      class="danger-button"
+                      disabled={emailActionBusy === email.id}
+                      on:click={() => handleRemoveEmail(email.id)}
+                    >
+                      Remove
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <div class="overlay-add-section">
+        {#if addEmailError}
+          <ErrorState
+            title="Unable to add email"
+            message={addEmailError.message}
+            detail={formatErrorDetail(addEmailError)}
+          />
+        {/if}
+
+        {#if addEmailMessage}
+          <SuccessState
+            title="Request submitted"
+            message={addEmailMessage}
+          />
+        {/if}
+
+        <form on:submit|preventDefault={handleAddEmail}>
+          <label class="field">
+            <span>Add email address</span>
+            <input
+              type="email"
+              name="email"
+              autocomplete="email"
+              bind:value={addEmailValue}
+              placeholder="new@example.com"
+              disabled={addEmailBusy}
+            />
+          </label>
+          <div class="actions">
+            <button
+              type="submit"
+              class="primary-button"
+              disabled={addEmailBusy || addEmailValue.trim().length === 0}
+            >
+              {addEmailBusy ? "Sending…" : "Add and verify"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </dialog>
   {/if}
 </section>
 
@@ -649,6 +985,226 @@
     color: #627d98;
     font-size: 0.82rem;
     line-height: 1.4;
+  }
+
+  .add-email-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.6rem;
+    padding: 0.18rem 0.55rem;
+    border: 1px solid #bcccdc;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.88);
+    color: #486581;
+    font-size: 0.76rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    font: inherit;
+    white-space: nowrap;
+  }
+
+  .add-email-button:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .emails-overlay {
+    width: min(34rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 4rem);
+    overflow-y: auto;
+    border: 1px solid #d9e2ec;
+    border-radius: 1rem;
+    padding: 0;
+    background: #fff;
+    box-shadow: 0 24px 48px -12px rgba(16, 42, 67, 0.28);
+  }
+
+  .emails-overlay[open] {
+    display: grid;
+  }
+
+  .emails-overlay::backdrop {
+    background: rgba(16, 42, 67, 0.38);
+    backdrop-filter: blur(2px);
+  }
+
+  .overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1rem 0.75rem;
+    border-bottom: 1px solid #edf2f7;
+  }
+
+  .overlay-header h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .overlay-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: transparent;
+    color: #627d98;
+    cursor: pointer;
+    flex-shrink: 0;
+    font: inherit;
+  }
+
+  .overlay-close:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .overlay-add-section {
+    display: grid;
+    gap: 0.65rem;
+    padding: 0.85rem 1rem 1rem;
+    border-top: 1px solid #edf2f7;
+    margin-top: 0.15rem;
+  }
+
+  .overlay-add-section form {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .email-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.85rem 1rem 0;
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .email-item {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 0.75rem;
+    background: rgba(248, 251, 255, 0.7);
+  }
+
+  .email-item-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+  }
+
+  .email-address {
+    color: #102a43;
+    font-size: 0.93rem;
+    font-weight: 600;
+    word-break: break-all;
+  }
+
+  .email-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .badge-primary {
+    border: 1px solid #6f9fdd;
+    background: #e8f2ff;
+    color: #0b4ea2;
+  }
+
+  .badge-unverified {
+    border: 1px solid #f2d58a;
+    background: #fff7df;
+    color: #8b6200;
+  }
+
+  .email-item-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+
+  .confirm-panel {
+    display: grid;
+    gap: 0.55rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid #f2d58a;
+    border-radius: 0.6rem;
+    background: #fffbf0;
+  }
+
+  .confirm-message {
+    margin: 0;
+    color: #486581;
+    font-size: 0.88rem;
+    line-height: 1.45;
+  }
+
+  .secondary-button,
+  .danger-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.1rem;
+    padding: 0.38rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.83rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .secondary-button {
+    border: 1px solid #d9e2ec;
+    background: rgba(255, 255, 255, 0.88);
+    color: #334e68;
+  }
+
+  .secondary-button:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .secondary-button:disabled {
+    opacity: 0.65;
+    cursor: default;
+  }
+
+  .danger-button {
+    border: 1px solid #e7b4b8;
+    background: #fff6f6;
+    color: #7a1e21;
+  }
+
+  .danger-button:hover {
+    background: #ffe8e8;
+  }
+
+  .danger-button:disabled {
+    opacity: 0.65;
+    cursor: default;
   }
 
   .tracked-threads-section {

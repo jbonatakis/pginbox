@@ -7,6 +7,7 @@ import type {
   AuthResendVerificationResponse,
   AuthUser,
   AuthUserResponse,
+  AuthVerifyEmailResponse,
   List,
   Message,
   MessagePermalink,
@@ -19,6 +20,8 @@ import type {
   ThreadMessagePagination,
   Thread,
   ThreadWithMessages,
+  UserEmail,
+  UserEmailsResponse,
 } from "shared/api";
 
 function dateToIso(d: Date | string | null | undefined): string | null {
@@ -61,6 +64,13 @@ export function toAuthUser(row: AuthUserRow): AuthUser {
   };
 }
 
+export function toAuthVerifyEmailResponse(user: AuthUserRow, isRegistration: boolean): AuthVerifyEmailResponse {
+  return {
+    user: toAuthUser(user),
+    isRegistration,
+  };
+}
+
 export function toAuthMeResponse(user: AuthUserRow | null | undefined): AuthMeResponse {
   return {
     user: user == null ? null : toAuthUser(user),
@@ -83,6 +93,28 @@ export function toAuthMessageResponse(
       ? { developmentVerificationUrl: options.developmentVerificationUrl }
       : {}),
   };
+}
+
+type UserEmailRow = {
+  id: bigint | number | string;
+  email: string;
+  is_primary: boolean;
+  verified_at: Date | string | null;
+  created_at: Date | string;
+};
+
+export function toUserEmail(row: UserEmailRow): UserEmail {
+  return {
+    id: bigintToString(row.id),
+    email: row.email,
+    isPrimary: row.is_primary,
+    verifiedAt: dateToIso(row.verified_at),
+    createdAt: dateToIso(row.created_at)!,
+  };
+}
+
+export function toUserEmailsResponse(rows: UserEmailRow[]): UserEmailsResponse {
+  return { emails: rows.map(toUserEmail) };
 }
 
 // Thread (list item): dates -> ISO strings

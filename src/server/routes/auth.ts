@@ -23,6 +23,7 @@ import {
   toAuthMeResponse,
   toAuthMessageResponse,
   toAuthUserResponse,
+  toAuthVerifyEmailResponse,
 } from "../serialize";
 import {
   authService as defaultAuthService,
@@ -280,8 +281,10 @@ export function createAuthRoutes(dependencies: AuthRouteDependencies = {}) {
         const currentTime = now();
         const result = await authService.verifyEmail(body, getSessionRequestMetadata(request));
 
-        setSessionCookie(toResponseCookieTarget(set), result.sessionToken, { now: currentTime });
-        return toAuthUserResponse(result.user);
+        if (result.sessionToken) {
+          setSessionCookie(toResponseCookieTarget(set), result.sessionToken, { now: currentTime });
+        }
+        return toAuthVerifyEmailResponse(result.user, result.isRegistration);
       },
       {
         body: verifyEmailBodySchema,

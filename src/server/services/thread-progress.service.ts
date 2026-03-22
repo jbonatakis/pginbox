@@ -287,19 +287,23 @@ async function getHistoricalParticipationBackfillUserBatch(
   afterUserId: string | null,
   limit: number
 ): Promise<HistoricalParticipationBackfillUser[]> {
-  let query = db
+  let query = (db as any)
     .selectFrom("users")
-    .select(["id", "email"])
-    .where("status", "=", "active")
-    .where("email_verified_at", "is not", null)
-    .orderBy("id", "asc")
+    .innerJoin("user_emails as ue", (join: any) =>
+      join.onRef("ue.user_id", "=", "users.id")
+          .on("ue.is_primary", "=", true)
+    )
+    .select(["users.id", "ue.email"])
+    .where("users.status", "=", "active")
+    .where("ue.verified_at", "is not", null)
+    .orderBy("users.id", "asc")
     .limit(limit);
 
   if (afterUserId) {
-    query = query.where("id", ">", toDbInt8(afterUserId));
+    query = query.where("users.id", ">", toDbInt8(afterUserId));
   }
 
-  const rows = await query.execute();
+  const rows = await query.execute() as Array<{ id: bigint; email: string }>;
   return rows.map((row) => ({
     id: msgIdStr(row.id),
     email: row.email,

@@ -33,17 +33,52 @@ def _cleanup_test_rows(conn, token: str):
             (pattern,),
         )
         cur.execute(
-            "DELETE FROM thread_read_progress WHERE thread_id LIKE %s OR user_id IN (SELECT id FROM users WHERE email LIKE %s)",
-            (pattern, pattern),
+            """
+            DELETE FROM thread_read_progress
+            WHERE thread_id LIKE %s
+               OR user_id IN (
+                   SELECT user_id
+                   FROM (
+                       SELECT user_id FROM user_emails WHERE email LIKE %s
+                       UNION
+                       SELECT user_id FROM user_email_claims WHERE email LIKE %s
+                   ) AS matching_users
+               )
+            """,
+            (pattern, pattern, pattern),
         )
         cur.execute(
-            "DELETE FROM thread_tracking WHERE thread_id LIKE %s OR user_id IN (SELECT id FROM users WHERE email LIKE %s)",
-            (pattern, pattern),
+            """
+            DELETE FROM thread_tracking
+            WHERE thread_id LIKE %s
+               OR user_id IN (
+                   SELECT user_id
+                   FROM (
+                       SELECT user_id FROM user_emails WHERE email LIKE %s
+                       UNION
+                       SELECT user_id FROM user_email_claims WHERE email LIKE %s
+                   ) AS matching_users
+               )
+            """,
+            (pattern, pattern, pattern),
         )
         cur.execute("DELETE FROM messages WHERE message_id LIKE %s", (pattern,))
         cur.execute("DELETE FROM threads WHERE thread_id LIKE %s", (pattern,))
         cur.execute("DELETE FROM lists WHERE name LIKE %s", (pattern,))
-        cur.execute("DELETE FROM users WHERE email LIKE %s", (pattern,))
+        cur.execute(
+            """
+            DELETE FROM users
+            WHERE id IN (
+                SELECT user_id
+                FROM (
+                    SELECT user_id FROM user_emails WHERE email LIKE %s
+                    UNION
+                    SELECT user_id FROM user_email_claims WHERE email LIKE %s
+                ) AS matching_users
+            )
+            """,
+            (pattern, pattern),
+        )
     conn.commit()
 
 
@@ -86,30 +121,75 @@ def insert_user(
         cur.execute(
             """
             INSERT INTO users (
-                email,
                 display_name,
                 password_hash,
                 status,
-                email_verified_at,
                 disabled_at,
                 disable_reason
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
-                email,
                 "Test User",
                 "not-a-real-hash",
                 status,
-                email_verified_at,
                 disabled_at,
                 "test disable" if disabled_at else None,
             ),
         )
         user_id = cur.fetchone()[0]
+        if email_verified_at is None:
+            cur.execute(
+                """
+                INSERT INTO user_email_claims (
+                    user_id,
+                    email,
+                    claim_kind
+                )
+                VALUES (%s, %s, 'registration')
+                """,
+                (user_id, email),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO user_emails (
+                    user_id,
+                    email,
+                    is_primary,
+                    verified_at
+                )
+                VALUES (%s, %s, TRUE, %s)
+                """,
+                (user_id, email, email_verified_at),
+            )
     conn.commit()
     return user_id
+
+
+def insert_user_email(
+    conn,
+    *,
+    user_id: int,
+    email: str,
+    verified_at: datetime,
+    is_primary: bool = False,
+):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO user_emails (
+                user_id,
+                email,
+                is_primary,
+                verified_at
+            )
+            VALUES (%s, %s, %s, %s)
+            """,
+            (user_id, email, is_primary, verified_at),
+        )
+    conn.commit()
 
 
 def make_record(
@@ -265,6 +345,49 @@ def test_live_ingest_matches_email_case_insensitively_but_only_for_exact_email(
     assert exact_progress == (message_db_id,)
     assert similar_tracking is None
     assert similar_progress is None
+
+
+def test_live_ingest_tracks_matching_verified_secondary_email_and_seeds_progress(
+    ingest, live_ingest_db
+):
+    conn, token = live_ingest_db
+    primary_email = f"{token}-primary@example.com"
+    secondary_email = f"{token}-secondary@example.com"
+    user_id = insert_user(
+        conn,
+        email=primary_email,
+        status="active",
+        email_verified_at=ts(1),
+    )
+    insert_user_email(
+        conn,
+        user_id=user_id,
+        email=secondary_email,
+        verified_at=ts(2),
+    )
+    list_id = insert_list(conn, token)
+    batch = [
+        make_record(
+            token,
+            list_id,
+            "secondary",
+            sent_at=ts(3),
+            from_email=secondary_email.upper(),
+        )
+    ]
+
+    ingest.store_batch_live(conn, batch)
+
+    message_db_id, _, stable_thread_id = fetch_message(conn, batch[0]["message_id"])
+    tracking = fetch_tracking_row(conn, user_id, stable_thread_id)
+    progress = fetch_progress_row(conn, user_id, stable_thread_id)
+
+    assert tracking is not None
+    assert tracking[0] == message_db_id
+    assert tracking[1] is None
+    assert tracking[2] is not None
+    assert tracking[3] is None
+    assert progress == (message_db_id,)
 
 
 def test_live_ingest_skips_non_matching_disabled_and_unverified_users(

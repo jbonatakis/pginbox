@@ -1,5 +1,7 @@
 import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "shared/api";
 import type {
+  AddEmailRequest,
+  AddEmailResponse,
   AdminStats,
   AdminUser,
   AdminUserListResponse,
@@ -33,6 +35,9 @@ import type {
   Paginated,
   Person,
   PersonListItem,
+  RemoveEmailResponse,
+  ResendEmailVerificationResponse,
+  SetPrimaryEmailResponse,
   TrackedThread,
   TrackedThreadCounts,
   Thread,
@@ -42,6 +47,7 @@ import type {
   ThreadFollowStatesResponse,
   ThreadProgress,
   TopSender,
+  UserEmailsResponse,
 } from "shared/api";
 
 const API_BASE_PATH = "/api";
@@ -441,6 +447,51 @@ export async function updateAccountProfile(
   );
 }
 
+export async function listAccountEmails(
+  options: RequestOptions = {}
+): Promise<UserEmailsResponse> {
+  return requestAuthJson<UserEmailsResponse>(withApiBase("/account/emails"), options);
+}
+
+export async function addAccountEmail(
+  input: AddEmailRequest,
+  options: RequestOptions = {}
+): Promise<AddEmailResponse> {
+  return postAuthJson<AddEmailResponse>(withApiBase("/account/emails"), input, options);
+}
+
+export async function makeAccountEmailPrimary(
+  emailId: string,
+  options: RequestOptions = {}
+): Promise<SetPrimaryEmailResponse> {
+  return postAuthJson<SetPrimaryEmailResponse>(
+    withApiBase(`/account/emails/${encodePathParam(emailId)}/make-primary`),
+    {},
+    options
+  );
+}
+
+export async function removeAccountEmail(
+  emailId: string,
+  options: RequestOptions = {}
+): Promise<RemoveEmailResponse> {
+  return requestAuthJson<RemoveEmailResponse>(
+    withApiBase(`/account/emails/${encodePathParam(emailId)}`),
+    { ...options, method: "DELETE" }
+  );
+}
+
+export async function resendAccountEmailVerification(
+  emailId: string,
+  options: RequestOptions = {}
+): Promise<ResendEmailVerificationResponse> {
+  return postAuthJson<ResendEmailVerificationResponse>(
+    withApiBase(`/account/emails/${encodePathParam(emailId)}/resend-verification`),
+    {},
+    options
+  );
+}
+
 export async function listThreads(
   params: ListThreadsParams = {},
   options: RequestOptions = {}
@@ -752,6 +803,11 @@ export const api = {
     getTopSenders: getAnalyticsTopSenders,
   },
   account: {
+    addEmail: addAccountEmail,
+    listEmails: listAccountEmails,
+    makePrimaryEmail: makeAccountEmailPrimary,
+    removeEmail: removeAccountEmail,
+    resendEmailVerification: resendAccountEmailVerification,
     updateProfile: updateAccountProfile,
   },
   auth: {

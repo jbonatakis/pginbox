@@ -21,13 +21,15 @@ async function createTestSession(): Promise<{ token: string; userId: bigint; ses
   const user = await db
     .insertInto("users")
     .values({
-      email,
       password_hash: "test-hash",
       status: "active",
-      email_verified_at: now,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+  await db
+    .insertInto("user_emails")
+    .values({ user_id: user.id, email, is_primary: true, verified_at: now })
+    .execute();
 
   const token = generateToken();
   const session = await db
