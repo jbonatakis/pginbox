@@ -127,7 +127,8 @@ CREATE TABLE public.messages (
     in_reply_to text,
     refs text[],
     body text,
-    sent_at_approx boolean DEFAULT false NOT NULL
+    sent_at_approx boolean DEFAULT false NOT NULL,
+    archive_month date
 );
 
 
@@ -1007,6 +1008,13 @@ CREATE INDEX idx_messages_in_reply_to ON public.messages USING btree (in_reply_t
 
 
 --
+-- Name: idx_messages_list_archive_month; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_messages_list_archive_month ON public.messages USING btree (list_id, archive_month);
+
+
+--
 -- Name: idx_messages_sent_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1327,4 +1335,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260320000017'),
     ('20260321000018'),
     ('20260321000019'),
-    ('20260322000020');
+    ('20260322000020'),
+    ('20260322000021');

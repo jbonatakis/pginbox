@@ -85,7 +85,39 @@ Ingestion is **not** in this stack. Run it from a machine that can reach Supabas
 
 - Same `DATABASE_URL` (Supabase).
 - `PG_LIST_USER` / `PG_LIST_PASS` for postgresql.org list archives.
-- `make backfill ...` or `make ingest ...` as needed.
+- `make ingest ...`, `make backfill ...`, or `make reconcile ...` as needed.
+
+Common commands:
+
+```bash
+# ingest the current month in normal live mode
+make ingest LIST=pgsql-hackers YEAR=2026 MONTH=3
+
+# historical insert/update without pruning stale rows
+make backfill LIST=pgsql-hackers YEAR=2026 MONTH=3
+make backfill-range LIST=pgsql-hackers FROM=2026-01 TO=2026-03
+
+# reparse a month and prune rows that no longer exist in that archive month
+make reconcile LIST=pgsql-hackers YEAR=2026 MONTH=3
+make reconcile-range LIST=pgsql-hackers FROM=2026-01 TO=2026-03
+```
+
+Use `reconcile` when you have fixed an ingestion bug and need an existing live database to match the current parser output for already-ingested archive months. It will:
+
+- reparse the requested list/month from the cached or downloaded mbox
+- overwrite the surviving messages and refresh their attachments
+- delete stale message rows for that exact `list + archive_month` that are absent from the reparsed archive
+
+Operational notes:
+
+- run `make migrate` first on the target database; reconcile depends on the `messages.archive_month` column
+- reconcile is month-scoped and intended for live use, but it still performs real write/delete work, so schedule large ranges carefully
+- the command uses the same mbox cache behavior as normal ingestion: if `mbox_cache/<list>.<yyyymm>` already exists it is reused, otherwise it is downloaded
+- use the raw CLI with `--force-download` if you need to refresh a cached mbox before reconciling:
+
+```bash
+uv run python3 src/ingestion/ingest.py --list pgsql-hackers --year 2026 --month 3 --reconcile-existing --force-download
+```
 
 To run ingestion in Docker on the VPS you’d add a separate image and run it as a cron container or one-off job; that can be added later if you want.
 

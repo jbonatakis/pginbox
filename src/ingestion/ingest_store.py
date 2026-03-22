@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import secrets
 
 from psycopg2.extras import execute_batch, execute_values
@@ -31,6 +31,7 @@ INSERT_MESSAGE_COLUMNS = (
     "message_id",
     "thread_id",
     "list_id",
+    "archive_month",
     "sent_at",
     "sent_at_approx",
     "from_name",
@@ -56,6 +57,7 @@ OVERWRITE_MESSAGE_SQL = f"""
     SET
         thread_id = v.thread_id,
         list_id = v.list_id,
+        archive_month = v.archive_month,
         sent_at = v.sent_at,
         sent_at_approx = v.sent_at_approx,
         from_name = v.from_name,
@@ -105,6 +107,19 @@ REBUILD_THREADS_SQL = """
     GROUP BY thread_id, list_id
 """
 
+REBUILD_THREADS_FOR_LISTS_SQL = """
+    SELECT
+        thread_id,
+        list_id,
+        _normalize_subject((array_agg(subject ORDER BY sent_at ASC NULLS LAST))[1]) AS subject,
+        min(sent_at) AS started_at,
+        max(sent_at) AS last_activity_at,
+        count(*) AS message_count
+    FROM messages
+    WHERE list_id = ANY(%s)
+    GROUP BY thread_id, list_id
+"""
+
 UPSERT_TOUCHED_THREADS_SQL = """
     INSERT INTO threads (thread_id, id, list_id, subject, started_at, last_activity_at, message_count)
     SELECT
@@ -133,6 +148,89 @@ DELETE_STALE_THREADS_SQL = """
         FROM messages
         WHERE messages.thread_id = threads.thread_id
     )
+"""
+
+DELETE_STALE_THREADS_FOR_LISTS_SQL = """
+    DELETE FROM threads
+    WHERE threads.list_id = ANY(%s)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM messages
+          WHERE messages.thread_id = threads.thread_id
+      )
+"""
+
+FETCH_ARCHIVE_MONTH_MESSAGE_IDS_SQL = """
+    SELECT id, message_id
+    FROM messages
+    WHERE list_id = %s
+      AND archive_month = %s
+"""
+
+FETCH_STALE_REPLACEMENT_MESSAGE_IDS_SQL = """
+    WITH stale_messages AS (
+        SELECT id, thread_id
+        FROM messages
+        WHERE id = ANY(%s)
+    )
+    SELECT
+        stale_messages.id AS stale_message_id,
+        replacement.id AS replacement_message_id
+    FROM stale_messages
+    LEFT JOIN LATERAL (
+        SELECT candidate.id
+        FROM messages AS candidate
+        WHERE candidate.thread_id = stale_messages.thread_id
+          AND NOT (candidate.id = ANY(%s))
+        ORDER BY candidate.sent_at DESC NULLS LAST, candidate.id DESC
+        LIMIT 1
+    ) AS replacement
+        ON TRUE
+"""
+
+UPDATE_THREAD_TRACKING_ANCHORS_SQL = """
+    UPDATE thread_tracking
+    SET
+        anchor_message_id = replacements.replacement_message_id,
+        updated_at = now()
+    FROM (VALUES %s) AS replacements (stale_message_id, replacement_message_id)
+    WHERE thread_tracking.anchor_message_id = replacements.stale_message_id
+"""
+
+UPDATE_THREAD_READ_PROGRESS_SQL = """
+    UPDATE thread_read_progress
+    SET
+        last_read_message_id = replacements.replacement_message_id,
+        updated_at = now()
+    FROM (VALUES %s) AS replacements (stale_message_id, replacement_message_id)
+    WHERE thread_read_progress.last_read_message_id = replacements.stale_message_id
+"""
+
+UPDATE_THREAD_FOLLOWS_ANCHORS_SQL = """
+    UPDATE thread_follows
+    SET anchor_message_id = replacements.replacement_message_id
+    FROM (VALUES %s) AS replacements (stale_message_id, replacement_message_id)
+    WHERE thread_follows.anchor_message_id = replacements.stale_message_id
+"""
+
+DELETE_STALE_THREAD_TRACKING_SQL = """
+    DELETE FROM thread_tracking
+    WHERE anchor_message_id = ANY(%s)
+"""
+
+DELETE_STALE_THREAD_READ_PROGRESS_SQL = """
+    DELETE FROM thread_read_progress
+    WHERE last_read_message_id = ANY(%s)
+"""
+
+DELETE_STALE_THREAD_FOLLOWS_SQL = """
+    DELETE FROM thread_follows
+    WHERE anchor_message_id = ANY(%s)
+"""
+
+DELETE_MESSAGES_BY_DB_ID_SQL = """
+    DELETE FROM messages
+    WHERE id = ANY(%s)
 """
 
 FETCH_THREAD_STABLE_IDS_SQL = """
@@ -579,6 +677,13 @@ def _fetch_thread_aggregates(cur, list_id: int, thread_ids: list[str]):
     return cur.fetchall()
 
 
+def _normalize_list_ids(list_ids: list[int] | None) -> list[int] | None:
+    if list_ids is None:
+        return None
+    normalized = sorted({int(list_id) for list_id in list_ids})
+    return normalized or None
+
+
 def _upsert_thread_rows(
     cur,
     rows: list[tuple[str, str, int, str | None, datetime | None, datetime | None, int]],
@@ -903,6 +1008,98 @@ def store_batch_overwrite(
     conn.commit()
 
 
+def prune_missing_messages_for_archive_month(
+    conn,
+    *,
+    list_id: int,
+    archive_month: date,
+    parsed_message_ids: set[str],
+    fetch_archive_month_message_ids_sql=FETCH_ARCHIVE_MONTH_MESSAGE_IDS_SQL,
+    fetch_stale_replacement_message_ids_sql=FETCH_STALE_REPLACEMENT_MESSAGE_IDS_SQL,
+    update_thread_tracking_anchors_sql=UPDATE_THREAD_TRACKING_ANCHORS_SQL,
+    update_thread_read_progress_sql=UPDATE_THREAD_READ_PROGRESS_SQL,
+    update_thread_follows_anchors_sql=UPDATE_THREAD_FOLLOWS_ANCHORS_SQL,
+    delete_stale_thread_tracking_sql=DELETE_STALE_THREAD_TRACKING_SQL,
+    delete_stale_thread_read_progress_sql=DELETE_STALE_THREAD_READ_PROGRESS_SQL,
+    delete_stale_thread_follows_sql=DELETE_STALE_THREAD_FOLLOWS_SQL,
+    delete_attachments_sql=DELETE_ATTACHMENTS_SQL,
+    delete_messages_by_db_id_sql=DELETE_MESSAGES_BY_DB_ID_SQL,
+    execute_values_fn=execute_values,
+):
+    """Delete rows in a list/month that are absent from the reparsed archive."""
+    with conn.cursor() as cur:
+        cur.execute(fetch_archive_month_message_ids_sql, (list_id, archive_month))
+        existing_rows = cur.fetchall()
+        stale_rows = [
+            (db_id, message_id)
+            for db_id, message_id in existing_rows
+            if message_id not in parsed_message_ids
+        ]
+        stale_db_ids = [db_id for db_id, _ in stale_rows]
+        if not stale_db_ids:
+            conn.commit()
+            return {
+                "messages_pruned": 0,
+                "attachments_deleted": 0,
+                "tracking_rows_deleted": 0,
+                "progress_rows_deleted": 0,
+                "legacy_follow_rows_deleted": 0,
+            }
+
+        cur.execute(
+            fetch_stale_replacement_message_ids_sql,
+            (stale_db_ids, stale_db_ids),
+        )
+        replacements = [
+            (stale_message_id, replacement_message_id)
+            for stale_message_id, replacement_message_id in cur.fetchall()
+            if replacement_message_id is not None
+        ]
+
+        if replacements:
+            execute_values_fn(
+                cur,
+                update_thread_tracking_anchors_sql,
+                replacements,
+                template="(%s, %s)",
+                page_size=500,
+            )
+            execute_values_fn(
+                cur,
+                update_thread_read_progress_sql,
+                replacements,
+                template="(%s, %s)",
+                page_size=500,
+            )
+            execute_values_fn(
+                cur,
+                update_thread_follows_anchors_sql,
+                replacements,
+                template="(%s, %s)",
+                page_size=500,
+            )
+
+        cur.execute(delete_stale_thread_tracking_sql, (stale_db_ids,))
+        tracking_rows_deleted = cur.rowcount
+        cur.execute(delete_stale_thread_read_progress_sql, (stale_db_ids,))
+        progress_rows_deleted = cur.rowcount
+        cur.execute(delete_stale_thread_follows_sql, (stale_db_ids,))
+        legacy_follow_rows_deleted = cur.rowcount
+        cur.execute(delete_attachments_sql, (stale_db_ids,))
+        attachments_deleted = cur.rowcount
+        cur.execute(delete_messages_by_db_id_sql, (stale_db_ids,))
+        messages_pruned = cur.rowcount
+
+    conn.commit()
+    return {
+        "messages_pruned": messages_pruned,
+        "attachments_deleted": attachments_deleted,
+        "tracking_rows_deleted": tracking_rows_deleted,
+        "progress_rows_deleted": progress_rows_deleted,
+        "legacy_follow_rows_deleted": legacy_follow_rows_deleted,
+    }
+
+
 def repair_batch_attachments(
     conn,
     batch: list,
@@ -923,25 +1120,45 @@ def repair_batch_attachments(
     return stats
 
 
-def rethread_messages(conn):
+def rethread_messages(conn, *, list_ids: list[int] | None = None):
     """Recompute messages.thread_id as canonical conversation IDs per list."""
+    normalized_list_ids = _normalize_list_ids(list_ids)
     print("  [rethread messages]", end="", flush=True)
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT
-                messages.list_id,
-                messages.message_id,
-                messages.sent_at,
-                messages.in_reply_to,
-                messages.refs,
-                messages.thread_id,
-                threads.id
-            FROM messages
-            LEFT JOIN threads
-                ON threads.thread_id = messages.thread_id
-            """
-        )
+        if normalized_list_ids is None:
+            cur.execute(
+                """
+                SELECT
+                    messages.list_id,
+                    messages.message_id,
+                    messages.sent_at,
+                    messages.in_reply_to,
+                    messages.refs,
+                    messages.thread_id,
+                    threads.id
+                FROM messages
+                LEFT JOIN threads
+                    ON threads.thread_id = messages.thread_id
+                """
+            )
+        else:
+            cur.execute(
+                """
+                SELECT
+                    messages.list_id,
+                    messages.message_id,
+                    messages.sent_at,
+                    messages.in_reply_to,
+                    messages.refs,
+                    messages.thread_id,
+                    threads.id
+                FROM messages
+                LEFT JOIN threads
+                    ON threads.thread_id = messages.thread_id
+                WHERE messages.list_id = ANY(%s)
+                """,
+                (normalized_list_ids,),
+            )
         rows = cur.fetchall()
 
     records_by_list: dict[int, dict[str, dict]] = {}
@@ -1010,23 +1227,33 @@ def decode_message_subjects(
 def derive_threads(
     conn,
     *,
+    list_ids: list[int] | None = None,
     rethread_messages_fn=rethread_messages,
     rebuild_threads_sql=REBUILD_THREADS_SQL,
+    rebuild_threads_for_lists_sql=REBUILD_THREADS_FOR_LISTS_SQL,
     upsert_rebuilt_threads_sql=UPSERT_REBUILT_THREADS_SQL,
     delete_stale_threads_sql=DELETE_STALE_THREADS_SQL,
+    delete_stale_threads_for_lists_sql=DELETE_STALE_THREADS_FOR_LISTS_SQL,
 ):
     """Rethread messages, then rebuild the derived threads table from messages."""
-    assigned_stable_thread_ids = rethread_messages_fn(conn)
+    normalized_list_ids = _normalize_list_ids(list_ids)
+    assigned_stable_thread_ids = rethread_messages_fn(conn, list_ids=normalized_list_ids)
     print("  [derive threads]", end="", flush=True)
     with conn.cursor() as cur:
-        cur.execute(rebuild_threads_sql)
+        if normalized_list_ids is None:
+            cur.execute(rebuild_threads_sql)
+        else:
+            cur.execute(rebuild_threads_for_lists_sql, (normalized_list_ids,))
         rebuilt_threads = cur.fetchall()
         stable_ids_by_thread_id = _resolve_stable_thread_ids(
             cur,
             [thread_id for thread_id, *_ in rebuilt_threads],
             assigned_stable_thread_ids,
         )
-        cur.execute(delete_stale_threads_sql)
+        if normalized_list_ids is None:
+            cur.execute(delete_stale_threads_sql)
+        else:
+            cur.execute(delete_stale_threads_for_lists_sql, (normalized_list_ids,))
 
         if rebuilt_threads:
             rows = [

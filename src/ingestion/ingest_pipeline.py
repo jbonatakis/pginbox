@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import psycopg2
@@ -15,6 +16,7 @@ from src.ingestion.ingest_archive import (
 from src.ingestion.ingest_parse import parse_mbox
 from src.ingestion.ingest_store import (
     derive_threads,
+    prune_missing_messages_for_archive_month,
     refresh_analytics_views,
     repair_batch_attachments,
     store_batch_backfill,
@@ -79,6 +81,7 @@ def ingest(
     force_download: bool = False,
     backfill: bool = False,
     overwrite_existing: bool = False,
+    reconcile_existing: bool = False,
     derive: bool = True,
     refresh_analytics: bool = True,
     *,
@@ -88,10 +91,13 @@ def ingest(
     store_batch_live_fn=store_batch_live,
     store_batch_backfill_fn=store_batch_backfill,
     store_batch_overwrite_fn=store_batch_overwrite,
+    prune_missing_messages_for_archive_month_fn=prune_missing_messages_for_archive_month,
     derive_threads_fn=derive_threads,
     refresh_analytics_views_fn=refresh_analytics_views,
 ):
-    if overwrite_existing:
+    if reconcile_existing:
+        mode = "[reconcile]"
+    elif overwrite_existing:
         mode = "[overwrite]"
     elif backfill:
         mode = "[backfill]"
@@ -108,13 +114,16 @@ def ingest(
 
     print(f"  [parse+store] {Path(path).name}")
     batch: list = []
+    archive_month = date(year, month, 1)
+    parsed_message_ids: set[str] = set()
     total = 0
-    if overwrite_existing:
+    if reconcile_existing or overwrite_existing:
         store_batch = store_batch_overwrite_fn
     else:
         store_batch = store_batch_backfill_fn if backfill else store_batch_live_fn
 
     for record in parse_mbox_fn(path, list_id):
+        parsed_message_ids.add(record["message_id"])
         batch.append(record)
         if len(batch) >= 500:
             store_batch(conn, batch)
@@ -128,11 +137,26 @@ def ingest(
 
     print(f"  [done] {total} messages ingested")
 
-    if (backfill or overwrite_existing) and derive:
-        derive_threads_fn(conn)
+    if reconcile_existing:
+        prune_stats = prune_missing_messages_for_archive_month_fn(
+            conn,
+            list_id=list_id,
+            archive_month=archive_month,
+            parsed_message_ids=parsed_message_ids,
+        )
+        print(
+            "  [prune] "
+            f"{prune_stats['messages_pruned']} messages removed; "
+            f"{prune_stats['attachments_deleted']} attachments removed; "
+            f"{prune_stats['tracking_rows_deleted']} tracking rows removed; "
+            f"{prune_stats['progress_rows_deleted']} progress rows removed"
+        )
+
+    if (backfill or overwrite_existing or reconcile_existing) and derive:
+        derive_threads_fn(conn, list_ids=[list_id])
         if refresh_analytics:
             refresh_analytics_views_fn(conn)
-    elif not backfill and not overwrite_existing and refresh_analytics:
+    elif not backfill and not overwrite_existing and not reconcile_existing and refresh_analytics:
         refresh_analytics_views_fn(conn)
 
     return total
