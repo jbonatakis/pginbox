@@ -1,6 +1,8 @@
 import { Elysia, t } from "elysia";
 import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "shared/api";
 import { requireAuth, resolveCurrentSession, type ResponseCookieTarget } from "../auth";
+import { resolveAuthAppBaseUrl } from "../config";
+import { assertSameOrigin, resolveConfiguredOrigin } from "./same-origin";
 import {
   followThread,
   unfollowThread,
@@ -10,6 +12,8 @@ import {
   removeThreadFromMyThreads,
   addThreadBackToMyThreads,
 } from "../services/thread-progress.service";
+
+const configuredOrigin = resolveConfiguredOrigin(resolveAuthAppBaseUrl());
 
 function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTarget {
   return target as ResponseCookieTarget;
@@ -26,6 +30,7 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
   .post(
     "/follow",
     async ({ params, body, request, set, status }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       const seedLastReadMessageId = body?.seedLastReadMessageId ?? null;
@@ -43,6 +48,7 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
   .delete(
     "/follow",
     async ({ params, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       return unfollowThread(user.id, params.threadId);
@@ -54,6 +60,7 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
   .delete(
     "/my-thread",
     async ({ params, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       return removeThreadFromMyThreads(user.id, params.threadId);
@@ -65,6 +72,7 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
   .post(
     "/my-thread",
     async ({ params, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       return addThreadBackToMyThreads(user.id, params.threadId);
@@ -90,6 +98,7 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
   .post(
     "/progress",
     async ({ params, body, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       return advanceProgress(user.id, params.threadId, body.lastReadMessageId);
@@ -102,6 +111,7 @@ export const threadProgressRoutes = new Elysia({ prefix: "/threads/:threadId" })
   .post(
     "/progress/mark-read",
     async ({ params, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       return markRead(user.id, params.threadId);

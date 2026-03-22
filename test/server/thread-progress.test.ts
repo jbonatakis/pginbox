@@ -304,9 +304,9 @@ async function deleteList(listId: number): Promise<void> {
 
 async function send(
   path: string,
-  opts: { method?: string; body?: unknown; cookie?: string } = {}
+  opts: { method?: string; body?: unknown; cookie?: string; origin?: string } = {}
 ): Promise<Response> {
-  const headers = new Headers({ accept: "application/json" });
+  const headers = new Headers({ accept: "application/json", origin: opts.origin ?? base });
   if (opts.cookie) headers.set("cookie", opts.cookie);
   if (opts.body !== undefined) headers.set("content-type", "application/json");
   return app.handle(
