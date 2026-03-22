@@ -97,6 +97,15 @@ async function clearAuthTables(): Promise<void> {
   await authDb.deleteFrom("users").execute();
 }
 
+async function getUserIdByEmail(email: string): Promise<bigint> {
+  const row = await getAuthDb()
+    .selectFrom("user_emails")
+    .select("user_id")
+    .where("email", "=", email)
+    .executeTakeFirstOrThrow();
+  return row.user_id as bigint;
+}
+
 function extractToken(deliveryUrl: string): string {
   const token = new URL(deliveryUrl).searchParams.get("token");
 
@@ -268,8 +277,9 @@ describeAuthRoutes("auth routes", () => {
 
     const pendingUser = await getAuthDb()
       .selectFrom("users")
-      .select(["email", "status"])
-      .where("email", "=", email)
+      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .select(["user_emails.email", "users.status"])
+      .where("user_emails.email", "=", email)
       .executeTakeFirstOrThrow();
 
     expect(pendingUser).toEqual({
@@ -416,6 +426,7 @@ describeAuthRoutes("auth routes", () => {
 
     const activeEmail = "disabled-login@example.com";
     await createActiveUser(app, mailer, activeEmail);
+    const activeEmailUserId = await getUserIdByEmail(activeEmail);
     await getAuthDb()
       .updateTable("users")
       .set({
@@ -423,7 +434,7 @@ describeAuthRoutes("auth routes", () => {
         disabled_at: new Date(),
         status: "disabled",
       })
-      .where("email", "=", activeEmail)
+      .where("id", "=", activeEmailUserId)
       .execute();
 
     const disabledLoginResponse = await send(app, "/auth/login", {
@@ -533,8 +544,9 @@ describeAuthRoutes("auth routes", () => {
     const activeUser = await createActiveUser(app, mailer, email);
     const beforeUpdate = await getAuthDb()
       .selectFrom("users")
-      .select(["display_name", "updated_at"])
-      .where("email", "=", email)
+      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .select(["users.display_name", "users.updated_at"])
+      .where("user_emails.email", "=", email)
       .executeTakeFirstOrThrow();
 
     const updateResponse = await send(app, "/account/profile", {
@@ -558,13 +570,15 @@ describeAuthRoutes("auth routes", () => {
 
     const userRow = await getAuthDb()
       .selectFrom("users")
-      .select(["email", "display_name", "updated_at"])
-      .where("email", "=", email)
+      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .select(["user_emails.email", "users.display_name", "users.updated_at"])
+      .where("user_emails.email", "=", email)
       .executeTakeFirstOrThrow();
     const timestampCheck = await getAuthDb()
       .selectFrom("users")
-      .select(sql<boolean>`updated_at > ${beforeUpdate.updated_at}`.as("updated_after_previous"))
-      .where("email", "=", email)
+      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .select(sql<boolean>`users.updated_at > ${beforeUpdate.updated_at}`.as("updated_after_previous"))
+      .where("user_emails.email", "=", email)
       .executeTakeFirstOrThrow();
 
     expect(userRow.email).toBe(email);

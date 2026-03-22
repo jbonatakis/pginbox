@@ -37,11 +37,9 @@ async function createTestUserWithCreatedAt(createdAt: Date): Promise<TestUser> {
   const row = await db
     .insertInto("users")
     .values({
-      email,
       password_hash: "placeholder-not-verified",
       status: "active",
       created_at: createdAt,
-      email_verified_at: createdAt,
       display_name: null,
       disabled_at: null,
       disable_reason: null,
@@ -50,6 +48,10 @@ async function createTestUserWithCreatedAt(createdAt: Date): Promise<TestUser> {
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+  await db
+    .insertInto("user_emails")
+    .values({ user_id: row.id, email, is_primary: true, verified_at: createdAt })
+    .execute();
   return { id: String(row.id), email };
 }
 

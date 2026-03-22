@@ -175,7 +175,36 @@ export interface AuthResendVerificationResponse extends AuthMessageResponse {
   developmentVerificationUrl?: string;
 }
 
-export type AuthVerifyEmailResponse = AuthUserResponse;
+export interface AuthVerifyEmailResponse {
+  user: AuthUser;
+  isRegistration: boolean;
+}
+
+// ---- User Emails ----
+export interface UserEmail {
+  id: string;
+  email: string;
+  isPrimary: boolean;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
+export interface UserEmailsResponse {
+  emails: UserEmail[];
+}
+
+export interface AddEmailRequest {
+  email: string;
+}
+
+export interface AddEmailResponse {
+  message: string;
+  developmentVerificationUrl?: string;
+}
+
+export type SetPrimaryEmailResponse = UserEmailsResponse;
+export type RemoveEmailResponse = UserEmailsResponse;
+export type ResendEmailVerificationResponse = AddEmailResponse;
 export type AuthLoginResponse = AuthUserResponse;
 export type AuthLogoutResponse = void;
 export type AuthForgotPasswordResponse = AuthMessageResponse;

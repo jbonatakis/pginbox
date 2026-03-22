@@ -256,7 +256,16 @@ export function createAuthStore(): AuthStore {
 
     async verifyEmail(input: AuthVerifyEmailRequest): Promise<AuthVerifyEmailResponse> {
       return runAction("verify-email", () => verifyEmailRequest(input), (response, requestId) => {
-        completeSessionUpdate(requestId, response.user);
+        if (response.isRegistration) {
+          completeSessionUpdate(requestId, response.user);
+        } else {
+          // Secondary email verified — don't create a new session, just clear loading state
+          finishAction(requestId, (current) => ({
+            ...current,
+            currentAction: null,
+            error: null,
+          }));
+        }
       });
     },
 

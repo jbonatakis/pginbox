@@ -8,6 +8,7 @@
   import { toApiErrorShape, type ApiErrorShape } from "../lib/api";
   import { authStore } from "../lib/state/auth";
   import {
+    accountPath,
     currentRoute,
     homePath,
     loginPath,
@@ -22,7 +23,7 @@
   let lastAttemptedToken: string | null = null;
   let loginLink = loginPath;
   let nextRedirect = homePath;
-  let pageStatus: "loading" | "success" | "error" | "missing-token" = "loading";
+  let pageStatus: "loading" | "success" | "secondary-success" | "error" | "missing-token" = "loading";
   let redirectTimer: number | null = null;
   let registerLink = registerPath;
   let resendEmail = "";
@@ -121,9 +122,13 @@
     verificationError = null;
 
     try {
-      await authStore.verifyEmail({ token: value });
-      pageStatus = "success";
-      beginRedirect();
+      const response = await authStore.verifyEmail({ token: value });
+      if (response.isRegistration) {
+        pageStatus = "success";
+        beginRedirect();
+      } else {
+        pageStatus = "secondary-success";
+      }
     } catch (error) {
       verificationError = toApiErrorShape(error);
       pageStatus = "error";
@@ -194,6 +199,15 @@
 
     <p class="helper-links">
       <a href={nextRedirect} on:click={(event) => onLinkClick(event, nextRedirect)}>Continue now</a>
+    </p>
+  {:else if pageStatus === "secondary-success"}
+    <SuccessState
+      title="Email verified"
+      message="Your email address has been verified and added to your account."
+    />
+
+    <p class="helper-links">
+      <a href={accountPath} on:click={(event) => onLinkClick(event, accountPath)}>Go to account settings</a>
     </p>
   {:else}
     {#if pageStatus === "missing-token"}

@@ -55,10 +55,6 @@ interface VerificationTokenRow {
   email: string;
   expires_at: Date | string;
   token_hash: string;
-  user_created_at: Date | string;
-  user_display_name: string | null;
-  user_email: string;
-  user_email_verified_at: Date | string | null;
   user_id: bigint | number | string;
   user_status: AuthUserRecord["status"];
 }
@@ -72,12 +68,28 @@ interface PasswordResetTokenRow {
   user_email: string;
   user_email_verified_at: Date | string | null;
   user_id: bigint | number | string;
+  user_role: string;
   user_status: AuthUserRecord["status"];
+}
+
+export interface UserEmailRecord {
+  id: bigint | number | string;
+  email: string;
+  is_primary: boolean;
+  verified_at: Date | string | null;
+  created_at: Date | string;
 }
 
 export interface AuthFlowResult {
   session: AuthSessionRecord;
   sessionToken: string;
+  user: AuthUserRecord;
+}
+
+export interface VerifyEmailResult {
+  isRegistration: boolean;
+  session: AuthSessionRecord | null;
+  sessionToken: string | null;
   user: AuthUserRecord;
 }
 
@@ -100,6 +112,11 @@ export interface ForgotPasswordResult {
 
 export interface LogoutResult {
   revoked: boolean;
+}
+
+export interface AddEmailResult {
+  developmentVerificationUrl: string | null;
+  verificationEmailSent: boolean;
 }
 
 export interface AuthServiceDependencies {
@@ -186,14 +203,61 @@ function validateLoginInput(input: AuthLoginRequest): { email: string; password:
   };
 }
 
-async function findUserByEmail(
+// Find a user by their primary email address
+async function findUserByPrimaryEmail(
   authDb: DatabaseClient,
   email: string
 ): Promise<UserCredentialsRow | null> {
-  const row = await authDb
+  const row = await (authDb as any)
     .selectFrom("users")
-    .selectAll()
-    .where("email", "=", email)
+    .innerJoin("user_emails as ue", (join: any) =>
+      join.onRef("ue.user_id", "=", "users.id")
+          .on("ue.email", "=", email)
+          .on("ue.is_primary", "=", true)
+    )
+    .select([
+      "users.id",
+      "users.display_name",
+      "users.password_hash",
+      "users.role",
+      "users.status",
+      "users.last_login_at",
+      "users.disabled_at",
+      "users.disable_reason",
+      "users.created_at",
+      "ue.email",
+      "ue.verified_at as email_verified_at",
+    ])
+    .executeTakeFirst();
+
+  return (row as UserCredentialsRow | undefined) ?? null;
+}
+
+// Fetch a user by ID with their primary email (used after updates)
+async function findUserWithPrimaryEmailById(
+  authDb: DatabaseClient,
+  userId: bigint | number | string
+): Promise<UserCredentialsRow | null> {
+  const row = await (authDb as any)
+    .selectFrom("users")
+    .innerJoin("user_emails as ue", (join: any) =>
+      join.onRef("ue.user_id", "=", "users.id")
+          .on("ue.is_primary", "=", true)
+    )
+    .select([
+      "users.id",
+      "users.display_name",
+      "users.password_hash",
+      "users.role",
+      "users.status",
+      "users.last_login_at",
+      "users.disabled_at",
+      "users.disable_reason",
+      "users.created_at",
+      "ue.email",
+      "ue.verified_at as email_verified_at",
+    ])
+    .where("users.id", "=", toDbInt8(userId))
     .executeTakeFirst();
 
   return (row as UserCredentialsRow | undefined) ?? null;
@@ -201,16 +265,19 @@ async function findUserByEmail(
 
 async function rotateVerificationToken(
   authDb: DatabaseClient,
-  user: AuthUserRecord,
+  userId: bigint | number | string,
+  email: string,
   now: Date
 ): Promise<{ expiresAt: Date; token: string }> {
   const token = generateOpaqueToken();
   const expiresAt = new Date(now.getTime() + EMAIL_VERIFICATION_TTL_MS);
 
+  // Consume any existing unconsumed token for this user+email pair
   await authDb
     .updateTable("email_verification_tokens")
     .set({ consumed_at: now })
-    .where("user_id", "=", toDbInt8(user.id))
+    .where("user_id", "=", toDbInt8(userId))
+    .where("email", "=", email)
     .where("consumed_at", "is", null)
     .execute();
 
@@ -218,10 +285,10 @@ async function rotateVerificationToken(
     .insertInto("email_verification_tokens")
     .values({
       consumed_at: null,
-      email: user.email,
+      email,
       expires_at: expiresAt,
       token_hash: hashOpaqueToken(token),
-      user_id: toDbInt8(user.id),
+      user_id: toDbInt8(userId),
     })
     .execute();
 
@@ -279,7 +346,7 @@ async function createSessionForUser(
     throw new AuthError(403, "ACCOUNT_DISABLED", "This account is disabled");
   }
 
-  if (user.status !== "active" || user.email_verified_at === null) {
+  if (user.status !== "active") {
     throw new AuthError(403, "EMAIL_NOT_VERIFIED", "Email verification is required");
   }
 
@@ -335,11 +402,7 @@ async function findVerificationToken(
       "email_verification_tokens.expires_at",
       "email_verification_tokens.consumed_at",
       "users.id as user_id",
-      "users.email as user_email",
-      "users.display_name as user_display_name",
       "users.status as user_status",
-      "users.email_verified_at as user_email_verified_at",
-      "users.created_at as user_created_at",
     ])
     .where("email_verification_tokens.token_hash", "=", tokenHash)
     .executeTakeFirst();
@@ -351,19 +414,24 @@ async function findPasswordResetToken(
   authDb: DatabaseClient,
   tokenHash: string
 ): Promise<PasswordResetTokenRow | null> {
-  const row = await authDb
+  const row = await (authDb as any)
     .selectFrom("password_reset_tokens")
     .innerJoin("users", "users.id", "password_reset_tokens.user_id")
+    .innerJoin("user_emails as ue", (join: any) =>
+      join.onRef("ue.user_id", "=", "users.id")
+          .on("ue.is_primary", "=", true)
+    )
     .select([
       "password_reset_tokens.token_hash",
       "password_reset_tokens.expires_at",
       "password_reset_tokens.consumed_at",
       "users.id as user_id",
-      "users.email as user_email",
       "users.display_name as user_display_name",
       "users.status as user_status",
-      "users.email_verified_at as user_email_verified_at",
+      "users.role as user_role",
       "users.created_at as user_created_at",
+      "ue.email as user_email",
+      "ue.verified_at as user_email_verified_at",
     ])
     .where("password_reset_tokens.token_hash", "=", tokenHash)
     .executeTakeFirst();
@@ -402,57 +470,79 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       assertValidEmail(email);
       assertValidPassword(input.password);
 
-      const existingUser = await findUserByEmail(authDb, email);
-      if (existingUser && existingUser.status !== "pending_verification") {
-        return {
-          developmentVerificationUrl: null,
-          user: null,
-          verificationEmailSent: false,
-        };
+      // Check if email is globally taken (as primary or secondary on any account)
+      const existingEmailRow = await (authDb as any)
+        .selectFrom("user_emails")
+        .innerJoin("users", "users.id", "user_emails.user_id")
+        .select(["users.id", "users.status", "user_emails.is_primary"])
+        .where("user_emails.email", "=", email)
+        .executeTakeFirst() as { id: bigint; status: string; is_primary: boolean } | undefined;
+
+      if (existingEmailRow) {
+        if (!existingEmailRow.is_primary || existingEmailRow.status !== "pending_verification") {
+          return {
+            developmentVerificationUrl: null,
+            user: null,
+            verificationEmailSent: false,
+          };
+        }
       }
 
       const passwordHash = await hashPassword(input.password);
       const currentTime = now();
 
       const result = await authDb.transaction().execute(async (trx) => {
-        const pendingUser = await findUserByEmail(trx, email);
+        // Re-check inside transaction
+        const pendingEmailRow = await (trx as any)
+          .selectFrom("user_emails")
+          .innerJoin("users", "users.id", "user_emails.user_id")
+          .select(["users.id", "users.status", "users.display_name", "user_emails.is_primary"])
+          .where("user_emails.email", "=", email)
+          .executeTakeFirst() as { id: bigint; status: string; display_name: string | null; is_primary: boolean } | undefined;
 
-        if (!pendingUser) {
+        if (!pendingEmailRow) {
+          // Create new user + primary email entry
           const insertedUser = await trx
             .insertInto("users")
             .values({
               display_name: displayName,
-              email,
-              email_verified_at: null,
               password_hash: passwordHash,
               status: "pending_verification",
             })
-            .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
+            .returning(["id", "display_name", "role", "status", "created_at"])
             .executeTakeFirstOrThrow();
 
-          const user = toAuthUserRecord(insertedUser);
-          const verification = await rotateVerificationToken(trx, user, currentTime);
+          await (trx as any)
+            .insertInto("user_emails")
+            .values({
+              user_id: insertedUser.id,
+              email,
+              is_primary: true,
+              verified_at: null,
+            })
+            .execute();
 
+          const user = toAuthUserRecord({ ...insertedUser, email, email_verified_at: null });
+          const verification = await rotateVerificationToken(trx, insertedUser.id, email, currentTime);
           return { user, verification };
         }
 
-        if (pendingUser.status !== "pending_verification") {
+        if (!pendingEmailRow.is_primary || pendingEmailRow.status !== "pending_verification") {
           return { user: null, verification: null };
         }
 
         const updatedUser = await trx
           .updateTable("users")
           .set({
-            display_name: hasDisplayNameOverride(input) ? displayName : pendingUser.display_name,
+            display_name: hasDisplayNameOverride(input) ? displayName : pendingEmailRow.display_name,
             password_hash: passwordHash,
           })
-          .where("id", "=", toDbInt8(pendingUser.id))
-          .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
+          .where("id", "=", toDbInt8(pendingEmailRow.id))
+          .returning(["id", "display_name", "role", "status", "created_at"])
           .executeTakeFirstOrThrow();
 
-        const user = toAuthUserRecord(updatedUser);
-        const verification = await rotateVerificationToken(trx, user, currentTime);
-
+        const user = toAuthUserRecord({ ...updatedUser, email, email_verified_at: null });
+        const verification = await rotateVerificationToken(trx, pendingEmailRow.id, email, currentTime);
         return { user, verification };
       });
 
@@ -492,7 +582,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const email = normalizeEmail(input.email);
       assertValidEmail(email);
 
-      const user = await findUserByEmail(authDb, email);
+      const user = await findUserByPrimaryEmail(authDb, email);
       if (!user || user.status !== "pending_verification") {
         return {
           developmentVerificationUrl: null,
@@ -503,7 +593,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
 
       const currentTime = now();
       const verification = await authDb.transaction().execute(async (trx) => {
-        return rotateVerificationToken(trx, toAuthUserRecord(user), currentTime);
+        return rotateVerificationToken(trx, user.id, email, currentTime);
       });
 
       const authUser = toAuthUserRecord(user);
@@ -527,7 +617,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
     async verifyEmail(
       input: AuthVerifyEmailRequest,
       metadata?: SessionRequestMetadata
-    ): Promise<AuthFlowResult> {
+    ): Promise<VerifyEmailResult> {
       const rawToken = input.token.trim();
       if (!rawToken) throwInvalidToken();
 
@@ -549,44 +639,63 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           throw new AuthError(403, "ACCOUNT_DISABLED", "This account is disabled");
         }
 
+        // Consume the token (scoped to this user+email pair)
         await trx
           .updateTable("email_verification_tokens")
           .set({ consumed_at: currentTime })
           .where("user_id", "=", toDbInt8(tokenRecord.user_id))
+          .where("email", "=", tokenRecord.email)
           .where("consumed_at", "is", null)
           .execute();
 
-        const updatedUser = await trx
-          .updateTable("users")
-          .set({
-            email_verified_at:
-              tokenRecord.user_email_verified_at ?? currentTime,
-            status: "active",
-          })
-          .where("id", "=", toDbInt8(tokenRecord.user_id))
-          .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
-          .executeTakeFirstOrThrow();
+        // Mark the email as verified
+        await (trx as any)
+          .updateTable("user_emails")
+          .set({ verified_at: currentTime })
+          .where("user_id", "=", toDbInt8(tokenRecord.user_id))
+          .where("email", "=", tokenRecord.email)
+          .execute();
 
-        const user = toAuthUserRecord(updatedUser);
-        const { session, sessionToken } = await createSessionForUser(trx, user, metadata, currentTime);
+        const isRegistration = tokenRecord.user_status === "pending_verification";
 
-        return {
-          session,
-          sessionToken,
-          user,
-        };
+        if (isRegistration) {
+          await trx
+            .updateTable("users")
+            .set({ status: "active" })
+            .where("id", "=", toDbInt8(tokenRecord.user_id))
+            .execute();
+        }
+
+        const userRow = await findUserWithPrimaryEmailById(trx, tokenRecord.user_id);
+        if (!userRow) {
+          throw new AuthError(500, "INTERNAL_ERROR", "User not found after verification");
+        }
+
+        const user = toAuthUserRecord(userRow);
+
+        if (isRegistration) {
+          const { session, sessionToken } = await createSessionForUser(trx, user, metadata, currentTime);
+          return { isRegistration: true, session, sessionToken, user, verifiedEmail: tokenRecord.email };
+        }
+
+        return { isRegistration: false, session: null, sessionToken: null, user, verifiedEmail: tokenRecord.email };
       });
 
-      runParticipationBackfillForUser(String(result.user.id), result.user.email).catch((err) => {
+      runParticipationBackfillForUser(String(result.user.id), result.verifiedEmail).catch((err) => {
         console.error(`participation backfill failed for user ${result.user.id}: ${err}`);
       });
 
-      return result;
+      return {
+        isRegistration: result.isRegistration,
+        session: result.session,
+        sessionToken: result.sessionToken,
+        user: result.user,
+      };
     },
 
     async login(input: AuthLoginRequest, metadata?: SessionRequestMetadata): Promise<AuthFlowResult> {
       const { email, password, isValid } = validateLoginInput(input);
-      const user = isValid ? await findUserByEmail(authDb, email) : null;
+      const user = isValid ? await findUserByPrimaryEmail(authDb, email) : null;
 
       if (!user) {
         await runDummyPasswordVerification(password);
@@ -598,7 +707,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         throwInvalidCredentials();
       }
 
-      if (user.status === "pending_verification" || user.email_verified_at === null) {
+      if (user.status === "pending_verification") {
         throw new AuthError(403, "EMAIL_NOT_VERIFIED", "Email verification is required");
       }
 
@@ -647,8 +756,8 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const email = normalizeEmail(input.email);
       assertValidEmail(email);
 
-      const user = await findUserByEmail(authDb, email);
-      if (!user || user.status !== "active" || user.email_verified_at === null) {
+      const user = await findUserByPrimaryEmail(authDb, email);
+      if (!user || user.status !== "active") {
         return { passwordResetEmailSent: false, user: null };
       }
 
@@ -721,14 +830,18 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           .where("consumed_at", "is", null)
           .execute();
 
-        const updatedUser = await trx
+        await trx
           .updateTable("users")
           .set({ password_hash: nextPasswordHash })
           .where("id", "=", toDbInt8(tokenRecord.user_id))
-          .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
-          .executeTakeFirstOrThrow();
+          .execute();
 
-        const user = toAuthUserRecord(updatedUser);
+        const userRow = await findUserWithPrimaryEmailById(trx, tokenRecord.user_id);
+        if (!userRow) {
+          throw new AuthError(500, "INTERNAL_ERROR", "User not found after password reset");
+        }
+
+        const user = toAuthUserRecord(userRow);
         await revokeAllSessionsForUser(trx, tokenRecord.user_id, currentTime);
         const { session, sessionToken } = await createSessionForUser(trx, user, metadata, currentTime);
 
@@ -746,18 +859,196 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
     ): Promise<AuthUserRecord> {
       const displayName = normalizeDisplayName(input.displayName);
 
-      const updatedUser = await authDb
+      await authDb
         .updateTable("users")
         .set({ display_name: displayName })
         .where("id", "=", toDbInt8(userId))
-        .returning(["id", "email", "display_name", "role", "status", "email_verified_at", "created_at"])
-        .executeTakeFirst();
+        .execute();
 
+      const updatedUser = await findUserWithPrimaryEmailById(authDb, userId);
       if (!updatedUser) {
         throw new AuthError(401, "AUTH_REQUIRED", "Authentication required");
       }
 
       return toAuthUserRecord(updatedUser);
+    },
+
+    async listEmails(userId: bigint | number | string): Promise<UserEmailRecord[]> {
+      const rows = await (authDb as any)
+        .selectFrom("user_emails")
+        .select(["id", "email", "is_primary", "verified_at", "created_at"])
+        .where("user_id", "=", toDbInt8(userId))
+        .orderBy("is_primary", "desc")
+        .orderBy("created_at", "asc")
+        .execute();
+
+      return rows as UserEmailRecord[];
+    },
+
+    async addEmail(
+      userId: bigint | number | string,
+      email: string
+    ): Promise<AddEmailResult> {
+      const normalizedEmail = normalizeEmail(email);
+      assertValidEmail(normalizedEmail);
+
+      // Check if email is already registered anywhere — silent no-op if so
+      const existing = await (authDb as any)
+        .selectFrom("user_emails")
+        .select(["id"])
+        .where("email", "=", normalizedEmail)
+        .executeTakeFirst();
+
+      if (existing) {
+        return { developmentVerificationUrl: null, verificationEmailSent: false };
+      }
+
+      const currentTime = now();
+
+      await (authDb as any)
+        .insertInto("user_emails")
+        .values({
+          user_id: toDbInt8(userId),
+          email: normalizedEmail,
+          is_primary: false,
+          verified_at: null,
+        })
+        .execute();
+
+      const user = await findUserWithPrimaryEmailById(authDb, userId);
+      if (!user) {
+        throw new AuthError(401, "AUTH_REQUIRED", "Authentication required");
+      }
+
+      const authUser = toAuthUserRecord(user);
+      const verification = await authDb.transaction().execute(async (trx) => {
+        return rotateVerificationToken(trx, userId, normalizedEmail, currentTime);
+      });
+
+      const verificationUrl = buildFrontendUrl(appBaseUrl, "/verify-email", verification.token);
+      await mailer.sendVerificationEmail({
+        displayName: authUser.display_name,
+        email: normalizedEmail,
+        expiresAt: verification.expiresAt,
+        userId: authUser.id,
+        verificationUrl,
+      });
+
+      return {
+        developmentVerificationUrl:
+          emailRuntimeConfig.mode === "dev-auto-verify" ? verificationUrl : null,
+        verificationEmailSent: true,
+      };
+    },
+
+    async setPrimaryEmail(
+      userId: bigint | number | string,
+      emailId: bigint | number | string
+    ): Promise<void> {
+      const emailRow = await (authDb as any)
+        .selectFrom("user_emails")
+        .select(["id", "email", "is_primary", "verified_at"])
+        .where("id", "=", toDbInt8(emailId))
+        .where("user_id", "=", toDbInt8(userId))
+        .executeTakeFirst() as { id: bigint; email: string; is_primary: boolean; verified_at: Date | null } | undefined;
+
+      if (!emailRow) {
+        throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
+      }
+
+      if (emailRow.is_primary) {
+        return;
+      }
+
+      if (!emailRow.verified_at) {
+        throw new AuthError(400, "EMAIL_NOT_VERIFIED", "Only verified emails can be set as primary");
+      }
+
+      await authDb.transaction().execute(async (trx) => {
+        await (trx as any)
+          .updateTable("user_emails")
+          .set({ is_primary: false })
+          .where("user_id", "=", toDbInt8(userId))
+          .where("is_primary", "=", true)
+          .execute();
+
+        await (trx as any)
+          .updateTable("user_emails")
+          .set({ is_primary: true })
+          .where("id", "=", toDbInt8(emailId))
+          .execute();
+      });
+    },
+
+    async removeEmail(
+      userId: bigint | number | string,
+      emailId: bigint | number | string
+    ): Promise<void> {
+      const emailRow = await (authDb as any)
+        .selectFrom("user_emails")
+        .select(["id", "is_primary"])
+        .where("id", "=", toDbInt8(emailId))
+        .where("user_id", "=", toDbInt8(userId))
+        .executeTakeFirst() as { id: bigint; is_primary: boolean } | undefined;
+
+      if (!emailRow) {
+        throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
+      }
+
+      if (emailRow.is_primary) {
+        throw new AuthError(
+          400,
+          "EMAIL_IS_PRIMARY",
+          "Cannot remove the primary email. Set another email as primary first."
+        );
+      }
+
+      await (authDb as any)
+        .deleteFrom("user_emails")
+        .where("id", "=", toDbInt8(emailId))
+        .execute();
+    },
+
+    async resendVerificationForEmail(
+      userId: bigint | number | string,
+      emailId: bigint | number | string
+    ): Promise<AddEmailResult> {
+      const emailRow = await (authDb as any)
+        .selectFrom("user_emails")
+        .select(["id", "email", "verified_at"])
+        .where("id", "=", toDbInt8(emailId))
+        .where("user_id", "=", toDbInt8(userId))
+        .executeTakeFirst() as { id: bigint; email: string; verified_at: Date | null } | undefined;
+
+      if (!emailRow || emailRow.verified_at !== null) {
+        return { developmentVerificationUrl: null, verificationEmailSent: false };
+      }
+
+      const user = await findUserWithPrimaryEmailById(authDb, userId);
+      if (!user) {
+        throw new AuthError(401, "AUTH_REQUIRED", "Authentication required");
+      }
+
+      const authUser = toAuthUserRecord(user);
+      const currentTime = now();
+      const verification = await authDb.transaction().execute(async (trx) => {
+        return rotateVerificationToken(trx, userId, emailRow.email, currentTime);
+      });
+
+      const verificationUrl = buildFrontendUrl(appBaseUrl, "/verify-email", verification.token);
+      await mailer.sendVerificationEmail({
+        displayName: authUser.display_name,
+        email: emailRow.email,
+        expiresAt: verification.expiresAt,
+        userId: authUser.id,
+        verificationUrl,
+      });
+
+      return {
+        developmentVerificationUrl:
+          emailRuntimeConfig.mode === "dev-auto-verify" ? verificationUrl : null,
+        verificationEmailSent: true,
+      };
     },
   };
 }

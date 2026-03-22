@@ -60,23 +60,27 @@ describeAuthMaintenance("auth cleanup maintenance", () => {
     const primaryUser = await getAuthDb()
       .insertInto("users")
       .values({
-        email: "cleanup@example.com",
-        email_verified_at: now,
         password_hash: passwordHash,
         status: "active",
       })
       .returning("id")
       .executeTakeFirstOrThrow();
+    await getAuthDb()
+      .insertInto("user_emails")
+      .values({ user_id: primaryUser.id, email: "cleanup@example.com", is_primary: true, verified_at: now })
+      .execute();
     const secondaryUser = await getAuthDb()
       .insertInto("users")
       .values({
-        email: "cleanup-expired@example.com",
-        email_verified_at: now,
         password_hash: passwordHash,
         status: "active",
       })
       .returning("id")
       .executeTakeFirstOrThrow();
+    await getAuthDb()
+      .insertInto("user_emails")
+      .values({ user_id: secondaryUser.id, email: "cleanup-expired@example.com", is_primary: true, verified_at: now })
+      .execute();
 
     await getAuthDb()
       .insertInto("auth_sessions")

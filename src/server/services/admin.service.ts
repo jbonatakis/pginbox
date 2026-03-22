@@ -55,6 +55,37 @@ function toAdminUser(row: {
   };
 }
 
+async function fetchAdminUserById(userId: bigint | number | string): Promise<AdminUser | null> {
+  const row = await (defaultDb as any)
+    .selectFrom("users")
+    .innerJoin("user_emails as ue", (join: any) =>
+      join.onRef("ue.user_id", "=", "users.id")
+          .on("ue.is_primary", "=", true)
+    )
+    .select([
+      "users.id",
+      "ue.email",
+      "users.display_name",
+      "users.role",
+      "users.status",
+      "ue.verified_at as email_verified_at",
+      "users.created_at",
+    ])
+    .where("users.id", "=", toDbInt8(userId))
+    .executeTakeFirst() as {
+      id: bigint;
+      email: string;
+      display_name: string | null;
+      role: string;
+      status: string;
+      email_verified_at: Date | null;
+      created_at: Date;
+    } | undefined;
+
+  if (!row) return null;
+  return toAdminUser({ ...row, active_session_count: 0, last_seen_at: null });
+}
+
 export async function listAdminUsers(query: {
   q?: string;
   cursor?: string;
@@ -63,9 +94,13 @@ export async function listAdminUsers(query: {
   const limit = Math.min(Math.max(1, query.limit), 100);
   const now = new Date();
 
-  let q = defaultDb
+  let q = (defaultDb as any)
     .selectFrom("users")
-    .leftJoin("auth_sessions", (join) =>
+    .innerJoin("user_emails as ue", (join: any) =>
+      join.onRef("ue.user_id", "=", "users.id")
+          .on("ue.is_primary", "=", true)
+    )
+    .leftJoin("auth_sessions", (join: any) =>
       join
         .onRef("auth_sessions.user_id", "=", "users.id")
         .on("auth_sessions.revoked_at", "is", null)
@@ -73,25 +108,25 @@ export async function listAdminUsers(query: {
     )
     .select([
       "users.id",
-      "users.email",
+      "ue.email",
       "users.display_name",
       "users.role",
       "users.status",
-      "users.email_verified_at",
+      "ue.verified_at as email_verified_at",
       "users.created_at",
       defaultDb.fn.count<string>("auth_sessions.id").as("active_session_count"),
       defaultDb.fn.max("auth_sessions.last_seen_at").as("last_seen_at"),
     ])
-    .groupBy("users.id")
+    .groupBy(["users.id", "ue.email", "ue.verified_at"])
     .orderBy("users.created_at", "desc")
     .orderBy("users.id", "desc")
     .limit(limit + 1);
 
   if (query.q) {
     const search = `%${query.q}%`;
-    q = q.where((eb) =>
+    q = q.where((eb: any) =>
       eb.or([
-        eb("users.email", "ilike", search),
+        eb("ue.email", "ilike", search),
         eb("users.display_name", "ilike", search),
       ])
     );
@@ -100,7 +135,7 @@ export async function listAdminUsers(query: {
   if (query.cursor) {
     const decoded = decodeCursorSafe(query.cursor);
     if (decoded) {
-      q = q.where((eb) =>
+      q = q.where((eb: any) =>
         eb.or([
           eb("users.created_at", "<", new Date(decoded.createdAt)),
           eb.and([
@@ -135,7 +170,7 @@ export async function disableAdminUser(
   }
 
   const now = new Date();
-  const updated = await defaultDb
+  const result = await defaultDb
     .updateTable("users")
     .set({
       status: "disabled",
@@ -144,21 +179,23 @@ export async function disableAdminUser(
     })
     .where("id", "=", toDbInt8(userId))
     .where("status", "!=", "disabled")
-    .returning([
-      "id", "email", "display_name", "role", "status",
-      "email_verified_at", "created_at",
-    ])
+    .returning(["id"])
     .executeTakeFirst();
 
-  if (!updated) {
+  if (!result) {
     throw new BadRequestError("User not found or already disabled");
   }
 
-  return toAdminUser({ ...updated, active_session_count: 0, last_seen_at: null });
+  const adminUser = await fetchAdminUserById(result.id);
+  if (!adminUser) {
+    throw new BadRequestError("User not found after update");
+  }
+
+  return { ...adminUser, activeSessionCount: 0 };
 }
 
 export async function enableAdminUser(userId: string): Promise<AdminUser> {
-  const updated = await defaultDb
+  const result = await defaultDb
     .updateTable("users")
     .set({
       status: "active",
@@ -167,31 +204,34 @@ export async function enableAdminUser(userId: string): Promise<AdminUser> {
     })
     .where("id", "=", toDbInt8(userId))
     .where("status", "=", "disabled")
-    .returning([
-      "id", "email", "display_name", "role", "status",
-      "email_verified_at", "created_at",
-    ])
+    .returning(["id"])
     .executeTakeFirst();
 
-  if (!updated) {
+  if (!result) {
     throw new BadRequestError("User not found or not disabled");
   }
 
-  return toAdminUser({ ...updated, active_session_count: 0, last_seen_at: null });
+  const adminUser = await fetchAdminUserById(result.id);
+  if (!adminUser) {
+    throw new BadRequestError("User not found after update");
+  }
+
+  return { ...adminUser, activeSessionCount: 0 };
 }
 
 export async function sendAdminPasswordReset(userId: string): Promise<void> {
-  const user = await defaultDb
-    .selectFrom("users")
+  const emailRow = await (defaultDb as any)
+    .selectFrom("user_emails")
     .select(["email"])
-    .where("id", "=", toDbInt8(userId))
-    .executeTakeFirst();
+    .where("user_id", "=", toDbInt8(userId))
+    .where("is_primary", "=", true)
+    .executeTakeFirst() as { email: string } | undefined;
 
-  if (!user) {
+  if (!emailRow) {
     throw new BadRequestError("User not found");
   }
 
-  const result = await authService.forgotPassword({ email: user.email });
+  const result = await authService.forgotPassword({ email: emailRow.email });
   if (!result.passwordResetEmailSent) {
     throw new BadRequestError(
       "Password reset email could not be sent. The user must be active and have a verified email."
@@ -212,21 +252,23 @@ export async function setAdminUserRole(
     throw new BadRequestError("You cannot demote your own admin account");
   }
 
-  const updated = await defaultDb
+  const result = await defaultDb
     .updateTable("users")
     .set({ role })
     .where("id", "=", toDbInt8(userId))
-    .returning([
-      "id", "email", "display_name", "role", "status",
-      "email_verified_at", "created_at",
-    ])
+    .returning(["id"])
     .executeTakeFirst();
 
-  if (!updated) {
+  if (!result) {
     throw new BadRequestError("User not found");
   }
 
-  return toAdminUser({ ...updated, active_session_count: 0, last_seen_at: null });
+  const adminUser = await fetchAdminUserById(result.id);
+  if (!adminUser) {
+    throw new BadRequestError("User not found after update");
+  }
+
+  return { ...adminUser, activeSessionCount: 0 };
 }
 
 export async function getAdminStats(): Promise<AdminStats> {

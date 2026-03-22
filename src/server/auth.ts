@@ -78,6 +78,7 @@ interface SessionLookupRow {
   ip_address: string | null;
   last_seen_at: Date | string;
   revoked_at: Date | string | null;
+  // Note: email and email_verified_at come from user_emails join (primary email)
   role: string;
   session_token_hash: string;
   status: AuthUser["status"];
@@ -357,9 +358,13 @@ export async function resolveCurrentSession(
   }
 
   const tokenHash = hashOpaqueToken(sessionToken);
-  const row = await authDb
+  const row = await (authDb as any)
     .selectFrom("auth_sessions")
     .innerJoin("users", "users.id", "auth_sessions.user_id")
+    .innerJoin("user_emails as ue", (join: any) =>
+      join.onRef("ue.user_id", "=", "users.id")
+          .on("ue.is_primary", "=", true)
+    )
     .select([
       "auth_sessions.id",
       "auth_sessions.user_id",
@@ -370,11 +375,11 @@ export async function resolveCurrentSession(
       "auth_sessions.ip_address",
       "auth_sessions.user_agent",
       "auth_sessions.token_hash as session_token_hash",
-      "users.email",
+      "ue.email",
       "users.display_name",
       "users.role",
       "users.status",
-      "users.email_verified_at",
+      "ue.verified_at as email_verified_at",
       "users.created_at as user_created_at",
     ])
     .where("auth_sessions.token_hash", "=", tokenHash)

@@ -27,12 +27,10 @@ async function createTestUser(role: "admin" | "member" = "member"): Promise<Test
   const row = await db
     .insertInto("users")
     .values({
-      email,
       password_hash: "placeholder",
       status: "active",
       role,
       created_at: now,
-      email_verified_at: now,
       display_name: null,
       disabled_at: null,
       disable_reason: null,
@@ -41,6 +39,10 @@ async function createTestUser(role: "admin" | "member" = "member"): Promise<Test
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+  await db
+    .insertInto("user_emails")
+    .values({ user_id: row.id, email, is_primary: true, verified_at: now })
+    .execute();
   return { id: String(row.id), email };
 }
 
