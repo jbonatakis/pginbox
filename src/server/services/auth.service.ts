@@ -51,6 +51,7 @@ interface UserCredentialsRow {
 }
 
 interface VerificationTokenRow {
+  claim_kind: UserEmailClaimKind;
   consumed_at: Date | string | null;
   email: string;
   expires_at: Date | string;
@@ -73,11 +74,40 @@ interface PasswordResetTokenRow {
 }
 
 export interface UserEmailRecord {
-  id: bigint | number | string;
+  id: string;
   email: string;
   is_primary: boolean;
   verified_at: Date | string | null;
   created_at: Date | string;
+}
+
+type UserEmailClaimKind = "registration" | "secondary_addition";
+
+interface UserEmailClaimRow {
+  claim_kind: UserEmailClaimKind;
+  created_at: Date | string;
+  email: string;
+  id: bigint | number | string;
+  user_id: bigint | number | string;
+}
+
+interface RegistrationClaimRow {
+  claim_id: bigint | number | string;
+  email: string;
+  user_created_at: Date | string;
+  user_display_name: string | null;
+  user_id: bigint | number | string;
+  user_role: string;
+  user_status: AuthUserRecord["status"];
+}
+
+interface VerifiedUserEmailRow {
+  created_at: Date | string;
+  email: string;
+  id: bigint | number | string;
+  is_primary: boolean;
+  user_id: bigint | number | string;
+  verified_at: Date | string;
 }
 
 export interface AuthFlowResult {
@@ -203,6 +233,154 @@ function validateLoginInput(input: AuthLoginRequest): { email: string; password:
   };
 }
 
+const VERIFIED_EMAIL_ID_PREFIX = "email";
+const EMAIL_CLAIM_ID_PREFIX = "claim";
+
+function encodeUserEmailRecordId(
+  kind: typeof VERIFIED_EMAIL_ID_PREFIX | typeof EMAIL_CLAIM_ID_PREFIX,
+  id: bigint | number | string
+): string {
+  return `${kind}:${id}`;
+}
+
+function parseUserEmailRecordId(
+  rawId: bigint | number | string
+): { id: string; kind: typeof VERIFIED_EMAIL_ID_PREFIX | typeof EMAIL_CLAIM_ID_PREFIX } | null {
+  const value = String(rawId).trim();
+  if (!value) return null;
+
+  if (/^\d+$/.test(value)) {
+    return { id: value, kind: VERIFIED_EMAIL_ID_PREFIX };
+  }
+
+  const separatorIndex = value.indexOf(":");
+  if (separatorIndex === -1) return null;
+
+  const kind = value.slice(0, separatorIndex);
+  const id = value.slice(separatorIndex + 1);
+  if (!id || !/^\d+$/.test(id)) return null;
+  if (kind !== VERIFIED_EMAIL_ID_PREFIX && kind !== EMAIL_CLAIM_ID_PREFIX) return null;
+
+  return {
+    id,
+    kind,
+  };
+}
+
+async function findVerifiedEmailByEmail(
+  authDb: DatabaseClient,
+  email: string
+): Promise<VerifiedUserEmailRow | null> {
+  const row = await (authDb as any)
+    .selectFrom("user_emails")
+    .select(["id", "user_id", "email", "is_primary", "verified_at", "created_at"])
+    .where("email", "=", email)
+    .executeTakeFirst();
+
+  return (row as VerifiedUserEmailRow | undefined) ?? null;
+}
+
+async function findRegistrationClaimByEmail(
+  authDb: DatabaseClient,
+  email: string
+): Promise<RegistrationClaimRow | null> {
+  const row = await (authDb as any)
+    .selectFrom("user_email_claims as claim")
+    .innerJoin("users", "users.id", "claim.user_id")
+    .select([
+      "claim.id as claim_id",
+      "claim.email",
+      "users.id as user_id",
+      "users.display_name as user_display_name",
+      "users.role as user_role",
+      "users.status as user_status",
+      "users.created_at as user_created_at",
+    ])
+    .where("claim.email", "=", email)
+    .where("claim.claim_kind", "=", "registration")
+    .executeTakeFirst();
+
+  return (row as RegistrationClaimRow | undefined) ?? null;
+}
+
+async function findUserEmailClaimByUserAndEmail(
+  authDb: DatabaseClient,
+  userId: bigint | number | string,
+  email: string
+): Promise<UserEmailClaimRow | null> {
+  const row = await (authDb as any)
+    .selectFrom("user_email_claims")
+    .select(["id", "user_id", "email", "claim_kind", "created_at"])
+    .where("user_id", "=", toDbInt8(userId))
+    .where("email", "=", email)
+    .executeTakeFirst();
+
+  return (row as UserEmailClaimRow | undefined) ?? null;
+}
+
+async function findOwnedVerifiedEmailById(
+  authDb: DatabaseClient,
+  userId: bigint | number | string,
+  emailId: bigint | number | string
+): Promise<VerifiedUserEmailRow | null> {
+  const row = await (authDb as any)
+    .selectFrom("user_emails")
+    .select(["id", "user_id", "email", "is_primary", "verified_at", "created_at"])
+    .where("id", "=", toDbInt8(emailId))
+    .where("user_id", "=", toDbInt8(userId))
+    .executeTakeFirst();
+
+  return (row as VerifiedUserEmailRow | undefined) ?? null;
+}
+
+async function findOwnedEmailClaimById(
+  authDb: DatabaseClient,
+  userId: bigint | number | string,
+  claimId: bigint | number | string
+): Promise<UserEmailClaimRow | null> {
+  const row = await (authDb as any)
+    .selectFrom("user_email_claims")
+    .select(["id", "user_id", "email", "claim_kind", "created_at"])
+    .where("id", "=", toDbInt8(claimId))
+    .where("user_id", "=", toDbInt8(userId))
+    .executeTakeFirst();
+
+  return (row as UserEmailClaimRow | undefined) ?? null;
+}
+
+async function findPendingRegistrationUserByEmail(
+  authDb: DatabaseClient,
+  email: string
+): Promise<UserCredentialsRow | null> {
+  const row = await (authDb as any)
+    .selectFrom("users")
+    .innerJoin("user_email_claims as claim", (join: any) =>
+      join.onRef("claim.user_id", "=", "users.id")
+          .on("claim.email", "=", email)
+          .on("claim.claim_kind", "=", "registration")
+    )
+    .select([
+      "users.id",
+      "users.display_name",
+      "users.password_hash",
+      "users.role",
+      "users.status",
+      "users.last_login_at",
+      "users.disabled_at",
+      "users.disable_reason",
+      "users.created_at",
+      "claim.email as email",
+    ])
+    .executeTakeFirst();
+
+  if (!row) return null;
+
+  return {
+    ...(row as Omit<UserCredentialsRow, "email_verified_at">),
+    email_verified_at: null,
+  };
+}
+
 // Find a user by their primary email address
 async function findUserByPrimaryEmail(
   authDb: DatabaseClient,
@@ -295,6 +473,21 @@ async function rotateVerificationToken(
   return { expiresAt, token };
 }
 
+async function consumeVerificationTokensForEmail(
+  authDb: DatabaseClient,
+  userId: bigint | number | string,
+  email: string,
+  now: Date
+): Promise<void> {
+  await authDb
+    .updateTable("email_verification_tokens")
+    .set({ consumed_at: now })
+    .where("user_id", "=", toDbInt8(userId))
+    .where("email", "=", email)
+    .where("consumed_at", "is", null)
+    .execute();
+}
+
 async function rotatePasswordResetToken(
   authDb: DatabaseClient,
   user: AuthUserRecord,
@@ -346,7 +539,7 @@ async function createSessionForUser(
     throw new AuthError(403, "ACCOUNT_DISABLED", "This account is disabled");
   }
 
-  if (user.status !== "active") {
+  if (user.status !== "active" || user.email_verified_at === null) {
     throw new AuthError(403, "EMAIL_NOT_VERIFIED", "Email verification is required");
   }
 
@@ -393,9 +586,13 @@ async function findVerificationToken(
   authDb: DatabaseClient,
   tokenHash: string
 ): Promise<VerificationTokenRow | null> {
-  const row = await authDb
+  const row = await (authDb as any)
     .selectFrom("email_verification_tokens")
     .innerJoin("users", "users.id", "email_verification_tokens.user_id")
+    .innerJoin("user_email_claims as claim", (join: any) =>
+      join.onRef("claim.user_id", "=", "email_verification_tokens.user_id")
+          .onRef("claim.email", "=", "email_verification_tokens.email")
+    )
     .select([
       "email_verification_tokens.email",
       "email_verification_tokens.token_hash",
@@ -403,6 +600,7 @@ async function findVerificationToken(
       "email_verification_tokens.consumed_at",
       "users.id as user_id",
       "users.status as user_status",
+      "claim.claim_kind",
     ])
     .where("email_verification_tokens.token_hash", "=", tokenHash)
     .executeTakeFirst();
@@ -470,38 +668,17 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       assertValidEmail(email);
       assertValidPassword(input.password);
 
-      // Check if email is globally taken (as primary or secondary on any account)
-      const existingEmailRow = await (authDb as any)
-        .selectFrom("user_emails")
-        .innerJoin("users", "users.id", "user_emails.user_id")
-        .select(["users.id", "users.status", "user_emails.is_primary"])
-        .where("user_emails.email", "=", email)
-        .executeTakeFirst() as { id: bigint; status: string; is_primary: boolean } | undefined;
-
-      if (existingEmailRow) {
-        if (!existingEmailRow.is_primary || existingEmailRow.status !== "pending_verification") {
-          return {
-            developmentVerificationUrl: null,
-            user: null,
-            verificationEmailSent: false,
-          };
-        }
-      }
-
       const passwordHash = await hashPassword(input.password);
       const currentTime = now();
 
       const result = await authDb.transaction().execute(async (trx) => {
-        // Re-check inside transaction
-        const pendingEmailRow = await (trx as any)
-          .selectFrom("user_emails")
-          .innerJoin("users", "users.id", "user_emails.user_id")
-          .select(["users.id", "users.status", "users.display_name", "user_emails.is_primary"])
-          .where("user_emails.email", "=", email)
-          .executeTakeFirst() as { id: bigint; status: string; display_name: string | null; is_primary: boolean } | undefined;
+        const existingVerifiedEmail = await findVerifiedEmailByEmail(trx, email);
+        if (existingVerifiedEmail) {
+          return { user: null, verification: null };
+        }
 
-        if (!pendingEmailRow) {
-          // Create new user + primary email entry
+        const registrationClaim = await findRegistrationClaimByEmail(trx, email);
+        if (!registrationClaim) {
           const insertedUser = await trx
             .insertInto("users")
             .values({
@@ -513,12 +690,12 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
             .executeTakeFirstOrThrow();
 
           await (trx as any)
-            .insertInto("user_emails")
+            .insertInto("user_email_claims")
             .values({
               user_id: insertedUser.id,
               email,
-              is_primary: true,
-              verified_at: null,
+              claim_kind: "registration",
+              created_at: currentTime,
             })
             .execute();
 
@@ -527,22 +704,23 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           return { user, verification };
         }
 
-        if (!pendingEmailRow.is_primary || pendingEmailRow.status !== "pending_verification") {
+        if (registrationClaim.user_status !== "pending_verification") {
           return { user: null, verification: null };
         }
 
         const updatedUser = await trx
           .updateTable("users")
           .set({
-            display_name: hasDisplayNameOverride(input) ? displayName : pendingEmailRow.display_name,
+            display_name:
+              hasDisplayNameOverride(input) ? displayName : registrationClaim.user_display_name,
             password_hash: passwordHash,
           })
-          .where("id", "=", toDbInt8(pendingEmailRow.id))
+          .where("id", "=", toDbInt8(registrationClaim.user_id))
           .returning(["id", "display_name", "role", "status", "created_at"])
           .executeTakeFirstOrThrow();
 
         const user = toAuthUserRecord({ ...updatedUser, email, email_verified_at: null });
-        const verification = await rotateVerificationToken(trx, pendingEmailRow.id, email, currentTime);
+        const verification = await rotateVerificationToken(trx, registrationClaim.user_id, email, currentTime);
         return { user, verification };
       });
 
@@ -582,8 +760,8 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const email = normalizeEmail(input.email);
       assertValidEmail(email);
 
-      const user = await findUserByPrimaryEmail(authDb, email);
-      if (!user || user.status !== "pending_verification") {
+      const registrationClaim = await findRegistrationClaimByEmail(authDb, email);
+      if (!registrationClaim || registrationClaim.user_status !== "pending_verification") {
         return {
           developmentVerificationUrl: null,
           user: null,
@@ -593,10 +771,18 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
 
       const currentTime = now();
       const verification = await authDb.transaction().execute(async (trx) => {
-        return rotateVerificationToken(trx, user.id, email, currentTime);
+        return rotateVerificationToken(trx, registrationClaim.user_id, email, currentTime);
       });
 
-      const authUser = toAuthUserRecord(user);
+      const authUser = toAuthUserRecord({
+        id: registrationClaim.user_id,
+        display_name: registrationClaim.user_display_name,
+        role: registrationClaim.user_role,
+        status: registrationClaim.user_status,
+        created_at: registrationClaim.user_created_at,
+        email,
+        email_verified_at: null,
+      });
       const verificationUrl = buildFrontendUrl(appBaseUrl, "/verify-email", verification.token);
       await mailer.sendVerificationEmail({
         displayName: authUser.display_name,
@@ -639,24 +825,47 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           throw new AuthError(403, "ACCOUNT_DISABLED", "This account is disabled");
         }
 
-        // Consume the token (scoped to this user+email pair)
-        await trx
-          .updateTable("email_verification_tokens")
-          .set({ consumed_at: currentTime })
-          .where("user_id", "=", toDbInt8(tokenRecord.user_id))
-          .where("email", "=", tokenRecord.email)
-          .where("consumed_at", "is", null)
-          .execute();
+        await consumeVerificationTokensForEmail(trx, tokenRecord.user_id, tokenRecord.email, currentTime);
 
-        // Mark the email as verified
-        await (trx as any)
-          .updateTable("user_emails")
-          .set({ verified_at: currentTime })
-          .where("user_id", "=", toDbInt8(tokenRecord.user_id))
-          .where("email", "=", tokenRecord.email)
-          .execute();
+        const isRegistration = tokenRecord.claim_kind === "registration";
+        const existingVerifiedEmail = await findVerifiedEmailByEmail(trx, tokenRecord.email);
 
-        const isRegistration = tokenRecord.user_status === "pending_verification";
+        if (
+          existingVerifiedEmail &&
+          String(existingVerifiedEmail.user_id) !== String(tokenRecord.user_id)
+        ) {
+          await (trx as any)
+            .deleteFrom("user_email_claims")
+            .where("email", "=", tokenRecord.email)
+            .execute();
+          throwInvalidToken();
+        }
+
+        if (!existingVerifiedEmail) {
+          await (trx as any)
+            .insertInto("user_emails")
+            .values({
+              user_id: toDbInt8(tokenRecord.user_id),
+              email: tokenRecord.email,
+              is_primary: isRegistration,
+              verified_at: currentTime,
+              created_at: currentTime,
+            })
+            .execute();
+        } else if (isRegistration && !existingVerifiedEmail.is_primary) {
+          await (trx as any)
+            .updateTable("user_emails")
+            .set({ is_primary: false })
+            .where("user_id", "=", toDbInt8(tokenRecord.user_id))
+            .where("is_primary", "=", true)
+            .execute();
+
+          await (trx as any)
+            .updateTable("user_emails")
+            .set({ is_primary: true })
+            .where("id", "=", toDbInt8(existingVerifiedEmail.id))
+            .execute();
+        }
 
         if (isRegistration) {
           await trx
@@ -665,6 +874,11 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
             .where("id", "=", toDbInt8(tokenRecord.user_id))
             .execute();
         }
+
+        await (trx as any)
+          .deleteFrom("user_email_claims")
+          .where("email", "=", tokenRecord.email)
+          .execute();
 
         const userRow = await findUserWithPrimaryEmailById(trx, tokenRecord.user_id);
         if (!userRow) {
@@ -695,7 +909,9 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
 
     async login(input: AuthLoginRequest, metadata?: SessionRequestMetadata): Promise<AuthFlowResult> {
       const { email, password, isValid } = validateLoginInput(input);
-      const user = isValid ? await findUserByPrimaryEmail(authDb, email) : null;
+      const user = isValid
+        ? await findUserByPrimaryEmail(authDb, email) ?? await findPendingRegistrationUserByEmail(authDb, email)
+        : null;
 
       if (!user) {
         await runDummyPasswordVerification(password);
@@ -707,13 +923,13 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         throwInvalidCredentials();
       }
 
-      if (user.status === "pending_verification") {
-        throw new AuthError(403, "EMAIL_NOT_VERIFIED", "Email verification is required");
-      }
-
       if (user.status === "disabled") {
         await revokeAllSessionsForUser(authDb, user.id, now());
         throw new AuthError(403, "ACCOUNT_DISABLED", "This account is disabled");
+      }
+
+      if (user.status !== "active" || user.email_verified_at === null) {
+        throw new AuthError(403, "EMAIL_NOT_VERIFIED", "Email verification is required");
       }
 
       const currentTime = now();
@@ -874,15 +1090,53 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
     },
 
     async listEmails(userId: bigint | number | string): Promise<UserEmailRecord[]> {
-      const rows = await (authDb as any)
-        .selectFrom("user_emails")
-        .select(["id", "email", "is_primary", "verified_at", "created_at"])
-        .where("user_id", "=", toDbInt8(userId))
-        .orderBy("is_primary", "desc")
-        .orderBy("created_at", "asc")
-        .execute();
+      const [verifiedRows, claimRows] = await Promise.all([
+        (authDb as any)
+          .selectFrom("user_emails")
+          .select(["id", "email", "is_primary", "verified_at", "created_at"])
+          .where("user_id", "=", toDbInt8(userId))
+          .execute() as Promise<VerifiedUserEmailRow[]>,
+        (authDb as any)
+          .selectFrom("user_email_claims")
+          .select(["id", "email", "claim_kind", "created_at"])
+          .where("user_id", "=", toDbInt8(userId))
+          .where("claim_kind", "=", "secondary_addition")
+          .execute() as Promise<Array<Pick<UserEmailClaimRow, "id" | "email" | "claim_kind" | "created_at">>>,
+      ]);
 
-      return rows as UserEmailRecord[];
+      return [
+        ...verifiedRows.map((row) => ({
+          id: encodeUserEmailRecordId(VERIFIED_EMAIL_ID_PREFIX, row.id),
+          email: row.email,
+          is_primary: row.is_primary,
+          verified_at: row.verified_at,
+          created_at: row.created_at,
+        })),
+        ...claimRows.map((row) => ({
+          id: encodeUserEmailRecordId(EMAIL_CLAIM_ID_PREFIX, row.id),
+          email: row.email,
+          is_primary: false,
+          verified_at: null,
+          created_at: row.created_at,
+        })),
+      ].sort((left, right) => {
+        if (left.is_primary !== right.is_primary) {
+          return left.is_primary ? -1 : 1;
+        }
+
+        const leftVerified = left.verified_at !== null;
+        const rightVerified = right.verified_at !== null;
+        if (leftVerified !== rightVerified) {
+          return leftVerified ? -1 : 1;
+        }
+
+        const createdAtDiff = toDate(left.created_at).getTime() - toDate(right.created_at).getTime();
+        if (createdAtDiff !== 0) {
+          return createdAtDiff;
+        }
+
+        return left.email.localeCompare(right.email);
+      });
     },
 
     async addEmail(
@@ -892,38 +1146,41 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const normalizedEmail = normalizeEmail(email);
       assertValidEmail(normalizedEmail);
 
-      // Check if email is already registered anywhere — silent no-op if so
-      const existing = await (authDb as any)
-        .selectFrom("user_emails")
-        .select(["id"])
-        .where("email", "=", normalizedEmail)
-        .executeTakeFirst();
-
-      if (existing) {
-        return { developmentVerificationUrl: null, verificationEmailSent: false };
-      }
-
-      const currentTime = now();
-
-      await (authDb as any)
-        .insertInto("user_emails")
-        .values({
-          user_id: toDbInt8(userId),
-          email: normalizedEmail,
-          is_primary: false,
-          verified_at: null,
-        })
-        .execute();
-
       const user = await findUserWithPrimaryEmailById(authDb, userId);
       if (!user) {
         throw new AuthError(401, "AUTH_REQUIRED", "Authentication required");
       }
 
-      const authUser = toAuthUserRecord(user);
+      const currentTime = now();
       const verification = await authDb.transaction().execute(async (trx) => {
+        const existingVerifiedEmail = await findVerifiedEmailByEmail(trx, normalizedEmail);
+        if (existingVerifiedEmail) {
+          return null;
+        }
+
+        const existingClaim = await findUserEmailClaimByUserAndEmail(trx, userId, normalizedEmail);
+        if (!existingClaim) {
+          await (trx as any)
+            .insertInto("user_email_claims")
+            .values({
+              user_id: toDbInt8(userId),
+              email: normalizedEmail,
+              claim_kind: "secondary_addition",
+              created_at: currentTime,
+            })
+            .execute();
+        } else if (existingClaim.claim_kind !== "secondary_addition") {
+          return null;
+        }
+
         return rotateVerificationToken(trx, userId, normalizedEmail, currentTime);
       });
+
+      if (!verification) {
+        return { developmentVerificationUrl: null, verificationEmailSent: false };
+      }
+
+      const authUser = toAuthUserRecord(user);
 
       const verificationUrl = buildFrontendUrl(appBaseUrl, "/verify-email", verification.token);
       await mailer.sendVerificationEmail({
@@ -945,12 +1202,21 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       userId: bigint | number | string,
       emailId: bigint | number | string
     ): Promise<void> {
-      const emailRow = await (authDb as any)
-        .selectFrom("user_emails")
-        .select(["id", "email", "is_primary", "verified_at"])
-        .where("id", "=", toDbInt8(emailId))
-        .where("user_id", "=", toDbInt8(userId))
-        .executeTakeFirst() as { id: bigint; email: string; is_primary: boolean; verified_at: Date | null } | undefined;
+      const parsedEmailId = parseUserEmailRecordId(emailId);
+      if (!parsedEmailId) {
+        throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
+      }
+
+      if (parsedEmailId.kind === EMAIL_CLAIM_ID_PREFIX) {
+        const emailClaim = await findOwnedEmailClaimById(authDb, userId, parsedEmailId.id);
+        if (!emailClaim) {
+          throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
+        }
+
+        throw new AuthError(400, "EMAIL_NOT_VERIFIED", "Only verified emails can be set as primary");
+      }
+
+      const emailRow = await findOwnedVerifiedEmailById(authDb, userId, parsedEmailId.id);
 
       if (!emailRow) {
         throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
@@ -958,10 +1224,6 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
 
       if (emailRow.is_primary) {
         return;
-      }
-
-      if (!emailRow.verified_at) {
-        throw new AuthError(400, "EMAIL_NOT_VERIFIED", "Only verified emails can be set as primary");
       }
 
       await authDb.transaction().execute(async (trx) => {
@@ -975,7 +1237,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         await (trx as any)
           .updateTable("user_emails")
           .set({ is_primary: true })
-          .where("id", "=", toDbInt8(emailId))
+          .where("id", "=", toDbInt8(parsedEmailId.id))
           .execute();
       });
     },
@@ -984,28 +1246,41 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       userId: bigint | number | string,
       emailId: bigint | number | string
     ): Promise<void> {
-      const emailRow = await (authDb as any)
-        .selectFrom("user_emails")
-        .select(["id", "is_primary"])
-        .where("id", "=", toDbInt8(emailId))
-        .where("user_id", "=", toDbInt8(userId))
-        .executeTakeFirst() as { id: bigint; is_primary: boolean } | undefined;
-
-      if (!emailRow) {
+      const parsedEmailId = parseUserEmailRecordId(emailId);
+      if (!parsedEmailId) {
         throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
       }
 
-      if (emailRow.is_primary) {
-        throw new AuthError(
-          400,
-          "EMAIL_IS_PRIMARY",
-          "Cannot remove the primary email. Set another email as primary first."
-        );
+      if (parsedEmailId.kind === VERIFIED_EMAIL_ID_PREFIX) {
+        const emailRow = await findOwnedVerifiedEmailById(authDb, userId, parsedEmailId.id);
+        if (!emailRow) {
+          throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
+        }
+
+        if (emailRow.is_primary) {
+          throw new AuthError(
+            400,
+            "EMAIL_IS_PRIMARY",
+            "Cannot remove the primary email. Set another email as primary first."
+          );
+        }
+
+        await (authDb as any)
+          .deleteFrom("user_emails")
+          .where("id", "=", toDbInt8(parsedEmailId.id))
+          .execute();
+
+        return;
+      }
+
+      const emailClaim = await findOwnedEmailClaimById(authDb, userId, parsedEmailId.id);
+      if (!emailClaim || emailClaim.claim_kind !== "secondary_addition") {
+        throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
       }
 
       await (authDb as any)
-        .deleteFrom("user_emails")
-        .where("id", "=", toDbInt8(emailId))
+        .deleteFrom("user_email_claims")
+        .where("id", "=", toDbInt8(parsedEmailId.id))
         .execute();
     },
 
@@ -1013,14 +1288,13 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       userId: bigint | number | string,
       emailId: bigint | number | string
     ): Promise<AddEmailResult> {
-      const emailRow = await (authDb as any)
-        .selectFrom("user_emails")
-        .select(["id", "email", "verified_at"])
-        .where("id", "=", toDbInt8(emailId))
-        .where("user_id", "=", toDbInt8(userId))
-        .executeTakeFirst() as { id: bigint; email: string; verified_at: Date | null } | undefined;
+      const parsedEmailId = parseUserEmailRecordId(emailId);
+      if (!parsedEmailId || parsedEmailId.kind !== EMAIL_CLAIM_ID_PREFIX) {
+        return { developmentVerificationUrl: null, verificationEmailSent: false };
+      }
 
-      if (!emailRow || emailRow.verified_at !== null) {
+      const emailClaim = await findOwnedEmailClaimById(authDb, userId, parsedEmailId.id);
+      if (!emailClaim || emailClaim.claim_kind !== "secondary_addition") {
         return { developmentVerificationUrl: null, verificationEmailSent: false };
       }
 
@@ -1032,13 +1306,13 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const authUser = toAuthUserRecord(user);
       const currentTime = now();
       const verification = await authDb.transaction().execute(async (trx) => {
-        return rotateVerificationToken(trx, userId, emailRow.email, currentTime);
+        return rotateVerificationToken(trx, userId, emailClaim.email, currentTime);
       });
 
       const verificationUrl = buildFrontendUrl(appBaseUrl, "/verify-email", verification.token);
       await mailer.sendVerificationEmail({
         displayName: authUser.display_name,
-        email: emailRow.email,
+        email: emailClaim.email,
         expiresAt: verification.expiresAt,
         userId: authUser.id,
         verificationUrl,

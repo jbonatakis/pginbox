@@ -539,6 +539,40 @@ CREATE TABLE public.thread_tracking (
 
 
 --
+-- Name: user_email_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_email_claims (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    email text NOT NULL,
+    claim_kind text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT user_email_claims_claim_kind_check CHECK ((claim_kind = ANY (ARRAY['registration'::text, 'secondary_addition'::text]))),
+    CONSTRAINT user_email_claims_email_lowercase_check CHECK ((email = lower(email)))
+);
+
+
+--
+-- Name: user_email_claims_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.user_email_claims_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: user_email_claims_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.user_email_claims_id_seq OWNED BY public.user_email_claims.id;
+
+
+--
 -- Name: user_emails; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -547,7 +581,7 @@ CREATE TABLE public.user_emails (
     user_id bigint NOT NULL,
     email text NOT NULL,
     is_primary boolean DEFAULT false NOT NULL,
-    verified_at timestamp with time zone,
+    verified_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT user_emails_email_lowercase_check CHECK ((email = lower(email)))
 );
@@ -660,6 +694,13 @@ ALTER TABLE ONLY public.people ALTER COLUMN id SET DEFAULT nextval('public.peopl
 --
 
 ALTER TABLE ONLY public.people_emails ALTER COLUMN id SET DEFAULT nextval('public.people_emails_id_seq'::regclass);
+
+
+--
+-- Name: user_email_claims id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_email_claims ALTER COLUMN id SET DEFAULT nextval('public.user_email_claims_id_seq'::regclass);
 
 
 --
@@ -826,6 +867,14 @@ ALTER TABLE ONLY public.thread_tracking
 
 ALTER TABLE ONLY public.threads
     ADD CONSTRAINT threads_pkey PRIMARY KEY (thread_id);
+
+
+--
+-- Name: user_email_claims user_email_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_email_claims
+    ADD CONSTRAINT user_email_claims_pkey PRIMARY KEY (id);
 
 
 --
@@ -1035,6 +1084,34 @@ CREATE INDEX idx_threads_subject_trgm ON public.threads USING gin (subject publi
 
 
 --
+-- Name: idx_user_email_claims_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_email_claims_email ON public.user_email_claims USING btree (email);
+
+
+--
+-- Name: idx_user_email_claims_registration_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_user_email_claims_registration_email ON public.user_email_claims USING btree (email) WHERE (claim_kind = 'registration'::text);
+
+
+--
+-- Name: idx_user_email_claims_user_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_user_email_claims_user_email ON public.user_email_claims USING btree (user_id, email);
+
+
+--
+-- Name: idx_user_email_claims_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_email_claims_user_id ON public.user_email_claims USING btree (user_id);
+
+
+--
 -- Name: idx_user_emails_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1053,6 +1130,13 @@ CREATE UNIQUE INDEX idx_user_emails_user_primary ON public.user_emails USING btr
 --
 
 CREATE TRIGGER trg_email_verification_tokens_normalize_email BEFORE INSERT OR UPDATE OF email ON public.email_verification_tokens FOR EACH ROW EXECUTE FUNCTION public._normalize_auth_email();
+
+
+--
+-- Name: user_email_claims trg_user_email_claims_normalize_email; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_user_email_claims_normalize_email BEFORE INSERT OR UPDATE OF email ON public.user_email_claims FOR EACH ROW EXECUTE FUNCTION public._normalize_auth_email();
 
 
 --
@@ -1197,6 +1281,14 @@ ALTER TABLE ONLY public.threads
 
 
 --
+-- Name: user_email_claims user_email_claims_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_email_claims
+    ADD CONSTRAINT user_email_claims_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: user_emails user_emails_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1234,4 +1326,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260320000016'),
     ('20260320000017'),
     ('20260321000018'),
-    ('20260321000019');
+    ('20260321000019'),
+    ('20260322000020');

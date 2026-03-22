@@ -170,7 +170,15 @@ export interface UserEmails {
   id: Generated<Int8>;
   is_primary: Generated<boolean>;
   user_id: Int8;
-  verified_at: Timestamp | null;
+  verified_at: Timestamp;
+}
+
+export interface UserEmailClaims {
+  claim_kind: string;
+  created_at: Generated<Timestamp>;
+  email: string;
+  id: Generated<Int8>;
+  user_id: Int8;
 }
 
 export interface Users {
@@ -206,6 +214,7 @@ export interface DB {
   thread_read_progress: ThreadReadProgress;
   thread_tracking: ThreadTracking;
   threads: Threads;
+  user_email_claims: UserEmailClaims;
   user_emails: UserEmails;
   users: Users;
 }

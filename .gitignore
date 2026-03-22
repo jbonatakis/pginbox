@@ -13,3 +13,4 @@ dist/
 blackbird.plan.json
 .pytest_cache/
 locust/
+scratch.md

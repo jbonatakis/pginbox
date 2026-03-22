@@ -1,4 +1,5 @@
 import type { AdminStats, AdminUser, AdminUserListResponse, AuthUserStatus } from "shared/api";
+import { sql } from "kysely";
 import { db as defaultDb } from "../db";
 import { toDbInt8 } from "../db-ids";
 import { BadRequestError } from "../errors";
@@ -31,6 +32,8 @@ function decodeCursorSafe(cursor: string): { createdAt: string; userId: string }
   }
 }
 
+const PRIMARY_OR_REGISTRATION_EMAIL = sql<string>`coalesce(ue.email, registration_claim.email)`;
+
 function toAdminUser(row: {
   id: bigint | number | string;
   email: string;
@@ -58,13 +61,17 @@ function toAdminUser(row: {
 async function fetchAdminUserById(userId: bigint | number | string): Promise<AdminUser | null> {
   const row = await (defaultDb as any)
     .selectFrom("users")
-    .innerJoin("user_emails as ue", (join: any) =>
+    .leftJoin("user_emails as ue", (join: any) =>
       join.onRef("ue.user_id", "=", "users.id")
           .on("ue.is_primary", "=", true)
     )
+    .leftJoin("user_email_claims as registration_claim", (join: any) =>
+      join.onRef("registration_claim.user_id", "=", "users.id")
+          .on("registration_claim.claim_kind", "=", "registration")
+    )
     .select([
       "users.id",
-      "ue.email",
+      PRIMARY_OR_REGISTRATION_EMAIL.as("email"),
       "users.display_name",
       "users.role",
       "users.status",
@@ -82,7 +89,7 @@ async function fetchAdminUserById(userId: bigint | number | string): Promise<Adm
       created_at: Date;
     } | undefined;
 
-  if (!row) return null;
+  if (!row || !row.email) return null;
   return toAdminUser({ ...row, active_session_count: 0, last_seen_at: null });
 }
 
@@ -96,9 +103,13 @@ export async function listAdminUsers(query: {
 
   let q = (defaultDb as any)
     .selectFrom("users")
-    .innerJoin("user_emails as ue", (join: any) =>
+    .leftJoin("user_emails as ue", (join: any) =>
       join.onRef("ue.user_id", "=", "users.id")
           .on("ue.is_primary", "=", true)
+    )
+    .leftJoin("user_email_claims as registration_claim", (join: any) =>
+      join.onRef("registration_claim.user_id", "=", "users.id")
+          .on("registration_claim.claim_kind", "=", "registration")
     )
     .leftJoin("auth_sessions", (join: any) =>
       join
@@ -108,7 +119,7 @@ export async function listAdminUsers(query: {
     )
     .select([
       "users.id",
-      "ue.email",
+      PRIMARY_OR_REGISTRATION_EMAIL.as("email"),
       "users.display_name",
       "users.role",
       "users.status",
@@ -117,7 +128,13 @@ export async function listAdminUsers(query: {
       defaultDb.fn.count<string>("auth_sessions.id").as("active_session_count"),
       defaultDb.fn.max("auth_sessions.last_seen_at").as("last_seen_at"),
     ])
-    .groupBy(["users.id", "ue.email", "ue.verified_at"])
+    .where((eb: any) =>
+      eb.or([
+        eb("ue.email", "is not", null),
+        eb("registration_claim.email", "is not", null),
+      ])
+    )
+    .groupBy(["users.id", "ue.email", "ue.verified_at", "registration_claim.email"])
     .orderBy("users.created_at", "desc")
     .orderBy("users.id", "desc")
     .limit(limit + 1);
@@ -127,6 +144,7 @@ export async function listAdminUsers(query: {
     q = q.where((eb: any) =>
       eb.or([
         eb("ue.email", "ilike", search),
+        eb("registration_claim.email", "ilike", search),
         eb("users.display_name", "ilike", search),
       ])
     );
@@ -195,10 +213,17 @@ export async function disableAdminUser(
 }
 
 export async function enableAdminUser(userId: string): Promise<AdminUser> {
+  const primaryEmailRow = await (defaultDb as any)
+    .selectFrom("user_emails")
+    .select(["id"])
+    .where("user_id", "=", toDbInt8(userId))
+    .where("is_primary", "=", true)
+    .executeTakeFirst();
+
   const result = await defaultDb
     .updateTable("users")
     .set({
-      status: "active",
+      status: primaryEmailRow ? "active" : "pending_verification",
       disabled_at: null,
       disable_reason: null,
     })

@@ -272,6 +272,16 @@ async function getUserIdByEmail(email: string): Promise<bigint> {
   return row.user_id as bigint;
 }
 
+async function getPendingRegistrationUserIdByEmail(email: string): Promise<bigint> {
+  const row = await getAuthDb()
+    .selectFrom("user_email_claims")
+    .select("user_id")
+    .where("email", "=", email)
+    .where("claim_kind", "=", "registration")
+    .executeTakeFirstOrThrow();
+  return row.user_id as bigint;
+}
+
 async function insertSessionForUser(
   userId: bigint | number | string,
   token: string
@@ -310,14 +320,23 @@ describeAuth("auth lifecycle coverage", () => {
 
     const firstUser = await getAuthDb()
       .selectFrom("users")
-      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .innerJoin("user_email_claims", "user_email_claims.user_id", "users.id")
       .select(["users.id", "users.display_name", "users.password_hash", "users.status"])
-      .where("user_emails.email", "=", email)
+      .where("user_email_claims.email", "=", email)
+      .where("user_email_claims.claim_kind", "=", "registration")
       .executeTakeFirstOrThrow();
 
     expect(firstUser.display_name).toBe("First Pending");
     expect(firstUser.status).toBe("pending_verification");
     expect(await verifyPassword(initialPassword, firstUser.password_hash)).toBe(true);
+
+    const pendingOwnedEmail = await getAuthDb()
+      .selectFrom("user_emails")
+      .select("id")
+      .where("email", "=", email)
+      .executeTakeFirst();
+
+    expect(pendingOwnedEmail).toBeUndefined();
 
     const firstTokenRow = await getAuthDb()
       .selectFrom("email_verification_tokens")
@@ -350,9 +369,10 @@ describeAuth("auth lifecycle coverage", () => {
 
     const updatedUser = await getAuthDb()
       .selectFrom("users")
-      .innerJoin("user_emails", "user_emails.user_id", "users.id")
+      .innerJoin("user_email_claims", "user_email_claims.user_id", "users.id")
       .select(["users.id", "users.display_name", "users.password_hash", "users.status"])
-      .where("user_emails.email", "=", email)
+      .where("user_email_claims.email", "=", email)
+      .where("user_email_claims.claim_kind", "=", "registration")
       .executeTakeFirstOrThrow();
 
     expect(updatedUser.id).toBe(firstUser.id);
@@ -542,12 +562,9 @@ describeAuth("auth lifecycle coverage", () => {
 
     const pendingEmail = "pending-session@example.com";
     await registerPendingUser(app, mailer, { email: pendingEmail });
-    const pendingUser = await getAuthDb()
-      .selectFrom("users")
-      .innerJoin("user_emails", "user_emails.user_id", "users.id")
-      .select("users.id")
-      .where("user_emails.email", "=", pendingEmail)
-      .executeTakeFirstOrThrow();
+    const pendingUser = {
+      id: await getPendingRegistrationUserIdByEmail(pendingEmail),
+    };
     const pendingToken = "pending-session-token";
     await insertSessionForUser(pendingUser.id, pendingToken);
 
@@ -794,7 +811,7 @@ describeAuth("auth lifecycle coverage", () => {
         email: disabledVerifyEmail,
       });
 
-      const disabledVerifyUserId = await getUserIdByEmail(disabledVerifyEmail);
+      const disabledVerifyUserId = await getPendingRegistrationUserIdByEmail(disabledVerifyEmail);
       await getAuthDb()
         .updateTable("users")
         .set({
