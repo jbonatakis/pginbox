@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 import email.header
 import email.utils
 import gzip
 import hashlib
 import mailbox
 import re
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -265,56 +267,80 @@ def _sanitize_mbox_from_lines(path: Path) -> Path:
         raise
 
 
+@contextlib.contextmanager
+def _resolved_mbox_path(path: Path):
+    """Yield an uncompressed mbox path. If path is .gz, decompresses to a temp file first."""
+    if path.suffix != ".gz":
+        yield path
+        return
+    tmp = tempfile.NamedTemporaryFile(
+        mode="wb",
+        prefix=f"{path.stem}.",
+        suffix=".mbox",
+        dir=path.parent,
+        delete=False,
+    )
+    tmp_path = Path(tmp.name)
+    try:
+        with tmp, gzip.open(path, "rb") as gz:
+            shutil.copyfileobj(gz, tmp)
+        yield tmp_path
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def _iter_mbox_messages(path: Path):
-    if _mbox_contains_git_patch_from_lines(path):
-        print(
-            "  [warn] detected embedded git patch From-lines; retrying with sanitized copy"
-        )
-        sanitized_path = _sanitize_mbox_from_lines(path)
+    with _resolved_mbox_path(path) as resolved:
+        if _mbox_contains_git_patch_from_lines(resolved):
+            print(
+                "  [warn] detected embedded git patch From-lines; retrying with sanitized copy"
+            )
+            sanitized_path = _sanitize_mbox_from_lines(resolved)
+            try:
+                mbox = mailbox.mbox(str(sanitized_path))
+                try:
+                    for msg in mbox:
+                        yield msg
+                    return
+                finally:
+                    mbox.close()
+            finally:
+                sanitized_path.unlink(missing_ok=True)
+
+        buffered = []
+        mbox = mailbox.mbox(str(resolved))
+        try:
+            for msg in mbox:
+                if not msg.keys():
+                    print(
+                        "  [warn] detected header-less mbox fragments; retrying with sanitized copy"
+                    )
+                    break
+                buffered.append(msg)
+            else:
+                yield from buffered
+                return
+        except UnicodeDecodeError as e:
+            print(f"  [warn] malformed mbox From-line ({e}); retrying with sanitized copy")
+        finally:
+            mbox.close()
+
+        sanitized_path = _sanitize_mbox_from_lines(resolved)
         try:
             mbox = mailbox.mbox(str(sanitized_path))
             try:
                 for msg in mbox:
                     yield msg
-                return
             finally:
                 mbox.close()
         finally:
             sanitized_path.unlink(missing_ok=True)
 
-    buffered = []
-    mbox = mailbox.mbox(str(path))
-    try:
-        for msg in mbox:
-            if not msg.keys():
-                print(
-                    "  [warn] detected header-less mbox fragments; retrying with sanitized copy"
-                )
-                break
-            buffered.append(msg)
-        else:
-            yield from buffered
-            return
-    except UnicodeDecodeError as e:
-        print(f"  [warn] malformed mbox From-line ({e}); retrying with sanitized copy")
-    finally:
-        mbox.close()
-
-    sanitized_path = _sanitize_mbox_from_lines(path)
-    try:
-        mbox = mailbox.mbox(str(sanitized_path))
-        try:
-            for msg in mbox:
-                yield msg
-        finally:
-            mbox.close()
-    finally:
-        sanitized_path.unlink(missing_ok=True)
-
 
 def parse_mbox(path: Path, list_id: int):
     """Yield message dicts parsed from an mbox file."""
-    mbox_ym = path.name.split(".")[-1]
+    name = path.name[:-3] if path.name.endswith(".gz") else path.name
+    mbox_ym = name.split(".")[-1]
     mbox_date = datetime(int(mbox_ym[:4]), int(mbox_ym[4:]), 1, tzinfo=timezone.utc)
 
     for msg in _iter_mbox_messages(path):
