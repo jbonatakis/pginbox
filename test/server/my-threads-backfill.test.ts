@@ -54,10 +54,22 @@ async function createUser(
     })
     .returning("id")
     .executeTakeFirstOrThrow();
-  await db
-    .insertInto("user_emails")
-    .values({ user_id: row.id, email, is_primary: true, verified_at: emailVerifiedAt })
-    .execute();
+  if (emailVerifiedAt === null) {
+    await db
+      .insertInto("user_email_claims")
+      .values({
+        user_id: row.id,
+        email,
+        claim_kind: "registration",
+        created_at: overrides.createdAt ?? createdAt,
+      })
+      .execute();
+  } else {
+    await db
+      .insertInto("user_emails")
+      .values({ user_id: row.id, email, is_primary: true, verified_at: emailVerifiedAt })
+      .execute();
+  }
 
   const id = String(row.id);
   createdUserIds.push(id);
