@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -26,7 +27,7 @@ DEFAULT_LIST_NAME = "pgsql-hackers"
 
 
 def mbox_cache_path(year: int, month: int, list_name: str) -> Path:
-    return CACHE_DIR / f"{list_name}.{year:04d}{month:02d}"
+    return CACHE_DIR / f"{list_name}.{year:04d}{month:02d}.gz"
 
 
 def is_cached(year: int, month: int, list_name: str) -> bool:
@@ -185,7 +186,7 @@ def download_mbox(
     """Download the mbox file for the given month, caching it locally."""
     year_month = f"{year:04d}{month:02d}"
     url = BASE_URL.format(list_name=list_name, year_month=year_month)
-    out_path = CACHE_DIR / f"{list_name}.{year_month}"
+    out_path = mbox_cache_path(year, month, list_name)
 
     CACHE_DIR.mkdir(exist_ok=True)
 
@@ -207,7 +208,7 @@ def download_mbox(
                 )
             total = int(resp.headers.get("content-length", 0))
             downloaded = 0
-            with open(tmp_path, "wb") as f:
+            with gzip.open(tmp_path, "wb") as f:
                 for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
                     f.write(chunk)
                     downloaded += len(chunk)
