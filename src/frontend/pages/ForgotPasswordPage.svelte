@@ -93,7 +93,7 @@
     </p>
 
     <p class="helper-links">
-      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Back to login</a>
+      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Back to sign in</a>
     </p>
   {:else}
     {#if forgotError}
@@ -132,7 +132,7 @@
     </form>
 
     <p class="helper-links">
-      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Remembered it? Log in</a>
+      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Remembered it? Sign in</a>
       <span aria-hidden="true">/</span>
       <a href={registerLink} on:click={(event) => onLinkClick(event, registerLink)}
         >Need an account instead?</a

@@ -672,7 +672,7 @@
           {#if $authStore.isAuthenticated}
             <a class="download-button" href={attachmentDownloadPath(attachment.id)}>Download</a>
           {:else}
-            <span title="Log in to download">
+            <span title="Sign in to download">
               <button class="download-button download-button--locked" type="button" aria-disabled="true" tabindex="-1">Download</button>
             </span>
           {/if}

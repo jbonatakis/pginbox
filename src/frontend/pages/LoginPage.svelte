@@ -154,8 +154,8 @@
 
 <AuthPageLayout
   eyebrow="Account access"
-  title="Log in"
-  intro="Sign in to use account-only features and manage your pginbox session. Archive browsing remains public."
+  title="Sign in"
+  intro="Create a free account to use account-only features and manage your pginbox session. Archive browsing remains public."
 >
   {#if $authStore.isAuthenticated}
     <SuccessState
@@ -224,7 +224,7 @@
 
       <div class="form-actions">
         <button type="submit" class="primary-button" disabled={isSubmitting}>
-          {isSubmitting ? "Signing in..." : "Log in"}
+          {isSubmitting ? "Signing in..." : "Sign in"}
         </button>
       </div>
     </form>

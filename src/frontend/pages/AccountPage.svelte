@@ -190,7 +190,7 @@
     />
   {:else if !$authStore.isAuthenticated}
     <LoadingState
-      title="Redirecting to login"
+      title="Redirecting to sign in"
       message="You need to sign in before opening the account page."
     />
   {:else if currentUser}
@@ -332,7 +332,7 @@
 
         {#if logoutError}
           <ErrorState
-            title="Unable to log out"
+            title="Unable to sign out"
             message={logoutError.message}
             detail={formatErrorDetail(logoutError)}
           />
@@ -340,7 +340,7 @@
 
         <div class="actions">
           <button type="button" class="primary-button" disabled={isLoggingOut} on:click={handleLogout}>
-            {isLoggingOut ? "Logging out..." : "Log out"}
+            {isLoggingOut ? "Signing out..." : "Sign out"}
           </button>
 
           <a href={forgotPasswordLink} class="secondary-link" on:click={(event) => onLinkClick(event, forgotPasswordLink)}>

@@ -117,7 +117,7 @@
     </p>
 
     <p class="helper-links">
-      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Already verified? Log in</a>
+      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Already verified? Sign in</a>
     </p>
   {:else}
     {#if registerError}
@@ -179,7 +179,7 @@
     </form>
 
     <p class="helper-links">
-      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Already have an account? Log in</a>
+      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Already have an account? Sign in</a>
     </p>
   {/if}
 </AuthPageLayout>

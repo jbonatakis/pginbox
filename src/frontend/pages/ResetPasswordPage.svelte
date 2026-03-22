@@ -229,7 +229,7 @@
         >Need a new reset link?</a
       >
       <span aria-hidden="true">/</span>
-      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Back to login</a>
+      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Back to sign in</a>
     </p>
   {/if}
 </AuthPageLayout>

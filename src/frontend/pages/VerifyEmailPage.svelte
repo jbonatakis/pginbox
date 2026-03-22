@@ -255,7 +255,7 @@
     </section>
 
     <p class="helper-links">
-      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Log in</a>
+      <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Sign in</a>
       <span aria-hidden="true">/</span>
       <a href={registerLink} on:click={(event) => onLinkClick(event, registerLink)}
         >Create an account</a
