@@ -889,6 +889,75 @@ describeAuthRoutes("auth routes", () => {
     });
   });
 
+  it("deletes orphaned pending users when a registration claim loses to a verified secondary email", async () => {
+    const { app, mailer } = createTestApp();
+    const pendingEmail = "pending-owner@example.com";
+    const verifierPrimaryEmail = "verified-owner@example.com";
+
+    const pendingRegistrationToken = await registerPendingUser(app, mailer, pendingEmail);
+    const pendingUser = await getAuthDb()
+      .selectFrom("users")
+      .innerJoin("user_email_claims", "user_email_claims.user_id", "users.id")
+      .select("users.id")
+      .where("user_email_claims.email", "=", pendingEmail)
+      .where("user_email_claims.claim_kind", "=", "registration")
+      .executeTakeFirstOrThrow();
+
+    const verifier = await createActiveUser(app, mailer, verifierPrimaryEmail);
+    mailer.verificationUrls.length = 0;
+
+    const addClaimResponse = await send(app, "/account/emails", {
+      body: { email: pendingEmail },
+      headers: {
+        cookie: verifier.cookie,
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(addClaimResponse.status).toBe(202);
+
+    const secondaryClaimToken = extractToken(mailer.verificationUrls.at(-1)!);
+    const secondaryVerificationResponse = await send(app, "/auth/verify-email", {
+      body: { token: secondaryClaimToken },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(secondaryVerificationResponse.status).toBe(200);
+    expect(await parseJson(secondaryVerificationResponse)).toMatchObject({
+      isRegistration: false,
+      user: {
+        email: verifierPrimaryEmail,
+        status: "active",
+      },
+    });
+
+    const staleRegistrationResponse = await send(app, "/auth/verify-email", {
+      body: { token: pendingRegistrationToken },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(staleRegistrationResponse.status).toBe(400);
+    expect(await parseJson(staleRegistrationResponse)).toEqual({
+      code: "TOKEN_INVALID",
+      message: "The token is invalid",
+    });
+
+    const orphanedUser = await getAuthDb()
+      .selectFrom("users")
+      .select("id")
+      .where("id", "=", pendingUser.id)
+      .executeTakeFirst();
+
+    expect(orphanedUser).toBeUndefined();
+  });
+
   it("invalidates pending email verification tokens when the email is removed", async () => {
     const { app, mailer } = createTestApp();
     const primaryEmail = "remove-token-primary@example.com";

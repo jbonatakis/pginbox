@@ -302,10 +302,24 @@ export async function getAdminStats(): Promise<AdminStats> {
       .selectFrom("users")
       .select(defaultDb.fn.countAll<string>().as("count"))
       .executeTakeFirstOrThrow(),
-    defaultDb
+    (defaultDb as any)
       .selectFrom("users")
-      .select(defaultDb.fn.countAll<string>().as("count"))
-      .where("status", "=", "pending_verification")
+      .leftJoin("user_emails as ue", (join: any) =>
+        join.onRef("ue.user_id", "=", "users.id")
+            .on("ue.is_primary", "=", true)
+      )
+      .leftJoin("user_email_claims as registration_claim", (join: any) =>
+        join.onRef("registration_claim.user_id", "=", "users.id")
+            .on("registration_claim.claim_kind", "=", "registration")
+      )
+      .select(sql<string>`count(distinct users.id)`.as("count"))
+      .where("users.status", "=", "pending_verification")
+      .where((eb: any) =>
+        eb.or([
+          eb("ue.email", "is not", null),
+          eb("registration_claim.email", "is not", null),
+        ])
+      )
       .executeTakeFirstOrThrow(),
     defaultDb
       .selectFrom("messages")

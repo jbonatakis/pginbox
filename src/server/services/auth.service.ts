@@ -500,6 +500,22 @@ async function deleteVerificationTokensForEmail(
     .execute();
 }
 
+async function deleteVerificationTokensByEmail(
+  authDb: DatabaseClient,
+  email: string,
+  options: { excludeUserId?: bigint | number | string } = {}
+): Promise<void> {
+  let query = authDb
+    .deleteFrom("email_verification_tokens")
+    .where("email", "=", email);
+
+  if (options.excludeUserId !== undefined) {
+    query = query.where("user_id", "!=", toDbInt8(options.excludeUserId));
+  }
+
+  await query.execute();
+}
+
 async function rotatePasswordResetToken(
   authDb: DatabaseClient,
   user: AuthUserRecord,
@@ -538,6 +554,40 @@ async function revokeAllSessionsForUser(
     .set({ revoked_at: now })
     .where("user_id", "=", toDbInt8(userId))
     .where("revoked_at", "is", null)
+    .execute();
+}
+
+async function deleteOrphanedPendingUser(
+  authDb: DatabaseClient,
+  userId: bigint | number | string
+): Promise<void> {
+  const [primaryEmailRow, claimRow, userRow] = await Promise.all([
+    (authDb as any)
+      .selectFrom("user_emails")
+      .select("id")
+      .where("user_id", "=", toDbInt8(userId))
+      .where("is_primary", "=", true)
+      .executeTakeFirst(),
+    (authDb as any)
+      .selectFrom("user_email_claims")
+      .select("id")
+      .where("user_id", "=", toDbInt8(userId))
+      .executeTakeFirst(),
+    authDb
+      .selectFrom("users")
+      .select("status")
+      .where("id", "=", toDbInt8(userId))
+      .executeTakeFirst(),
+  ]);
+
+  if (!userRow || userRow.status !== "pending_verification" || primaryEmailRow || claimRow) {
+    return;
+  }
+
+  await authDb
+    .deleteFrom("users")
+    .where("id", "=", toDbInt8(userId))
+    .where("status", "=", "pending_verification")
     .execute();
 }
 
@@ -857,11 +907,22 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           existingVerifiedEmail &&
           String(existingVerifiedEmail.user_id) !== String(tokenRecord.user_id)
         ) {
-          await deleteVerificationTokensForEmail(trx, tokenRecord.user_id, tokenRecord.email);
-          await (trx as any)
+          await deleteVerificationTokensByEmail(trx, tokenRecord.email);
+          const deletedClaims = await (trx as any)
             .deleteFrom("user_email_claims")
             .where("email", "=", tokenRecord.email)
-            .execute();
+            .returning(["user_id", "claim_kind"])
+            .execute() as Array<{ user_id: bigint; claim_kind: UserEmailClaimKind }>;
+
+          for (const claim of deletedClaims) {
+            if (claim.claim_kind === "registration") {
+              await deleteOrphanedPendingUser(trx, claim.user_id);
+            }
+          }
+
+          if (isRegistration) {
+            await deleteOrphanedPendingUser(trx, tokenRecord.user_id);
+          }
           return { type: "invalid" as const };
         }
 
@@ -899,10 +960,22 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
             .execute();
         }
 
-        await (trx as any)
+        await deleteVerificationTokensByEmail(trx, tokenRecord.email, {
+          excludeUserId: tokenRecord.user_id,
+        });
+
+        const deletedClaims = await (trx as any)
           .deleteFrom("user_email_claims")
           .where("email", "=", tokenRecord.email)
-          .execute();
+          .where("user_id", "!=", toDbInt8(tokenRecord.user_id))
+          .returning(["user_id", "claim_kind"])
+          .execute() as Array<{ user_id: bigint; claim_kind: UserEmailClaimKind }>;
+
+        for (const claim of deletedClaims) {
+          if (claim.claim_kind === "registration") {
+            await deleteOrphanedPendingUser(trx, claim.user_id);
+          }
+        }
 
         const userRow = await findUserWithPrimaryEmailById(trx, tokenRecord.user_id);
         if (!userRow) {

@@ -272,6 +272,36 @@ describe("GET /admin/stats", () => {
     expect(typeof body.messageCount).toBe("number");
     expect(typeof body.threadCount).toBe("number");
   });
+
+  it("ignores orphaned pending users without a registration email", async () => {
+    const beforeResponse = await send("/admin/stats", { cookie: adminSession.cookie });
+    expect(beforeResponse.status).toBe(200);
+    const beforeBody = await parseJson(beforeResponse) as { pendingVerificationCount: number };
+
+    const row = await db
+      .insertInto("users")
+      .values({
+        password_hash: "placeholder",
+        status: "pending_verification",
+        role: "member",
+        display_name: null,
+        disabled_at: null,
+        disable_reason: null,
+        last_login_at: null,
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    try {
+      const afterResponse = await send("/admin/stats", { cookie: adminSession.cookie });
+      expect(afterResponse.status).toBe(200);
+      const afterBody = await parseJson(afterResponse) as { pendingVerificationCount: number };
+
+      expect(afterBody.pendingVerificationCount).toBe(beforeBody.pendingVerificationCount);
+    } finally {
+      await deleteUser(String(row.id));
+    }
+  });
 });
 
 // ── GET /admin/users ──────────────────────────────────────────────────────────
