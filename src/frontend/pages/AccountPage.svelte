@@ -265,6 +265,24 @@
             />
           {/if}
         {/if}
+
+        {#if logoutError}
+          <ErrorState
+            title="Unable to sign out"
+            message={logoutError.message}
+            detail={formatErrorDetail(logoutError)}
+          />
+        {/if}
+
+        <div class="actions">
+          <button type="button" class="primary-button" disabled={isLoggingOut} on:click={handleLogout}>
+            {isLoggingOut ? "Signing out..." : "Sign out"}
+          </button>
+
+          <a href={forgotPasswordLink} class="secondary-link" on:click={(event) => onLinkClick(event, forgotPasswordLink)}>
+            Reset password
+          </a>
+        </div>
       </article>
 
       <article class="account-card">
@@ -319,34 +337,6 @@
             </button>
           </div>
         </form>
-      </article>
-
-      <article class="account-card">
-        <header class="card-header stacked">
-          <div>
-            <p class="eyebrow">Session</p>
-            <h2>Current device</h2>
-          </div>
-          <p class="support-copy">This browser is signed into your pginbox account.</p>
-        </header>
-
-        {#if logoutError}
-          <ErrorState
-            title="Unable to sign out"
-            message={logoutError.message}
-            detail={formatErrorDetail(logoutError)}
-          />
-        {/if}
-
-        <div class="actions">
-          <button type="button" class="primary-button" disabled={isLoggingOut} on:click={handleLogout}>
-            {isLoggingOut ? "Signing out..." : "Sign out"}
-          </button>
-
-          <a href={forgotPasswordLink} class="secondary-link" on:click={(event) => onLinkClick(event, forgotPasswordLink)}>
-            Reset password
-          </a>
-        </div>
       </article>
 
     </section>

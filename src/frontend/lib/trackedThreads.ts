@@ -102,7 +102,7 @@ export function getTrackedThreadTabTitle(tab: TrackedThreadTab): string {
 }
 
 export function getTrackedThreadTabLabel(tab: TrackedThreadTab, count: number): string {
-  return `${getTrackedThreadTabTitle(tab)} (${count})`;
+  return `${getTrackedThreadTabTitle(tab)} (${count.toLocaleString()})`;
 }
 
 export function getTrackedThreadEmptyMessage(tab: TrackedThreadTab): string {
