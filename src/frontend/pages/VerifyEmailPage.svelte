@@ -183,7 +183,6 @@
 <AuthPageLayout
   eyebrow="Verification"
   title="Verify email"
-  intro="Email verification activates the account and signs you in. We only accept the token from the URL and a sanitized return path."
 >
   {#if pageStatus === "loading"}
     <LoadingState
@@ -196,45 +195,45 @@
       message="The account is active and your session is ready."
       detail={nextRedirect}
     />
-
-    <p class="helper-links">
-      <a href={nextRedirect} on:click={(event) => onLinkClick(event, nextRedirect)}>Continue now</a>
-    </p>
+    <div class="page-actions">
+      <a href={nextRedirect} class="primary-button" on:click={(event) => onLinkClick(event, nextRedirect)}>Continue</a>
+    </div>
   {:else if pageStatus === "secondary-success"}
     <SuccessState
       title="Email verified"
       message="Your email address has been verified and added to your account."
     />
-
-    <p class="helper-links">
-      <a href={accountPath} on:click={(event) => onLinkClick(event, accountPath)}>Go to account settings</a>
-    </p>
+    <div class="page-actions">
+      <a href={accountPath} class="primary-button" on:click={(event) => onLinkClick(event, accountPath)}>Go to account settings</a>
+    </div>
   {:else}
-    {#if pageStatus === "missing-token"}
-      <ErrorState
-        title="Verification token missing"
-        message="Open the full verification link from your email, or request a new one below."
-      />
-    {:else if verifyError}
-      <ErrorState
-        title={verifyError.title}
-        message={verifyError.message}
-        detail={formatErrorDetail(verificationError)}
-      />
-    {/if}
+    <div class="error-group">
+      {#if pageStatus === "missing-token"}
+        <ErrorState
+          title="Verification token missing"
+          message="Open the full verification link from your email, or request a new one below."
+        />
+      {:else if verifyError}
+        <ErrorState
+          title={verifyError.title}
+          message={verifyError.message}
+          detail={formatErrorDetail(verificationError)}
+        />
+      {/if}
 
-    {#if token}
-      <p class="helper-links">
-        <button type="button" class="secondary-button" on:click={retryVerification}>
-          Retry verification
-        </button>
-      </p>
-    {/if}
+      {#if token}
+        <div class="page-actions">
+          <button type="button" class="secondary-button" on:click={retryVerification}>
+            Retry verification
+          </button>
+        </div>
+      {/if}
+    </div>
 
     <section class="support-panel">
       <div class="support-copy">
         <h2>Need another verification email?</h2>
-        <p>Enter the account email and we will send a new verification message if the account is still pending.</p>
+        <p>Enter your account email and we'll send a new verification link if the account is still pending.</p>
       </div>
 
       <label class="field">
@@ -254,9 +253,8 @@
           type="button"
           class="primary-button"
           disabled={isResending || resendEmail.trim().length === 0}
-          on:click={resendVerification}>{
-          isResending ? "Sending..." : "Send verification email"
-        }</button>
+          on:click={resendVerification}
+        >{isResending ? "Sending..." : "Send verification email"}</button>
       </div>
 
       {#if resendMessage}
@@ -271,14 +269,23 @@
     <p class="helper-links">
       <a href={loginLink} on:click={(event) => onLinkClick(event, loginLink)}>Sign in</a>
       <span aria-hidden="true">/</span>
-      <a href={registerLink} on:click={(event) => onLinkClick(event, registerLink)}
-        >Create an account</a
-      >
+      <a href={registerLink} on:click={(event) => onLinkClick(event, registerLink)}>Create an account</a>
     </p>
   {/if}
 </AuthPageLayout>
 
 <style>
+  .page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+  }
+
+  .error-group {
+    display: grid;
+    gap: 0.65rem;
+  }
+
   .support-panel {
     display: grid;
     gap: 0.75rem;
@@ -354,14 +361,17 @@
 
   .primary-button,
   .secondary-button {
+    font: inherit;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 2.65rem;
-    padding: 0.58rem 0.95rem;
+    min-height: 2.5rem;
+    padding: 0.52rem 0.95rem;
     border-radius: 999px;
     font-size: 0.93rem;
     font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
     cursor: pointer;
   }
 
@@ -412,7 +422,7 @@
 
   @media (max-width: 640px) {
     .form-actions,
-    .primary-button,
+    .form-actions .primary-button,
     .secondary-button {
       width: 100%;
     }

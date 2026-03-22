@@ -1,14 +1,14 @@
 <script lang="ts">
   export let eyebrow = "Account";
   export let title: string;
-  export let intro: string;
+  export let intro: string | undefined = undefined;
 </script>
 
 <section class="auth-page">
   <div class="hero">
     <p class="eyebrow">{eyebrow}</p>
     <h1 class="page-title" data-route-heading tabindex="-1">{title}</h1>
-    <p class="intro">{intro}</p>
+    {#if intro}<p class="intro">{intro}</p>{/if}
     <slot name="lead"></slot>
   </div>
 
@@ -22,6 +22,7 @@
     width: min(100%, 58rem);
     min-width: 0;
     display: grid;
+    align-content: start;
     gap: 1rem;
     margin: 0 auto;
     padding: clamp(0.25rem, 2vw, 1rem) 0 1.5rem;
