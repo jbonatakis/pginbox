@@ -369,6 +369,7 @@ def parse_mbox(path: Path, list_id: int):
             "message_id": _strip_nul(message_id),
             "thread_id": _strip_nul(thread_id),
             "list_id": list_id,
+            "archive_month": mbox_date.date(),
             "sent_at": sent_at,
             "from_name": _strip_nul(from_name),
             "from_email": _strip_nul(from_email),

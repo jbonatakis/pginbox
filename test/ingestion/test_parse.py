@@ -256,6 +256,7 @@ Hello.
     records = list(ingest.parse_mbox(path, list_id=1))
 
     assert len(records) == 1
+    assert records[0]["archive_month"].isoformat() == "2025-08-01"
     assert records[0]["sent_at"].isoformat() == "2025-08-07T12:46:47-04:00"
     assert records[0]["sent_at_approx"] is False
 

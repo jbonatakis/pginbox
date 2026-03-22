@@ -31,6 +31,7 @@ def test_store_batch_live_refreshes_threads_after_message_insert(ingest, monkeyp
             "message_id": "<message@example.com>",
             "thread_id": "<thread@example.com>",
             "list_id": 23,
+            "archive_month": ts(1).date().replace(day=1),
             "sent_at": ts(1),
             "sent_at_approx": False,
             "from_name": "",
@@ -123,6 +124,7 @@ def test_store_batch_backfill_does_not_auto_track_participation(ingest, monkeypa
             "message_id": "<message@example.com>",
             "thread_id": "<thread@example.com>",
             "list_id": 23,
+            "archive_month": ts(1).date().replace(day=1),
             "sent_at": ts(1),
             "sent_at_approx": False,
             "from_name": "",
@@ -181,6 +183,7 @@ def test_overwrite_messages_updates_existing_and_inserts_missing(ingest, monkeyp
             "message_id": "<existing@example.com>",
             "thread_id": "<thread@example.com>",
             "list_id": 23,
+            "archive_month": ts(1).date().replace(day=1),
             "sent_at": ts(1),
             "sent_at_approx": False,
             "from_name": "Existing",
@@ -196,6 +199,7 @@ def test_overwrite_messages_updates_existing_and_inserts_missing(ingest, monkeyp
             "message_id": "<new@example.com>",
             "thread_id": "<thread@example.com>",
             "list_id": 23,
+            "archive_month": ts(1).date().replace(day=1),
             "sent_at": ts(2),
             "sent_at_approx": False,
             "from_name": "New",
@@ -267,6 +271,7 @@ def test_store_batch_overwrite_rewrites_messages_and_attachments(ingest, monkeyp
             "message_id": "<message@example.com>",
             "thread_id": "<thread@example.com>",
             "list_id": 23,
+            "archive_month": ts(1).date().replace(day=1),
             "sent_at": ts(1),
             "sent_at_approx": False,
             "from_name": "Sender",
@@ -359,6 +364,7 @@ def test_store_batch_overwrite_does_not_auto_track_participation(ingest, monkeyp
             "message_id": "<message@example.com>",
             "thread_id": "<thread@example.com>",
             "list_id": 23,
+            "archive_month": ts(1).date().replace(day=1),
             "sent_at": ts(1),
             "sent_at_approx": False,
             "from_name": "",
@@ -556,3 +562,125 @@ def test_replace_attachments_repairs_existing_messages(ingest, monkeypatch):
         },
     ]
     assert recorded["page_size"] == 500
+
+
+def test_prune_missing_messages_for_archive_month_rewrites_refs_before_delete(ingest):
+    updated: list[tuple[str, list[tuple[int, int]], str, int]] = []
+    executed: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeCursor:
+        def __init__(self):
+            self._rows = []
+            self.rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            normalized = sql.strip()
+            executed.append((normalized, params))
+            self.rowcount = 0
+
+            if normalized == ingest.store_lib.FETCH_ARCHIVE_MONTH_MESSAGE_IDS_SQL.strip():
+                self._rows = [
+                    (101, "<keep@example.com>"),
+                    (202, "<stale@example.com>"),
+                ]
+            elif (
+                normalized
+                == ingest.store_lib.FETCH_STALE_REPLACEMENT_MESSAGE_IDS_SQL.strip()
+            ):
+                self._rows = [(202, 101)]
+            elif normalized == ingest.store_lib.DELETE_STALE_THREAD_TRACKING_SQL.strip():
+                self._rows = []
+                self.rowcount = 1
+            elif (
+                normalized
+                == ingest.store_lib.DELETE_STALE_THREAD_READ_PROGRESS_SQL.strip()
+            ):
+                self._rows = []
+                self.rowcount = 2
+            elif normalized == ingest.store_lib.DELETE_STALE_THREAD_FOLLOWS_SQL.strip():
+                self._rows = []
+                self.rowcount = 0
+            elif normalized == ingest.store_lib.DELETE_ATTACHMENTS_SQL.strip():
+                self._rows = []
+                self.rowcount = 3
+            elif normalized == ingest.store_lib.DELETE_MESSAGES_BY_DB_ID_SQL.strip():
+                self._rows = []
+                self.rowcount = 1
+            else:
+                raise AssertionError(f"unexpected SQL: {normalized}")
+
+        def fetchall(self):
+            return self._rows
+
+    class FakeConn:
+        def __init__(self):
+            self._cursor = FakeCursor()
+            self.commits = 0
+
+        def cursor(self):
+            return self._cursor
+
+        def commit(self):
+            self.commits += 1
+
+    def fake_execute_values(cur, sql, rows, template, page_size=100):
+        updated.append((sql.strip(), rows, template, page_size))
+
+    conn = FakeConn()
+    stats = ingest.store_lib.prune_missing_messages_for_archive_month(
+        conn,
+        list_id=23,
+        archive_month=ts(1).date().replace(day=1),
+        parsed_message_ids={"<keep@example.com>"},
+        execute_values_fn=fake_execute_values,
+    )
+
+    assert stats == {
+        "messages_pruned": 1,
+        "attachments_deleted": 3,
+        "tracking_rows_deleted": 1,
+        "progress_rows_deleted": 2,
+        "legacy_follow_rows_deleted": 0,
+    }
+    assert conn.commits == 1
+    assert updated == [
+        (
+            ingest.store_lib.UPDATE_THREAD_TRACKING_ANCHORS_SQL.strip(),
+            [(202, 101)],
+            "(%s, %s)",
+            500,
+        ),
+        (
+            ingest.store_lib.UPDATE_THREAD_READ_PROGRESS_SQL.strip(),
+            [(202, 101)],
+            "(%s, %s)",
+            500,
+        ),
+        (
+            ingest.store_lib.UPDATE_THREAD_FOLLOWS_ANCHORS_SQL.strip(),
+            [(202, 101)],
+            "(%s, %s)",
+            500,
+        ),
+    ]
+    assert executed == [
+        (
+            ingest.store_lib.FETCH_ARCHIVE_MONTH_MESSAGE_IDS_SQL.strip(),
+            (23, ts(1).date().replace(day=1)),
+        ),
+        (
+            ingest.store_lib.FETCH_STALE_REPLACEMENT_MESSAGE_IDS_SQL.strip(),
+            ([202], [202]),
+        ),
+        (ingest.store_lib.DELETE_STALE_THREAD_TRACKING_SQL.strip(), ([202],)),
+        (ingest.store_lib.DELETE_STALE_THREAD_READ_PROGRESS_SQL.strip(), ([202],)),
+        (ingest.store_lib.DELETE_STALE_THREAD_FOLLOWS_SQL.strip(), ([202],)),
+        (ingest.store_lib.DELETE_ATTACHMENTS_SQL.strip(), ([202],)),
+        (ingest.store_lib.DELETE_MESSAGES_BY_DB_ID_SQL.strip(), ([202],)),
+    ]

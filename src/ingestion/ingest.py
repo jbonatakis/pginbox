@@ -15,6 +15,9 @@ Usage:
     # Reparse a month and overwrite existing message rows + attachments:
     python3 ingest.py --year 2026 --month 2 --overwrite-existing
 
+    # Reparse a month and prune rows no longer present in the archive:
+    python3 ingest.py --year 2026 --month 2 --reconcile-existing
+
     # Rebuild canonical message.thread_id values and the derived threads table:
     python3 ingest.py --derive-only
 
@@ -241,6 +244,21 @@ def store_batch_overwrite(conn, batch: list):
     )
 
 
+def prune_missing_messages_for_archive_month(
+    conn,
+    *,
+    list_id: int,
+    archive_month,
+    parsed_message_ids: set[str],
+) -> dict[str, int]:
+    return store_lib.prune_missing_messages_for_archive_month(
+        conn,
+        list_id=list_id,
+        archive_month=archive_month,
+        parsed_message_ids=parsed_message_ids,
+    )
+
+
 def repair_batch_attachments(conn, batch: list) -> dict[str, int]:
     return store_lib.repair_batch_attachments(
         conn,
@@ -249,8 +267,8 @@ def repair_batch_attachments(conn, batch: list) -> dict[str, int]:
     )
 
 
-def rethread_messages(conn):
-    return store_lib.rethread_messages(conn)
+def rethread_messages(conn, *, list_ids: list[int] | None = None):
+    return store_lib.rethread_messages(conn, list_ids=list_ids)
 
 
 def decode_message_subjects(conn):
@@ -262,11 +280,10 @@ def decode_message_subjects(conn):
     )
 
 
-def derive_threads(conn):
+def derive_threads(conn, *, list_ids: list[int] | None = None):
     return store_lib.derive_threads(
         conn,
-        rethread_messages_fn=rethread_messages,
-        rebuild_threads_sql=REBUILD_THREADS_SQL,
+        list_ids=list_ids,
     )
 
 
@@ -321,6 +338,7 @@ def ingest(
     force_download: bool = False,
     backfill: bool = False,
     overwrite_existing: bool = False,
+    reconcile_existing: bool = False,
     derive: bool = True,
     refresh_analytics: bool = True,
 ):
@@ -333,6 +351,7 @@ def ingest(
         force_download,
         backfill,
         overwrite_existing,
+        reconcile_existing,
         derive,
         refresh_analytics,
         ensure_list_fn=ensure_list,
@@ -341,6 +360,7 @@ def ingest(
         store_batch_live_fn=store_batch_live,
         store_batch_backfill_fn=store_batch_backfill,
         store_batch_overwrite_fn=store_batch_overwrite,
+        prune_missing_messages_for_archive_month_fn=prune_missing_messages_for_archive_month,
         derive_threads_fn=derive_threads,
         refresh_analytics_views_fn=refresh_analytics_views,
     )
@@ -473,6 +493,14 @@ def main():
         help="Reparse archives and overwrite existing messages plus attachments in place",
     )
     parser.add_argument(
+        "--reconcile-existing",
+        action="store_true",
+        help=(
+            "Reparse archives, overwrite current rows, and prune rows no longer "
+            "present in the reparsed archive month"
+        ),
+    )
+    parser.add_argument(
         "--repair-attachments",
         action="store_true",
         help="Reparse archives and replace attachments for existing messages",
@@ -563,10 +591,22 @@ def main():
         parser.error(
             "--repair-attachments cannot be combined with --overwrite-existing"
         )
+    if args.repair_attachments and args.reconcile_existing:
+        parser.error(
+            "--repair-attachments cannot be combined with --reconcile-existing"
+        )
+    if args.overwrite_existing and args.reconcile_existing:
+        parser.error(
+            "--overwrite-existing cannot be combined with --reconcile-existing"
+        )
+    if args.reconcile_existing and args.backfill:
+        parser.error("--reconcile-existing cannot be combined with --backfill")
     if args.repair_attachments and args.parallel != 1:
         parser.error("--repair-attachments cannot be combined with --parallel")
     if args.overwrite_existing and args.parallel != 1:
         parser.error("--overwrite-existing cannot be combined with --parallel")
+    if args.reconcile_existing and args.parallel != 1:
+        parser.error("--reconcile-existing cannot be combined with --parallel")
 
     if not args.dsn:
         print("Error: provide --dsn or set DATABASE_URL", file=sys.stderr)
@@ -643,6 +683,7 @@ def main():
             args.parallel > 1
             and args.backfill
             and not args.overwrite_existing
+            and not args.reconcile_existing
             and not args.repair_attachments
             and not needs_download
             and len(months) > 1
@@ -713,13 +754,15 @@ def main():
                 for future in as_completed(futures):
                     list_total += future.result()
 
-            derive_threads(conn)
+            derive_threads(conn, list_ids=[list_id])
         else:
             for i, (year, month) in enumerate(months):
-                # For backfill/overwrite modes, defer thread rebuild until the final month.
-                derive = (not args.backfill and not args.overwrite_existing) or (
-                    i == len(months) - 1
-                )
+                # For backfill/overwrite/reconcile modes, defer thread rebuild until the final month.
+                derive = (
+                    not args.backfill
+                    and not args.overwrite_existing
+                    and not args.reconcile_existing
+                ) or (i == len(months) - 1)
                 try:
                     list_total += ingest(
                         conn,
@@ -730,6 +773,7 @@ def main():
                         args.force_download,
                         args.backfill,
                         args.overwrite_existing,
+                        args.reconcile_existing,
                         derive,
                         False,
                     )
@@ -751,6 +795,7 @@ def main():
                         args.force_download,
                         args.backfill,
                         args.overwrite_existing,
+                        args.reconcile_existing,
                         derive,
                         False,
                     )

@@ -89,6 +89,7 @@ export interface Lists {
 }
 
 export interface Messages {
+  archive_month: ColumnType<Date, Date | string, Date | string> | null;
   body: string | null;
   from_email: string | null;
   from_name: string | null;

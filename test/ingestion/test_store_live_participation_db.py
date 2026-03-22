@@ -82,12 +82,30 @@ def _cleanup_test_rows(conn, token: str):
     conn.commit()
 
 
+def _ensure_test_schema(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            ALTER TABLE messages
+                ADD COLUMN IF NOT EXISTS archive_month DATE
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_messages_list_archive_month
+                ON messages (list_id, archive_month)
+            """
+        )
+    conn.commit()
+
+
 @pytest.fixture
 def live_ingest_db():
     try:
         conn = psycopg2.connect(_test_database_url())
     except psycopg2.OperationalError as exc:
         pytest.skip(f"ingestion DB tests require a reachable TEST_DATABASE_URL: {exc}")
+    _ensure_test_schema(conn)
     token = f"ingest-live-{uuid4().hex}"
     _cleanup_test_rows(conn, token)
     try:
@@ -208,6 +226,7 @@ def make_record(
         "message_id": message_id,
         "thread_id": refs[0] if refs else message_id,
         "list_id": list_id,
+        "archive_month": sent_at.date().replace(day=1),
         "sent_at": sent_at,
         "sent_at_approx": False,
         "from_name": "Sender",
