@@ -1442,6 +1442,15 @@ export async function listMyThreads(
   return listTrackedThreads(userId, limit, cursor, "myThreads");
 }
 
+export async function runParticipationBackfillForUser(userId: string, email: string): Promise<void> {
+  await canonicalizeUserThreadState(userId);
+  const candidates = await getHistoricalParticipationBackfillCandidates([{ id: userId, email }]);
+  if (candidates.length === 0) return;
+  const timestamp = new Date();
+  await upsertHistoricalParticipationTrackingRows(candidates, timestamp);
+  await seedHistoricalParticipationProgressIfMissing(candidates, timestamp);
+}
+
 export async function runHistoricalParticipationBackfill(
   options: HistoricalParticipationBackfillOptions = {}
 ): Promise<HistoricalParticipationBackfillResult> {
