@@ -4,11 +4,7 @@
   import { navigate, threadsPath } from "../router";
 
   let searchQuery = "";
-  const suggestedQueries = [
-    "AIO",
-    "walsender",
-    "repack",
-  ];
+  const suggestedQueries = ["AIO", "walsender", "autovacuum"];
   const messageCountFormatter = new Intl.NumberFormat("en-US");
 
   type Slide =
@@ -94,7 +90,9 @@
 
 <section class="home-page">
   <div class="search-stage">
-    <h1 class="page-title" data-route-heading tabindex="-1">Search the PostgreSQL mailing lists</h1>
+    <h1 class="page-title" data-route-heading tabindex="-1">
+      Search the PostgreSQL mailing lists
+    </h1>
 
     <form
       class="search-shell"
@@ -116,14 +114,20 @@
 
     <div class="search-suggestions" aria-label="Suggested searches">
       {#each suggestedQueries as query}
-        <button type="button" class="suggestion-chip" on:click={() => applySuggestedQuery(query)}
-          >{query}</button
+        <button
+          type="button"
+          class="suggestion-chip"
+          on:click={() => applySuggestedQuery(query)}>{query}</button
         >
       {/each}
     </div>
 
     {#if currentSlide !== null}
-      <p class="freshness" class:roll-out={animState === "roll-out"} class:roll-in={animState === "roll-in"}>
+      <p
+        class="freshness"
+        class:roll-out={animState === "roll-out"}
+        class:roll-in={animState === "roll-in"}
+      >
         {slideLabel(currentSlide)}
       </p>
     {/if}
@@ -158,8 +162,7 @@
     z-index: -1;
     inset: -0.6rem -1.25rem -1rem;
     border-radius: 2rem;
-    background:
-      radial-gradient(
+    background: radial-gradient(
         70% 46% at 50% 30%,
         rgba(11, 78, 162, 0.08) 0%,
         rgba(11, 78, 162, 0.03) 46%,
@@ -291,13 +294,25 @@
   }
 
   @keyframes roll-out {
-    from { transform: translateY(0); opacity: 1; }
-    to   { transform: translateY(100%); opacity: 0; }
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(100%);
+      opacity: 0;
+    }
   }
 
   @keyframes roll-in {
-    from { transform: translateY(-100%); opacity: 0; }
-    to   { transform: translateY(0); opacity: 1; }
+    from {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
 
   .suggestion-chip {
