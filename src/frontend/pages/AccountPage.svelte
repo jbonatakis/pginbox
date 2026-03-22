@@ -1023,6 +1023,7 @@
 
   .emails-overlay[open] {
     display: grid;
+    align-content: start;
   }
 
   .emails-overlay::backdrop {
