@@ -52,6 +52,7 @@
   let emailActionBusy: string | null = null; // emailId of in-progress action
   let emailActionError: ApiErrorShape | null = null;
   let confirmMakePrimaryId: string | null = null; // emailId awaiting confirmation
+  let confirmRemoveId: string | null = null; // emailId awaiting remove confirmation
   let emailsDialog: HTMLDialogElement;
 
   const trackedThreadTabs = createTrackedThreadTabsController();
@@ -263,7 +264,15 @@
     confirmMakePrimaryId = null;
   };
 
-  const handleRemoveEmail = async (emailId: string): Promise<void> => {
+  const handleRemoveEmail = (emailId: string): void => {
+    confirmRemoveId = emailId;
+  };
+
+  const handleConfirmRemoveEmail = async (): Promise<void> => {
+    const emailId = confirmRemoveId;
+    if (!emailId) return;
+
+    confirmRemoveId = null;
     emailActionBusy = emailId;
     emailActionError = null;
     try {
@@ -276,6 +285,10 @@
     }
   };
 
+  const handleCancelRemoveEmail = (): void => {
+    confirmRemoveId = null;
+  };
+
   const handleOpenEmailsOverlay = (): void => {
     emailsDialog.showModal();
   };
@@ -286,6 +299,7 @@
     addEmailMessage = null;
     emailActionError = null;
     confirmMakePrimaryId = null;
+    confirmRemoveId = null;
     emailsDialog.close();
   };
 
@@ -616,6 +630,29 @@
                       type="button"
                       class="secondary-button"
                       on:click={handleCancelMakePrimary}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              {:else if confirmRemoveId === email.id}
+                <div class="confirm-panel">
+                  <p class="confirm-message">
+                    Remove <strong>{email.email}</strong> from your account? This cannot be undone.
+                  </p>
+                  <div class="actions">
+                    <button
+                      type="button"
+                      class="danger-button"
+                      disabled={emailActionBusy === email.id}
+                      on:click={handleConfirmRemoveEmail}
+                    >
+                      {emailActionBusy === email.id ? "Removing…" : "Yes, remove"}
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      on:click={handleCancelRemoveEmail}
                     >
                       Cancel
                     </button>
