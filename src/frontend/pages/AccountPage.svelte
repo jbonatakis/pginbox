@@ -52,6 +52,7 @@
   let emailActionBusy: string | null = null; // emailId of in-progress action
   let emailActionError: ApiErrorShape | null = null;
   let confirmMakePrimaryId: string | null = null; // emailId awaiting confirmation
+  let emailsDialog: HTMLDialogElement;
 
   const trackedThreadTabs = createTrackedThreadTabsController();
   const trackedThreadTabsStore = trackedThreadTabs.state;
@@ -275,6 +276,19 @@
     }
   };
 
+  const handleOpenEmailsOverlay = (): void => {
+    emailsDialog.showModal();
+  };
+
+  const handleCloseEmailsOverlay = (): void => {
+    addEmailValue = "";
+    addEmailError = null;
+    addEmailMessage = null;
+    emailActionError = null;
+    confirmMakePrimaryId = null;
+    emailsDialog.close();
+  };
+
   const handleResendEmailVerification = async (emailId: string): Promise<void> => {
     emailActionBusy = emailId;
     emailActionError = null;
@@ -354,6 +368,9 @@
                   Verified
                 </button>
               {/if}
+              <button type="button" class="add-email-button" on:click={handleOpenEmailsOverlay}>
+                Manage emails
+              </button>
             </dd>
           </div>
 
@@ -471,15 +488,72 @@
 
     </section>
 
-    <article class="account-card emails-card">
-      <header class="card-header stacked">
+    <section class="tracked-threads-section" aria-label="Tracked threads">
+      <header class="tracked-threads-header">
         <div>
-          <p class="eyebrow">Account</p>
-          <h2>Email Addresses</h2>
+          <p class="eyebrow">Threads</p>
+          <h2 class="section-heading">Tracked Threads</h2>
         </div>
         <p class="support-copy">
-          Your primary email is used for sign-in, password resets, and other account communications.
+          Followed discussions and threads you started or replied to live here.
         </p>
+      </header>
+
+      {#if trackedThreadCountsLoading}
+        <LoadingState
+          title="Loading tracked threads"
+          message="Fetching tracked-thread counts and your first list."
+        />
+      {:else if trackedThreadCountsError}
+        <ErrorState
+          title="Unable to load tracked threads"
+          message={trackedThreadCountsError.message}
+          detail={formatErrorDetail(trackedThreadCountsError)}
+        />
+      {:else}
+        <div class="tracked-thread-tabs" role="tablist" aria-label="Tracked thread lists">
+          {#each TRACKED_THREAD_TABS as tab}
+            <button
+              type="button"
+              id={"tracked-thread-tab-" + tab}
+              role="tab"
+              class="tracked-thread-tab"
+              class:active={activeTrackedThreadTab === tab}
+              aria-controls={"tracked-thread-panel-" + tab}
+              aria-selected={activeTrackedThreadTab === tab}
+              on:click={() => handleTrackedThreadTabSelect(tab)}
+            >
+              {getTrackedThreadTabLabel(tab, $trackedThreadTabsStore.tabs[tab].count)}
+            </button>
+          {/each}
+        </div>
+
+        <div
+          id={"tracked-thread-panel-" + activeTrackedThreadTab}
+          class="tracked-thread-tab-panel"
+          role="tabpanel"
+          aria-labelledby={"tracked-thread-tab-" + activeTrackedThreadTab}
+        >
+          <TrackedThreadList
+            tab={activeTrackedThreadTab}
+            items={activeTrackedThreadState.items}
+            error={activeTrackedThreadState.error}
+            loading={activeTrackedThreadState.loading}
+            loadingMore={activeTrackedThreadState.loadingMore}
+            nextCursor={activeTrackedThreadState.nextCursor}
+            emptyMessage={getTrackedThreadEmptyMessage(activeTrackedThreadTab)}
+            formatDateTime={formatDateTime}
+            on:loadmore={(event) => handleTrackedThreadLoadMore(event.detail.tab)}
+          />
+        </div>
+      {/if}
+    </section>
+    <dialog bind:this={emailsDialog} class="emails-overlay" aria-labelledby="emails-overlay-title">
+      <header class="overlay-header">
+        <h2 id="emails-overlay-title">Email addresses</h2>
+        <button type="button" class="overlay-close" aria-label="Close" on:click={handleCloseEmailsOverlay}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </header>
 
       {#if emailActionError}
@@ -498,7 +572,7 @@
           message={emailsError.message}
           detail={formatErrorDetail(emailsError)}
         />
-      {:else}
+      {:else if emails.length > 0}
         <ul class="email-list">
           {#each emails as email (email.id)}
             <li class="email-item">
@@ -586,105 +660,46 @@
         </ul>
       {/if}
 
-      {#if addEmailError}
-        <ErrorState
-          title="Unable to add email"
-          message={addEmailError.message}
-          detail={formatErrorDetail(addEmailError)}
-        />
-      {/if}
-
-      {#if addEmailMessage}
-        <SuccessState
-          title="Verification email queued"
-          message={addEmailMessage}
-        />
-      {/if}
-
-      <form class="add-email-form" on:submit|preventDefault={handleAddEmail}>
-        <label class="field">
-          <span>Add email address</span>
-          <input
-            type="email"
-            name="email"
-            autocomplete="email"
-            bind:value={addEmailValue}
-            placeholder="new@example.com"
-            disabled={addEmailBusy}
+      <div class="overlay-add-section">
+        {#if addEmailError}
+          <ErrorState
+            title="Unable to add email"
+            message={addEmailError.message}
+            detail={formatErrorDetail(addEmailError)}
           />
-        </label>
-        <div class="actions">
-          <button
-            type="submit"
-            class="primary-button"
-            disabled={addEmailBusy || addEmailValue.trim().length === 0}
-          >
-            {addEmailBusy ? "Sending…" : "Add and verify"}
-          </button>
-        </div>
-      </form>
-    </article>
+        {/if}
 
-    <section class="tracked-threads-section" aria-label="Tracked threads">
-      <header class="tracked-threads-header">
-        <div>
-          <p class="eyebrow">Threads</p>
-          <h2 class="section-heading">Tracked Threads</h2>
-        </div>
-        <p class="support-copy">
-          Followed discussions and threads you started or replied to live here.
-        </p>
-      </header>
+        {#if addEmailMessage}
+          <SuccessState
+            title="Request submitted"
+            message={addEmailMessage}
+          />
+        {/if}
 
-      {#if trackedThreadCountsLoading}
-        <LoadingState
-          title="Loading tracked threads"
-          message="Fetching tracked-thread counts and your first list."
-        />
-      {:else if trackedThreadCountsError}
-        <ErrorState
-          title="Unable to load tracked threads"
-          message={trackedThreadCountsError.message}
-          detail={formatErrorDetail(trackedThreadCountsError)}
-        />
-      {:else}
-        <div class="tracked-thread-tabs" role="tablist" aria-label="Tracked thread lists">
-          {#each TRACKED_THREAD_TABS as tab}
+        <form on:submit|preventDefault={handleAddEmail}>
+          <label class="field">
+            <span>Add email address</span>
+            <input
+              type="email"
+              name="email"
+              autocomplete="email"
+              bind:value={addEmailValue}
+              placeholder="new@example.com"
+              disabled={addEmailBusy}
+            />
+          </label>
+          <div class="actions">
             <button
-              type="button"
-              id={"tracked-thread-tab-" + tab}
-              role="tab"
-              class="tracked-thread-tab"
-              class:active={activeTrackedThreadTab === tab}
-              aria-controls={"tracked-thread-panel-" + tab}
-              aria-selected={activeTrackedThreadTab === tab}
-              on:click={() => handleTrackedThreadTabSelect(tab)}
+              type="submit"
+              class="primary-button"
+              disabled={addEmailBusy || addEmailValue.trim().length === 0}
             >
-              {getTrackedThreadTabLabel(tab, $trackedThreadTabsStore.tabs[tab].count)}
+              {addEmailBusy ? "Sending…" : "Add and verify"}
             </button>
-          {/each}
-        </div>
-
-        <div
-          id={"tracked-thread-panel-" + activeTrackedThreadTab}
-          class="tracked-thread-tab-panel"
-          role="tabpanel"
-          aria-labelledby={"tracked-thread-tab-" + activeTrackedThreadTab}
-        >
-          <TrackedThreadList
-            tab={activeTrackedThreadTab}
-            items={activeTrackedThreadState.items}
-            error={activeTrackedThreadState.error}
-            loading={activeTrackedThreadState.loading}
-            loadingMore={activeTrackedThreadState.loadingMore}
-            nextCursor={activeTrackedThreadState.nextCursor}
-            emptyMessage={getTrackedThreadEmptyMessage(activeTrackedThreadTab)}
-            formatDateTime={formatDateTime}
-            on:loadmore={(event) => handleTrackedThreadLoadMore(event.detail.tab)}
-          />
-        </div>
-      {/if}
-    </section>
+          </div>
+        </form>
+      </div>
+    </dialog>
   {/if}
 </section>
 
@@ -935,14 +950,101 @@
     line-height: 1.4;
   }
 
-  .emails-card {
-    grid-column: 1 / -1;
+  .add-email-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.6rem;
+    padding: 0.18rem 0.55rem;
+    border: 1px solid #bcccdc;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.88);
+    color: #486581;
+    font-size: 0.76rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    font: inherit;
+    white-space: nowrap;
+  }
+
+  .add-email-button:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .emails-overlay {
+    width: min(34rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 4rem);
+    overflow-y: auto;
+    border: 1px solid #d9e2ec;
+    border-radius: 1rem;
+    padding: 0;
+    background: #fff;
+    box-shadow: 0 24px 48px -12px rgba(16, 42, 67, 0.28);
+  }
+
+  .emails-overlay[open] {
+    display: grid;
+  }
+
+  .emails-overlay::backdrop {
+    background: rgba(16, 42, 67, 0.38);
+    backdrop-filter: blur(2px);
+  }
+
+  .overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1rem 0.75rem;
+    border-bottom: 1px solid #edf2f7;
+  }
+
+  .overlay-header h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .overlay-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: transparent;
+    color: #627d98;
+    cursor: pointer;
+    flex-shrink: 0;
+    font: inherit;
+  }
+
+  .overlay-close:hover {
+    background: #f0f7ff;
+    border-color: #9fb3c8;
+    color: #243b53;
+  }
+
+  .overlay-add-section {
+    display: grid;
+    gap: 0.65rem;
+    padding: 0.85rem 1rem 1rem;
+    border-top: 1px solid #edf2f7;
+    margin-top: 0.15rem;
+  }
+
+  .overlay-add-section form {
+    display: grid;
+    gap: 0.65rem;
   }
 
   .email-list {
     list-style: none;
     margin: 0;
-    padding: 0;
+    padding: 0.85rem 1rem 0;
     display: grid;
     gap: 0.6rem;
   }
@@ -1066,14 +1168,6 @@
   .danger-button:disabled {
     opacity: 0.65;
     cursor: default;
-  }
-
-  .add-email-form {
-    display: grid;
-    gap: 0.65rem;
-    padding-top: 0.35rem;
-    border-top: 1px solid #edf2f7;
-    margin-top: 0.25rem;
   }
 
   .tracked-threads-section {
