@@ -488,6 +488,18 @@ async function consumeVerificationTokensForEmail(
     .execute();
 }
 
+async function deleteVerificationTokensForEmail(
+  authDb: DatabaseClient,
+  userId: bigint | number | string,
+  email: string
+): Promise<void> {
+  await authDb
+    .deleteFrom("email_verification_tokens")
+    .where("user_id", "=", toDbInt8(userId))
+    .where("email", "=", email)
+    .execute();
+}
+
 async function rotatePasswordResetToken(
   authDb: DatabaseClient,
   user: AuthUserRecord,
@@ -813,7 +825,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const result = await authDb.transaction().execute(async (trx) => {
         const tokenRecord = await findVerificationToken(trx, tokenHash);
         if (!tokenRecord || tokenRecord.consumed_at !== null || !tokenHashMatches(rawToken, tokenRecord.token_hash)) {
-          throwInvalidToken();
+          return { type: "invalid" as const };
         }
 
         if (toDate(tokenRecord.expires_at).getTime() <= currentTime.getTime()) {
@@ -825,6 +837,17 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           throw new AuthError(403, "ACCOUNT_DISABLED", "This account is disabled");
         }
 
+        const consumedClaim = await (trx as any)
+          .deleteFrom("user_email_claims")
+          .where("user_id", "=", toDbInt8(tokenRecord.user_id))
+          .where("email", "=", tokenRecord.email)
+          .returning(["claim_kind"])
+          .executeTakeFirst() as { claim_kind: UserEmailClaimKind } | undefined;
+
+        if (!consumedClaim || consumedClaim.claim_kind !== tokenRecord.claim_kind) {
+          return { type: "invalid" as const };
+        }
+
         await consumeVerificationTokensForEmail(trx, tokenRecord.user_id, tokenRecord.email, currentTime);
 
         const isRegistration = tokenRecord.claim_kind === "registration";
@@ -834,11 +857,12 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           existingVerifiedEmail &&
           String(existingVerifiedEmail.user_id) !== String(tokenRecord.user_id)
         ) {
+          await deleteVerificationTokensForEmail(trx, tokenRecord.user_id, tokenRecord.email);
           await (trx as any)
             .deleteFrom("user_email_claims")
             .where("email", "=", tokenRecord.email)
             .execute();
-          throwInvalidToken();
+          return { type: "invalid" as const };
         }
 
         if (!existingVerifiedEmail) {
@@ -889,11 +913,29 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
 
         if (isRegistration) {
           const { session, sessionToken } = await createSessionForUser(trx, user, metadata, currentTime);
-          return { isRegistration: true, session, sessionToken, user, verifiedEmail: tokenRecord.email };
+          return {
+            type: "success" as const,
+            isRegistration: true,
+            session,
+            sessionToken,
+            user,
+            verifiedEmail: tokenRecord.email,
+          };
         }
 
-        return { isRegistration: false, session: null, sessionToken: null, user, verifiedEmail: tokenRecord.email };
+        return {
+          type: "success" as const,
+          isRegistration: false,
+          session: null,
+          sessionToken: null,
+          user,
+          verifiedEmail: tokenRecord.email,
+        };
       });
+
+      if (result.type === "invalid") {
+        throwInvalidToken();
+      }
 
       runParticipationBackfillForUser(String(result.user.id), result.verifiedEmail).catch((err) => {
         console.error(`participation backfill failed for user ${result.user.id}: ${err}`);
@@ -1278,10 +1320,14 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
         throw new AuthError(404, "EMAIL_NOT_FOUND", "Email not found");
       }
 
-      await (authDb as any)
-        .deleteFrom("user_email_claims")
-        .where("id", "=", toDbInt8(parsedEmailId.id))
-        .execute();
+      await authDb.transaction().execute(async (trx) => {
+        await (trx as any)
+          .deleteFrom("user_email_claims")
+          .where("id", "=", toDbInt8(parsedEmailId.id))
+          .execute();
+
+        await deleteVerificationTokensForEmail(trx, userId, emailClaim.email);
+      });
     },
 
     async resendVerificationForEmail(

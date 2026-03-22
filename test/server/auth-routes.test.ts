@@ -889,6 +889,81 @@ describeAuthRoutes("auth routes", () => {
     });
   });
 
+  it("invalidates pending email verification tokens when the email is removed", async () => {
+    const { app, mailer } = createTestApp();
+    const primaryEmail = "remove-token-primary@example.com";
+    const secondaryEmail = "remove-token-secondary@example.com";
+    const activeUser = await createActiveUser(app, mailer, primaryEmail);
+
+    mailer.verificationUrls.length = 0;
+
+    const addEmailResponse = await send(app, "/account/emails", {
+      body: { email: secondaryEmail },
+      headers: {
+        cookie: activeUser.cookie,
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(addEmailResponse.status).toBe(202);
+    const staleToken = extractToken(mailer.verificationUrls.at(-1)!);
+
+    const pendingEmailsResponse = await send(app, "/account/emails", {
+      headers: {
+        cookie: activeUser.cookie,
+      },
+    });
+
+    expect(pendingEmailsResponse.status).toBe(200);
+    const pendingEmailsBody = await parseJson(pendingEmailsResponse) as {
+      emails: Array<{ email: string; id: string; verifiedAt: string | null }>;
+    };
+    const pendingSecondaryEmail = pendingEmailsBody.emails.find((entry) => entry.email === secondaryEmail);
+
+    expect(pendingSecondaryEmail).toMatchObject({
+      email: secondaryEmail,
+      verifiedAt: null,
+    });
+
+    const removeEmailResponse = await send(
+      app,
+      `/account/emails/${encodeURIComponent(pendingSecondaryEmail!.id)}`,
+      {
+        headers: {
+          cookie: activeUser.cookie,
+          origin: frontendOrigin,
+        },
+        method: "DELETE",
+      }
+    );
+
+    expect(removeEmailResponse.status).toBe(200);
+
+    const tokenRows = await getAuthDb()
+      .selectFrom("email_verification_tokens")
+      .select("token_hash")
+      .where("user_id", "=", await getUserIdByEmail(primaryEmail))
+      .where("email", "=", secondaryEmail)
+      .execute();
+
+    expect(tokenRows).toHaveLength(0);
+
+    const staleVerificationResponse = await send(app, "/auth/verify-email", {
+      body: { token: staleToken },
+      headers: {
+        origin: frontendOrigin,
+      },
+      method: "POST",
+    });
+
+    expect(staleVerificationResponse.status).toBe(400);
+    expect(await parseJson(staleVerificationResponse)).toEqual({
+      code: "TOKEN_INVALID",
+      message: "The token is invalid",
+    });
+  });
+
   it("applies rate limits to register, resend, login, forgot-password, and reset-password", async () => {
     const tightRateLimits: AuthRateLimitConfig = {
       forgotPassword: {
