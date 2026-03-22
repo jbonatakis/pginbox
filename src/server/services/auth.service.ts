@@ -29,6 +29,7 @@ import {
 } from "../auth";
 import { resolveAuthAppBaseUrl, resolveAuthEmailRuntimeConfig, type AuthEmailRuntimeConfig } from "../config";
 import { toDbInt8 } from "../db-ids";
+import { runParticipationBackfillForUser } from "./thread-progress.service";
 import { db as defaultDb } from "../db";
 import { createAuthEmailSender, type AuthEmailSender } from "../email";
 import type { DB } from "../types/db.d.ts";
@@ -533,7 +534,7 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
       const currentTime = now();
       const tokenHash = hashOpaqueToken(rawToken);
 
-      return authDb.transaction().execute(async (trx) => {
+      const result = await authDb.transaction().execute(async (trx) => {
         const tokenRecord = await findVerificationToken(trx, tokenHash);
         if (!tokenRecord || tokenRecord.consumed_at !== null || !tokenHashMatches(rawToken, tokenRecord.token_hash)) {
           throwInvalidToken();
@@ -575,6 +576,12 @@ export function createAuthService(dependencies: AuthServiceDependencies = {}) {
           user,
         };
       });
+
+      runParticipationBackfillForUser(String(result.user.id), result.user.email).catch((err) => {
+        console.error(`participation backfill failed for user ${result.user.id}: ${err}`);
+      });
+
+      return result;
     },
 
     async login(input: AuthLoginRequest, metadata?: SessionRequestMetadata): Promise<AuthFlowResult> {

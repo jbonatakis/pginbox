@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { db } from "../../src/server/db";
-import { runHistoricalParticipationBackfill } from "../../src/server/services/thread-progress.service";
+import { runHistoricalParticipationBackfill, runParticipationBackfillForUser } from "../../src/server/services/thread-progress.service";
 
 function uid(): string {
   return randomBytes(6).toString("hex");
@@ -149,6 +149,113 @@ afterEach(async () => {
     await db.deleteFrom("lists").where("id", "in", createdListIds).execute();
     createdListIds.length = 0;
   }
+});
+
+describe("runParticipationBackfillForUser", () => {
+  it("populates thread_tracking and seeds read progress for historical messages", async () => {
+    const user = await createVerifiedUser();
+    const listId = await createList();
+    const thread = await createThreadWithMessages(listId, [
+      { fromEmail: user.email, key: "mine-1", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 0, 0)) },
+      { fromEmail: user.email, key: "mine-2", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 1, 0)) },
+      { fromEmail: "other@example.com", key: "other-1", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 2, 0)) },
+    ]);
+
+    await runParticipationBackfillForUser(user.id, user.email);
+
+    const trackingRow = await db
+      .selectFrom("thread_tracking")
+      .select(["anchor_message_id", "participated_at"])
+      .where("user_id", "=", user.id)
+      .where("thread_id", "=", thread.stableThreadId)
+      .executeTakeFirstOrThrow();
+
+    const progressRow = await db
+      .selectFrom("thread_read_progress")
+      .select("last_read_message_id")
+      .where("user_id", "=", user.id)
+      .where("thread_id", "=", thread.stableThreadId)
+      .executeTakeFirstOrThrow();
+
+    expect(String(trackingRow.anchor_message_id)).toBe(thread.messageIds["mine-2"]);
+    expect(trackingRow.participated_at).not.toBeNull();
+    expect(String(progressRow.last_read_message_id)).toBe(thread.messageIds["other-1"]);
+  });
+
+  it("completes without error when the user has no matching messages", async () => {
+    const user = await createVerifiedUser();
+    const listId = await createList();
+    await createThreadWithMessages(listId, [
+      { fromEmail: "other@example.com", key: "other-1", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 0, 0)) },
+    ]);
+
+    await runParticipationBackfillForUser(user.id, user.email);
+
+    const trackingRows = await db
+      .selectFrom("thread_tracking")
+      .select("thread_id")
+      .where("user_id", "=", user.id)
+      .execute();
+
+    expect(trackingRows).toHaveLength(0);
+  });
+
+  it("is idempotent and does not overwrite existing progress on rerun", async () => {
+    const user = await createVerifiedUser();
+    const listId = await createList();
+    const thread = await createThreadWithMessages(listId, [
+      { fromEmail: user.email, key: "mine-1", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 0, 0)) },
+      { fromEmail: "other@example.com", key: "other-1", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 1, 0)) },
+    ]);
+
+    await runParticipationBackfillForUser(user.id, user.email);
+    await runParticipationBackfillForUser(user.id, user.email);
+
+    const trackingCount = await db
+      .selectFrom("thread_tracking")
+      .select(({ fn }) => fn.countAll().as("count"))
+      .where("user_id", "=", user.id)
+      .where("thread_id", "=", thread.stableThreadId)
+      .executeTakeFirstOrThrow();
+
+    const progressCount = await db
+      .selectFrom("thread_read_progress")
+      .select(({ fn }) => fn.countAll().as("count"))
+      .where("user_id", "=", user.id)
+      .where("thread_id", "=", thread.stableThreadId)
+      .executeTakeFirstOrThrow();
+
+    expect(Number(trackingCount.count)).toBe(1);
+    expect(Number(progressCount.count)).toBe(1);
+  });
+
+  it("only backfills the specified user and does not touch others", async () => {
+    const target = await createVerifiedUser();
+    const bystander = await createVerifiedUser();
+    const listId = await createList();
+
+    await createThreadWithMessages(listId, [
+      { fromEmail: target.email, key: "target-1", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 0, 0)) },
+      { fromEmail: bystander.email, key: "bystander-1", sentAt: new Date(Date.UTC(2024, 0, 1, 0, 1, 0)) },
+    ]);
+
+    await runParticipationBackfillForUser(target.id, target.email);
+
+    const targetRows = await db
+      .selectFrom("thread_tracking")
+      .select("thread_id")
+      .where("user_id", "=", target.id)
+      .execute();
+
+    const bystanderRows = await db
+      .selectFrom("thread_tracking")
+      .select("thread_id")
+      .where("user_id", "=", bystander.id)
+      .execute();
+
+    expect(targetRows).toHaveLength(1);
+    expect(bystanderRows).toHaveLength(0);
+  });
 });
 
 describe("historical My Threads backfill", () => {
