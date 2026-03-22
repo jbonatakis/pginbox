@@ -38,11 +38,14 @@ def _cleanup_test_rows(conn, token: str):
             WHERE thread_id LIKE %s
                OR user_id IN (
                    SELECT user_id
-                   FROM user_emails
-                   WHERE email LIKE %s
+                   FROM (
+                       SELECT user_id FROM user_emails WHERE email LIKE %s
+                       UNION
+                       SELECT user_id FROM user_email_claims WHERE email LIKE %s
+                   ) AS matching_users
                )
             """,
-            (pattern, pattern),
+            (pattern, pattern, pattern),
         )
         cur.execute(
             """
@@ -50,11 +53,14 @@ def _cleanup_test_rows(conn, token: str):
             WHERE thread_id LIKE %s
                OR user_id IN (
                    SELECT user_id
-                   FROM user_emails
-                   WHERE email LIKE %s
+                   FROM (
+                       SELECT user_id FROM user_emails WHERE email LIKE %s
+                       UNION
+                       SELECT user_id FROM user_email_claims WHERE email LIKE %s
+                   ) AS matching_users
                )
             """,
-            (pattern, pattern),
+            (pattern, pattern, pattern),
         )
         cur.execute("DELETE FROM messages WHERE message_id LIKE %s", (pattern,))
         cur.execute("DELETE FROM threads WHERE thread_id LIKE %s", (pattern,))
@@ -64,11 +70,14 @@ def _cleanup_test_rows(conn, token: str):
             DELETE FROM users
             WHERE id IN (
                 SELECT user_id
-                FROM user_emails
-                WHERE email LIKE %s
+                FROM (
+                    SELECT user_id FROM user_emails WHERE email LIKE %s
+                    UNION
+                    SELECT user_id FROM user_email_claims WHERE email LIKE %s
+                ) AS matching_users
             )
             """,
-            (pattern,),
+            (pattern, pattern),
         )
     conn.commit()
 
@@ -130,18 +139,31 @@ def insert_user(
             ),
         )
         user_id = cur.fetchone()[0]
-        cur.execute(
-            """
-            INSERT INTO user_emails (
-                user_id,
-                email,
-                is_primary,
-                verified_at
+        if email_verified_at is None:
+            cur.execute(
+                """
+                INSERT INTO user_email_claims (
+                    user_id,
+                    email,
+                    claim_kind
+                )
+                VALUES (%s, %s, 'registration')
+                """,
+                (user_id, email),
             )
-            VALUES (%s, %s, TRUE, %s)
-            """,
-            (user_id, email, email_verified_at),
-        )
+        else:
+            cur.execute(
+                """
+                INSERT INTO user_emails (
+                    user_id,
+                    email,
+                    is_primary,
+                    verified_at
+                )
+                VALUES (%s, %s, TRUE, %s)
+                """,
+                (user_id, email, email_verified_at),
+            )
     conn.commit()
     return user_id
 
@@ -151,7 +173,7 @@ def insert_user_email(
     *,
     user_id: int,
     email: str,
-    verified_at: datetime | None,
+    verified_at: datetime,
     is_primary: bool = False,
 ):
     with conn.cursor() as cur:
