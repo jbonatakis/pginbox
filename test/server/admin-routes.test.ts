@@ -30,12 +30,10 @@ async function createTestUser(role: "admin" | "member" = "member"): Promise<Test
       password_hash: "placeholder",
       status: "active",
       role,
-      created_at: now,
       display_name: null,
       disabled_at: null,
       disable_reason: null,
       last_login_at: null,
-      updated_at: now,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -55,12 +53,10 @@ async function createPendingTestUser(): Promise<TestUser> {
       password_hash: "placeholder",
       status: "pending_verification",
       role: "member",
-      created_at: now,
       display_name: null,
       disabled_at: null,
       disable_reason: null,
       last_login_at: null,
-      updated_at: now,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
