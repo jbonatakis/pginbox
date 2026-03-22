@@ -4,6 +4,8 @@ import {
   resolveCurrentSession,
   type ResponseCookieTarget,
 } from "../auth";
+import { resolveAuthAppBaseUrl } from "../config";
+import { assertSameOrigin, resolveConfiguredOrigin } from "./same-origin";
 import {
   disableAdminUser,
   enableAdminUser,
@@ -12,6 +14,8 @@ import {
   sendAdminPasswordReset,
   setAdminUserRole,
 } from "../services/admin.service";
+
+const configuredOrigin = resolveConfiguredOrigin(resolveAuthAppBaseUrl());
 
 function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTarget {
   return target as ResponseCookieTarget;
@@ -53,6 +57,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
   .post(
     "/users/:id/disable",
     async ({ body, params, request, set, status }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       await requireAdminAuth(resolved);
       return disableAdminUser(params.id, body.reason);
@@ -65,6 +70,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
   .post(
     "/users/:id/enable",
     async ({ params, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       await requireAdminAuth(resolved);
       return enableAdminUser(params.id);
@@ -74,6 +80,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
   .post(
     "/users/:id/reset-password",
     async ({ params, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       await requireAdminAuth(resolved);
       await sendAdminPasswordReset(params.id);
@@ -84,6 +91,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
   .patch(
     "/users/:id/role",
     async ({ body, params, request, set }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAdminAuth(resolved);
       return setAdminUserRole(params.id, body.role, String(user.id));

@@ -1,5 +1,7 @@
 import { Elysia, t } from "elysia";
 import { requireAuth, resolveCurrentSession, type ResponseCookieTarget } from "../auth";
+import { resolveAuthAppBaseUrl } from "../config";
+import { assertSameOrigin, resolveConfiguredOrigin } from "./same-origin";
 import {
   getTrackedThreadCounts,
   getThreadFollowStates,
@@ -10,6 +12,8 @@ import {
 function toResponseCookieTarget(target: { headers: unknown }): ResponseCookieTarget {
   return target as ResponseCookieTarget;
 }
+
+const configuredOrigin = resolveConfiguredOrigin(resolveAuthAppBaseUrl());
 
 function parseLimit(value: string | undefined, defaultVal: number): number | null {
   if (value === undefined) return defaultVal;
@@ -22,6 +26,7 @@ export const meRoutes = new Elysia({ prefix: "/me" })
   .post(
     "/thread-follow-states",
     async ({ body, request, set, status }) => {
+      assertSameOrigin(request, configuredOrigin);
       const resolved = await resolveCurrentSession({ request, set: toResponseCookieTarget(set) });
       const { user } = await requireAuth(resolved);
       if (body.threadIds.length > 100) {
