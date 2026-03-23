@@ -448,6 +448,26 @@ def _load_list_names(args, parser: argparse.ArgumentParser) -> list[str]:
     return deduped
 
 
+def _lookup_existing_list_ids(conn, list_names: list[str]) -> list[int]:
+    if not list_names:
+        return []
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT name, id FROM lists WHERE name = ANY(%s)",
+            (list_names,),
+        )
+        rows = cur.fetchall()
+
+    ids_by_name = {name: list_id for name, list_id in rows}
+    missing = [name for name in list_names if name not in ids_by_name]
+    if missing:
+        missing_csv = ", ".join(missing)
+        raise ValueError(f"--derive-only list not found in database: {missing_csv}")
+
+    return [ids_by_name[name] for name in list_names]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Ingest PostgreSQL mailing list mbox archives"
@@ -614,7 +634,13 @@ def main():
 
     conn = psycopg2.connect(args.dsn)
     if args.derive_only:
-        derive_threads(conn)
+        derive_list_ids = None
+        if args.list_names or args.lists_file:
+            try:
+                derive_list_ids = _lookup_existing_list_ids(conn, list_names)
+            except ValueError as exc:
+                parser.error(str(exc))
+        derive_threads(conn, list_ids=derive_list_ids)
         if not args.skip_analytics:
             refresh_analytics_views(conn)
         conn.close()
