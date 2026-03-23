@@ -5,6 +5,7 @@ import email.header
 import email.utils
 import gzip
 import hashlib
+import json
 import mailbox
 import re
 import shutil
@@ -14,6 +15,12 @@ from pathlib import Path
 
 
 MESSAGE_ID_RE = re.compile(r"<[^<>\r\n]+>")
+
+_overrides_path = Path(__file__).parent / "message_overrides.json"
+_SENT_AT_OVERRIDES: dict[str, datetime] = {
+    msg_id: datetime.fromisoformat(ts)
+    for msg_id, ts in json.loads(_overrides_path.read_text()).items()
+}
 GIT_PATCH_FROM_RE = re.compile(
     rb"^From [0-9a-f]{7,64} Mon Sep 17 00:00:00 2001(?: .*)?$"
 )
@@ -392,6 +399,9 @@ def parse_mbox(path: Path, list_id: int):
             if aware < mbox_date:
                 sent_at = mbox_date
                 sent_at_approx = True
+        if message_id in _SENT_AT_OVERRIDES:
+            sent_at = _SENT_AT_OVERRIDES[message_id]
+            sent_at_approx = False
 
         from_name, from_email = "", ""
         from_str = msg.get("From") or ""

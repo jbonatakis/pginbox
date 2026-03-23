@@ -257,3 +257,141 @@ def test_refresh_threads_for_message_ids_scopes_upsert_to_current_list(
         "list_id": 42,
         "thread_ids": ["<shared-root@example.com>"],
     }
+
+
+def test_resolve_stable_thread_ids_rekeys_conflicting_batch_owner(ingest):
+    generated_for = []
+
+    def fake_fetch_thread_stable_ids(cur, thread_ids):
+        assert thread_ids == ["thread-a", "thread-b"]
+        return {
+            "thread-a": "STABLEA001",
+            "thread-b": "STABLEB001",
+        }
+
+    def fake_fetch_thread_ids_by_stable_ids(cur, stable_ids):
+        assert stable_ids == ["STABLEB001"]
+        return {
+            "STABLEB001": "thread-b",
+        }
+
+    def fake_fetch_all_thread_stable_ids(cur):
+        return {"STABLEA001", "STABLEB001"}
+
+    def fake_generate_thread_stable_id(*, used_stable_ids):
+        generated_for.append(set(used_stable_ids))
+        used_stable_ids.add("STABLEC001")
+        return "STABLEC001"
+
+    resolved = ingest.store_lib._resolve_stable_thread_ids(
+        object(),
+        ["thread-a", "thread-b"],
+        {"thread-a": "STABLEB001"},
+        fetch_thread_stable_ids=fake_fetch_thread_stable_ids,
+        fetch_all_thread_stable_ids=fake_fetch_all_thread_stable_ids,
+        fetch_thread_ids_by_stable_ids=fake_fetch_thread_ids_by_stable_ids,
+        generate_thread_stable_id=fake_generate_thread_stable_id,
+    )
+
+    assert resolved == {
+        "thread-a": "STABLEB001",
+        "thread-b": "STABLEC001",
+    }
+    assert generated_for == [{"STABLEA001", "STABLEB001"}]
+
+
+def test_resolve_stable_thread_ids_does_not_steal_from_untouched_thread(ingest):
+    generated_for = []
+
+    def fake_fetch_thread_stable_ids(cur, thread_ids):
+        assert thread_ids == ["thread-a", "thread-c"]
+        return {
+            "thread-a": "STABLEA001",
+        }
+
+    def fake_fetch_thread_ids_by_stable_ids(cur, stable_ids):
+        assert stable_ids == ["STABLEB001"]
+        return {
+            "STABLEB001": "thread-b",
+        }
+
+    def fake_fetch_all_thread_stable_ids(cur):
+        return {"STABLEA001", "STABLEB001"}
+
+    def fake_generate_thread_stable_id(*, used_stable_ids):
+        generated_for.append(set(used_stable_ids))
+        used_stable_ids.add("STABLEC001")
+        return "STABLEC001"
+
+    resolved = ingest.store_lib._resolve_stable_thread_ids(
+        object(),
+        ["thread-a", "thread-c"],
+        {"thread-c": "STABLEB001"},
+        fetch_thread_stable_ids=fake_fetch_thread_stable_ids,
+        fetch_all_thread_stable_ids=fake_fetch_all_thread_stable_ids,
+        fetch_thread_ids_by_stable_ids=fake_fetch_thread_ids_by_stable_ids,
+        generate_thread_stable_id=fake_generate_thread_stable_id,
+    )
+
+    assert resolved == {
+        "thread-a": "STABLEA001",
+        "thread-c": "STABLEC001",
+    }
+    assert generated_for == [{"STABLEA001", "STABLEB001"}]
+
+
+def test_derive_threads_deletes_stale_threads_before_resolving_stable_ids(
+    ingest, monkeypatch
+):
+    events = []
+
+    class FakeCursor:
+        def __init__(self):
+            self.executed = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params=None):
+            self.executed.append((sql, params))
+
+        def fetchall(self):
+            return []
+
+    class FakeConn:
+        def __init__(self):
+            self._cursor = FakeCursor()
+
+        def cursor(self):
+            return self._cursor
+
+        def commit(self):
+            events.append(("commit",))
+
+    def fake_rethread_messages(conn, list_ids=None):
+        events.append(("rethread", list_ids))
+        return {}
+
+    def fake_resolve_stable_thread_ids(cur, thread_ids, assigned_stable_ids_by_thread_id=None):
+        events.append(("resolve", thread_ids, assigned_stable_ids_by_thread_id))
+        assert ("DELETE", ([23],)) in cur.executed
+        return {}
+
+    monkeypatch.setattr(ingest.store_lib, "_resolve_stable_thread_ids", fake_resolve_stable_thread_ids)
+
+    ingest.store_lib.derive_threads(
+        FakeConn(),
+        list_ids=[23],
+        rethread_messages_fn=fake_rethread_messages,
+        rebuild_threads_for_lists_sql="REBUILD",
+        delete_stale_threads_for_lists_sql="DELETE",
+    )
+
+    assert events == [
+        ("rethread", [23]),
+        ("resolve", [], {}),
+        ("commit",),
+    ]
