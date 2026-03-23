@@ -199,6 +199,9 @@
 
     queryState = parsed;
     pendingRestoreScrollY = matchesHistoryContext ? historyContext?.restoreScrollY ?? null : null;
+    if (matchesHistoryContext && historyContext?.pageCursors) {
+      pageCursors = historyContext.pageCursors;
+    }
 
     if (canonicalSearch !== window.location.search) {
       const nextUrl = withSearch(threadsPath, canonicalSearch);
@@ -610,6 +613,7 @@
         items={threads}
         contextSearch={detailContextSearch}
         canManageFollows={$authStore.isAuthenticated}
+        {pageCursors}
         pendingThreadIds={pendingFollowThreadIds}
         on:togglefollow={handleToggleFollow}
       />

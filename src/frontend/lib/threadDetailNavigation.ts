@@ -7,10 +7,26 @@ const THREADS_DETAIL_HISTORY_CONTEXT_KEY = "threadsDetailContext";
 export interface ThreadsDetailHistoryContext {
   search: string;
   restoreScrollY?: number;
+  pageCursors?: Array<string | undefined>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const normalizePageCursors = (value: unknown): Array<string | undefined> | undefined => {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const result: Array<string | undefined> = [];
+  for (const entry of value) {
+    if (entry === undefined || entry === null) {
+      result.push(undefined);
+    } else if (typeof entry === "string") {
+      result.push(entry.length > 0 ? entry : undefined);
+    } else {
+      return undefined;
+    }
+  }
+  return result;
+};
 
 const normalizeRestoreScroll = (value: unknown): number | undefined => {
   if (typeof value === "number") {
@@ -37,27 +53,31 @@ export function getThreadsDetailHistoryContext(state: unknown): ThreadsDetailHis
 
   const search = typeof rawContext.search === "string" ? normalizeThreadsSearch(rawContext.search) : "";
   const restoreScrollY = normalizeRestoreScroll(rawContext.restoreScrollY);
+  const pageCursors = normalizePageCursors(rawContext.pageCursors);
 
-  if (restoreScrollY === undefined) {
-    return { search };
-  }
-
-  return { search, restoreScrollY };
+  const context: ThreadsDetailHistoryContext = { search };
+  if (restoreScrollY !== undefined) context.restoreScrollY = restoreScrollY;
+  if (pageCursors !== undefined) context.pageCursors = pageCursors;
+  return context;
 }
 
 export function withThreadsDetailHistoryContext(
   state: unknown,
   search: string,
-  restoreScrollY?: number | null
+  restoreScrollY?: number | null,
+  pageCursors?: Array<string | undefined>
 ): Record<string, unknown> {
   const nextState = isRecord(state) ? { ...state } : {};
   const nextContext: ThreadsDetailHistoryContext = {
     search: normalizeThreadsSearch(search),
   };
   const normalizedRestoreScrollY = normalizeRestoreScroll(restoreScrollY);
-
   if (normalizedRestoreScrollY !== undefined) {
     nextContext.restoreScrollY = normalizedRestoreScrollY;
+  }
+  const normalizedPageCursors = normalizePageCursors(pageCursors);
+  if (normalizedPageCursors !== undefined) {
+    nextContext.pageCursors = normalizedPageCursors;
   }
 
   nextState[THREADS_DETAIL_HISTORY_CONTEXT_KEY] = nextContext;

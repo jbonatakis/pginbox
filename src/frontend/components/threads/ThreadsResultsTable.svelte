@@ -7,6 +7,7 @@
   export let contextSearch = "";
   export let items: Thread[] = [];
   export let canManageFollows = false;
+  export let pageCursors: Array<string | undefined> = [undefined];
   export let pendingThreadIds: string[] = [];
 
   const dispatch = createEventDispatcher<{
@@ -53,7 +54,8 @@
     const nextState = withThreadsDetailHistoryContext(
       window.history.state,
       contextSearch,
-      currentScrollY()
+      currentScrollY(),
+      pageCursors
     );
     const nextUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
