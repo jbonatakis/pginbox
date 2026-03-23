@@ -297,7 +297,7 @@ export async function setAdminUserRole(
 }
 
 export async function getAdminStats(): Promise<AdminStats> {
-  const [userRow, pendingRow, messageRow, threadRow] = await Promise.all([
+  const [userRow, pendingRow, messageRow] = await Promise.all([
     defaultDb
       .selectFrom("users")
       .select(defaultDb.fn.countAll<string>().as("count"))
@@ -323,22 +323,13 @@ export async function getAdminStats(): Promise<AdminStats> {
       .executeTakeFirstOrThrow(),
     defaultDb
       .selectFrom("messages")
-      .select([
-        defaultDb.fn.countAll<string>().as("count"),
-        defaultDb.fn.max("messages.sent_at").as("latest_at"),
-      ])
-      .executeTakeFirstOrThrow(),
-    defaultDb
-      .selectFrom("threads")
-      .select(defaultDb.fn.countAll<string>().as("count"))
+      .select(defaultDb.fn.max("messages.sent_at").as("latest_at"))
       .executeTakeFirstOrThrow(),
   ]);
 
   return {
     userCount: Number(userRow.count),
     pendingVerificationCount: Number(pendingRow.count),
-    messageCount: Number(messageRow.count),
-    threadCount: Number(threadRow.count),
     latestMessageAt: dateToIso(messageRow.latest_at as Date | string | null),
   };
 }

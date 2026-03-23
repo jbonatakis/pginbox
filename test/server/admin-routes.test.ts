@@ -269,8 +269,8 @@ describe("GET /admin/stats", () => {
     const body = await parseJson(res) as Record<string, unknown>;
     expect(typeof body.userCount).toBe("number");
     expect(typeof body.pendingVerificationCount).toBe("number");
-    expect(typeof body.messageCount).toBe("number");
-    expect(typeof body.threadCount).toBe("number");
+    expect(body.messageCount).toBeUndefined();
+    expect(body.threadCount).toBeUndefined();
   });
 
   it("ignores orphaned pending users without a registration email", async () => {

@@ -178,6 +178,24 @@
   const formatCount = (n: number): string =>
     n.toLocaleString("en-US");
 
+  const timeAgo = (iso: string | null): string => {
+    if (!iso) return "";
+    const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  };
+
+  const latestMessageStaleClass = (iso: string | null): string => {
+    if (!iso) return "";
+    const hrs = (Date.now() - new Date(iso).getTime()) / 3600000;
+    if (hrs > 3) return "stale-red";
+    if (hrs > 1) return "stale-orange";
+    return "";
+  };
+
   onMount(() => {
     void loadPage(undefined, true);
   });
@@ -244,16 +262,11 @@
           </div>
         {/if}
         <div class="stat-card">
-          <span class="stat-label">Messages</span>
-          <strong class="stat-value">{formatCount(stats.messageCount)}</strong>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">Threads</span>
-          <strong class="stat-value">{formatCount(stats.threadCount)}</strong>
-        </div>
-        <div class="stat-card">
           <span class="stat-label">Latest message</span>
           <strong class="stat-value">{formatDateTime(stats.latestMessageAt)}</strong>
+          {#if stats.latestMessageAt}
+            <span class="stat-subtext {latestMessageStaleClass(stats.latestMessageAt)}">{timeAgo(stats.latestMessageAt)}</span>
+          {/if}
         </div>
       </div>
     {/if}
@@ -457,6 +470,19 @@
     font-weight: 760;
     color: var(--text);
     line-height: 1.1;
+  }
+
+  .stat-subtext {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+  }
+
+  .stat-subtext.stale-orange {
+    color: #b85c00;
+  }
+
+  .stat-subtext.stale-red {
+    color: #c0392b;
   }
 
   /* Panel */
