@@ -244,6 +244,12 @@ FETCH_ALL_THREAD_STABLE_IDS_SQL = """
     FROM threads
 """
 
+FETCH_THREAD_IDS_BY_STABLE_IDS_SQL = """
+    SELECT thread_id, id
+    FROM threads
+    WHERE id = ANY(%s)
+"""
+
 PARTICIPATION_MATCHES_CTE = """
     WITH ranked_matches AS (
         SELECT
@@ -640,6 +646,14 @@ def _fetch_all_thread_stable_ids(cur) -> set[str]:
     return {stable_id for (stable_id,) in cur.fetchall()}
 
 
+def _fetch_thread_ids_by_stable_ids(cur, stable_ids: list[str]) -> dict[str, str]:
+    if not stable_ids:
+        return {}
+
+    cur.execute(FETCH_THREAD_IDS_BY_STABLE_IDS_SQL, (stable_ids,))
+    return {stable_id: thread_id for thread_id, stable_id in cur.fetchall()}
+
+
 def _resolve_stable_thread_ids(
     cur,
     thread_ids: list[str],
@@ -647,20 +661,55 @@ def _resolve_stable_thread_ids(
     *,
     fetch_thread_stable_ids=_fetch_thread_stable_ids,
     fetch_all_thread_stable_ids=_fetch_all_thread_stable_ids,
+    fetch_thread_ids_by_stable_ids=_fetch_thread_ids_by_stable_ids,
     generate_thread_stable_id=_generate_thread_stable_id,
 ) -> dict[str, str]:
-    stable_ids_by_thread_id = fetch_thread_stable_ids(cur, thread_ids)
+    ordered_thread_ids = list(dict.fromkeys(thread_ids))
+    existing_stable_ids_by_thread_id = fetch_thread_stable_ids(cur, ordered_thread_ids)
+    batch_thread_ids = set(ordered_thread_ids)
+    stable_ids_by_thread_id: dict[str, str] = {}
+    claimed_stable_ids: set[str] = set()
+
     if assigned_stable_ids_by_thread_id:
-        stable_ids_by_thread_id.update(assigned_stable_ids_by_thread_id)
+        owners_by_stable_id = fetch_thread_ids_by_stable_ids(
+            cur,
+            sorted(set(assigned_stable_ids_by_thread_id.values())),
+        )
+        for thread_id in ordered_thread_ids:
+            stable_id = assigned_stable_ids_by_thread_id.get(thread_id)
+            if stable_id is None:
+                continue
+            owner_thread_id = owners_by_stable_id.get(stable_id)
+            if (
+                owner_thread_id is not None
+                and owner_thread_id != thread_id
+                and owner_thread_id not in batch_thread_ids
+            ):
+                continue
+            if stable_id in claimed_stable_ids:
+                continue
+            stable_ids_by_thread_id[thread_id] = stable_id
+            claimed_stable_ids.add(stable_id)
+
+    for thread_id in ordered_thread_ids:
+        if thread_id in stable_ids_by_thread_id:
+            continue
+        stable_id = existing_stable_ids_by_thread_id.get(thread_id)
+        if stable_id is None or stable_id in claimed_stable_ids:
+            continue
+        stable_ids_by_thread_id[thread_id] = stable_id
+        claimed_stable_ids.add(stable_id)
 
     missing_thread_ids = [
-        thread_id for thread_id in thread_ids if thread_id not in stable_ids_by_thread_id
+        thread_id
+        for thread_id in ordered_thread_ids
+        if thread_id not in stable_ids_by_thread_id
     ]
     if not missing_thread_ids:
         return stable_ids_by_thread_id
 
     used_stable_ids = fetch_all_thread_stable_ids(cur)
-    used_stable_ids.update(stable_ids_by_thread_id.values())
+    used_stable_ids.update(claimed_stable_ids)
     for thread_id in missing_thread_ids:
         stable_ids_by_thread_id[thread_id] = generate_thread_stable_id(
             used_stable_ids=used_stable_ids
@@ -1245,15 +1294,15 @@ def derive_threads(
         else:
             cur.execute(rebuild_threads_for_lists_sql, (normalized_list_ids,))
         rebuilt_threads = cur.fetchall()
+        if normalized_list_ids is None:
+            cur.execute(delete_stale_threads_sql)
+        else:
+            cur.execute(delete_stale_threads_for_lists_sql, (normalized_list_ids,))
         stable_ids_by_thread_id = _resolve_stable_thread_ids(
             cur,
             [thread_id for thread_id, *_ in rebuilt_threads],
             assigned_stable_thread_ids,
         )
-        if normalized_list_ids is None:
-            cur.execute(delete_stale_threads_sql)
-        else:
-            cur.execute(delete_stale_threads_for_lists_sql, (normalized_list_ids,))
 
         if rebuilt_threads:
             rows = [
