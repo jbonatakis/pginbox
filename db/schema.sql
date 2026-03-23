@@ -137,11 +137,14 @@ CREATE TABLE public.messages (
 --
 
 CREATE MATERIALIZED VIEW public.analytics_by_dow AS
- SELECT (EXTRACT(dow FROM sent_at))::integer AS dow,
+ SELECT list_id,
+    dow,
     count(*) AS messages
-   FROM public.messages
-  WHERE ((sent_at_approx = false) AND (sent_at IS NOT NULL))
-  GROUP BY ((EXTRACT(dow FROM sent_at))::integer)
+   FROM ( SELECT messages.list_id,
+            (EXTRACT(dow FROM messages.sent_at))::integer AS dow
+           FROM public.messages
+          WHERE ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL))) sub
+  GROUP BY GROUPING SETS ((list_id, dow), (dow))
   WITH NO DATA;
 
 
@@ -150,11 +153,14 @@ CREATE MATERIALIZED VIEW public.analytics_by_dow AS
 --
 
 CREATE MATERIALIZED VIEW public.analytics_by_hour AS
- SELECT (EXTRACT(hour FROM sent_at))::integer AS hour,
+ SELECT list_id,
+    hour,
     count(*) AS messages
-   FROM public.messages
-  WHERE ((sent_at_approx = false) AND (sent_at IS NOT NULL))
-  GROUP BY ((EXTRACT(hour FROM sent_at))::integer)
+   FROM ( SELECT messages.list_id,
+            (EXTRACT(hour FROM messages.sent_at))::integer AS hour
+           FROM public.messages
+          WHERE ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL))) sub
+  GROUP BY GROUPING SETS ((list_id, hour), (hour))
   WITH NO DATA;
 
 
@@ -163,12 +169,16 @@ CREATE MATERIALIZED VIEW public.analytics_by_hour AS
 --
 
 CREATE MATERIALIZED VIEW public.analytics_by_month AS
- SELECT (EXTRACT(year FROM sent_at))::integer AS year,
-    (EXTRACT(month FROM sent_at))::integer AS month,
+ SELECT list_id,
+    year,
+    month,
     count(*) AS messages
-   FROM public.messages
-  WHERE ((sent_at_approx = false) AND (sent_at IS NOT NULL))
-  GROUP BY ((EXTRACT(year FROM sent_at))::integer), ((EXTRACT(month FROM sent_at))::integer)
+   FROM ( SELECT messages.list_id,
+            (EXTRACT(year FROM messages.sent_at))::integer AS year,
+            (EXTRACT(month FROM messages.sent_at))::integer AS month
+           FROM public.messages
+          WHERE ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL))) sub
+  GROUP BY GROUPING SETS ((list_id, year, month), (year, month))
   WITH NO DATA;
 
 
@@ -204,16 +214,25 @@ CREATE TABLE public.threads (
 --
 
 CREATE MATERIALIZED VIEW public.analytics_summary AS
- SELECT (1)::smallint AS singleton_id,
-    ( SELECT count(*) AS count
-           FROM public.messages) AS total_messages,
-    ( SELECT count(*) AS count
-           FROM public.threads) AS total_threads,
-    ( SELECT count(DISTINCT messages.from_email) AS count
-           FROM public.messages) AS unique_senders,
-    ( SELECT count(DISTINCT date_trunc('month'::text, messages.sent_at)) AS count
+ SELECT m_agg.list_id,
+    COALESCE(m_agg.total_messages, (0)::bigint) AS total_messages,
+    COALESCE(t_agg.total_threads, (0)::bigint) AS total_threads,
+    COALESCE(m_agg.unique_senders, (0)::bigint) AS unique_senders,
+    COALESCE(m_agg.months_ingested, (0)::bigint) AS months_ingested
+   FROM (( SELECT messages.list_id,
+            count(*) AS total_messages,
+            count(DISTINCT messages.from_email) AS unique_senders,
+            count(DISTINCT
+                CASE
+                    WHEN ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL)) THEN date_trunc('month'::text, messages.sent_at)
+                    ELSE NULL::timestamp with time zone
+                END) AS months_ingested
            FROM public.messages
-          WHERE ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL))) AS months_ingested
+          GROUP BY GROUPING SETS ((messages.list_id), ())) m_agg
+     JOIN ( SELECT threads.list_id,
+            count(*) AS total_threads
+           FROM public.threads
+          GROUP BY GROUPING SETS ((threads.list_id), ())) t_agg ON ((COALESCE(m_agg.list_id, '-1'::integer) = COALESCE(t_agg.list_id, '-1'::integer))))
   WITH NO DATA;
 
 
@@ -222,11 +241,12 @@ CREATE MATERIALIZED VIEW public.analytics_summary AS
 --
 
 CREATE MATERIALIZED VIEW public.analytics_top_senders AS
- SELECT from_name,
+ SELECT list_id,
+    from_name,
     from_email,
     count(*) AS message_count
    FROM public.messages
-  GROUP BY from_name, from_email
+  GROUP BY GROUPING SETS ((list_id, from_name, from_email), (from_name, from_email))
   WITH NO DATA;
 
 
@@ -903,24 +923,24 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: analytics_by_dow_dow_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: analytics_by_dow_list_dow_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX analytics_by_dow_dow_idx ON public.analytics_by_dow USING btree (dow);
-
-
---
--- Name: analytics_by_hour_hour_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX analytics_by_hour_hour_idx ON public.analytics_by_hour USING btree (hour);
+CREATE UNIQUE INDEX analytics_by_dow_list_dow_idx ON public.analytics_by_dow USING btree (list_id, dow) NULLS NOT DISTINCT;
 
 
 --
--- Name: analytics_by_month_year_month_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: analytics_by_hour_list_hour_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX analytics_by_month_year_month_idx ON public.analytics_by_month USING btree (year, month);
+CREATE UNIQUE INDEX analytics_by_hour_list_hour_idx ON public.analytics_by_hour USING btree (list_id, hour) NULLS NOT DISTINCT;
+
+
+--
+-- Name: analytics_by_month_list_year_month_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_by_month_list_year_month_idx ON public.analytics_by_month USING btree (list_id, year, month) NULLS NOT DISTINCT;
 
 
 --
@@ -931,24 +951,24 @@ CREATE UNIQUE INDEX analytics_messages_last_24h_singleton_idx ON public.analytic
 
 
 --
--- Name: analytics_summary_singleton_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: analytics_summary_list_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX analytics_summary_singleton_idx ON public.analytics_summary USING btree (singleton_id);
-
-
---
--- Name: analytics_top_senders_count_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX analytics_top_senders_count_idx ON public.analytics_top_senders USING btree (message_count DESC, from_email, from_name);
+CREATE UNIQUE INDEX analytics_summary_list_id_idx ON public.analytics_summary USING btree (list_id) NULLS NOT DISTINCT;
 
 
 --
--- Name: analytics_top_senders_name_email_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: analytics_top_senders_list_count_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX analytics_top_senders_name_email_idx ON public.analytics_top_senders USING btree (from_name, from_email);
+CREATE INDEX analytics_top_senders_list_count_idx ON public.analytics_top_senders USING btree (list_id, message_count DESC, from_email, from_name);
+
+
+--
+-- Name: analytics_top_senders_list_name_email_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX analytics_top_senders_list_name_email_idx ON public.analytics_top_senders USING btree (list_id, from_name, from_email) NULLS NOT DISTINCT;
 
 
 --
@@ -1336,4 +1356,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260321000018'),
     ('20260321000019'),
     ('20260322000020'),
-    ('20260322000021');
+    ('20260322000021'),
+    ('20260323000022');

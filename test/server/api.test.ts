@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { sql } from "kysely";
 import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "../../src/shared/api";
 import { app } from "../../src/server/app";
 import { serverCache } from "../../src/server/cache";
@@ -446,6 +447,95 @@ describe("API not-found and success (require DB)", () => {
         .set({ name: originalName })
         .where("id", "=", personId)
         .execute();
+    }
+  });
+});
+
+describe("analytics list filter", () => {
+  it("GET /analytics/by-hour?list=X returns 200 with 24 entries", async () => {
+    const { status, json } = await get("/analytics/by-hour?list=1");
+    expect(status).toBe(200);
+    const arr = json as Array<{ hour: number; messages: number }>;
+    expect(arr.length).toBe(24);
+    expect(arr.every((e) => typeof e.hour === "number" && typeof e.messages === "number")).toBe(true);
+  });
+
+  it("GET /analytics/by-dow?list=X returns 200 with 7 entries", async () => {
+    const { status, json } = await get("/analytics/by-dow?list=1");
+    expect(status).toBe(200);
+    const arr = json as Array<{ dow: number; messages: number }>;
+    expect(arr.length).toBe(7);
+  });
+
+  it("GET /analytics/by-month?list=X returns 200 with array", async () => {
+    const { status, json } = await get("/analytics/by-month?list=1");
+    expect(status).toBe(200);
+    expect(Array.isArray(json)).toBe(true);
+  });
+
+  it("GET /analytics/top-senders?list=X returns 200 with array", async () => {
+    const { status, json } = await get("/analytics/top-senders?list=1");
+    expect(status).toBe(200);
+    expect(Array.isArray(json)).toBe(true);
+  });
+
+  it("GET /analytics/summary?list=X&list=Y deduplicates months_ingested and unique_senders", async () => {
+    serverCache.clear();
+
+    const threadId1 = `test-thread-${uid()}`;
+    const threadId2 = `test-thread-${uid()}`;
+    const sentAt = new Date("2020-06-15T12:00:00Z");
+    const sharedEmail = `shared-${uid()}@example.com`;
+
+    const [list1, list2] = await Promise.all([
+      db.insertInto("lists").values({ name: `test-dedup-a-${uid()}` }).returning("id").executeTakeFirstOrThrow(),
+      db.insertInto("lists").values({ name: `test-dedup-b-${uid()}` }).returning("id").executeTakeFirstOrThrow(),
+    ]);
+
+    try {
+      await db
+        .insertInto("threads")
+        .values([
+          { id: stableThreadId(), thread_id: threadId1, list_id: list1.id, subject: "dedup test 1", started_at: sentAt, last_activity_at: sentAt, message_count: 1 },
+          { id: stableThreadId(), thread_id: threadId2, list_id: list2.id, subject: "dedup test 2", started_at: sentAt, last_activity_at: sentAt, message_count: 1 },
+        ])
+        .execute();
+
+      await db
+        .insertInto("messages")
+        .values([
+          { message_id: `test-msg-${uid()}@example.com`, thread_id: threadId1, list_id: list1.id, sent_at: sentAt, from_name: "Shared Sender", from_email: sharedEmail, subject: "dedup 1", body: "test", in_reply_to: null, refs: null, sent_at_approx: false },
+          { message_id: `test-msg-${uid()}@example.com`, thread_id: threadId2, list_id: list2.id, sent_at: sentAt, from_name: "Shared Sender", from_email: sharedEmail, subject: "dedup 2", body: "test", in_reply_to: null, refs: null, sent_at_approx: false },
+        ])
+        .execute();
+
+      // Refresh views so per-list rows exist for single-list queries
+      await sql`SELECT refresh_analytics_views()`.execute(db);
+      serverCache.clear();
+
+      // Each list individually: 1 unique sender, 1 month
+      const { json: j1 } = await get(`/analytics/summary?list=${list1.id}`);
+      const { json: j2 } = await get(`/analytics/summary?list=${list2.id}`);
+      expect((j1 as { uniqueSenders: number }).uniqueSenders).toBe(1);
+      expect((j1 as { monthsIngested: number }).monthsIngested).toBe(1);
+      expect((j2 as { uniqueSenders: number }).uniqueSenders).toBe(1);
+      expect((j2 as { monthsIngested: number }).monthsIngested).toBe(1);
+
+      // Combined: same sender and same month — must not be double-counted
+      const { json: combined } = await get(`/analytics/summary?list=${list1.id}&list=${list2.id}`);
+      const sc = combined as { uniqueSenders: number; monthsIngested: number; totalMessages: number };
+      expect(sc.uniqueSenders).toBe(1);
+      expect(sc.monthsIngested).toBe(1);
+      expect(sc.totalMessages).toBe(2); // message counts are additive
+    } finally {
+      serverCache.clear();
+      await sql`SELECT refresh_analytics_views()`.execute(db);
+      await db.deleteFrom("messages").where("thread_id", "in", [threadId1, threadId2]).execute();
+      await db.deleteFrom("threads").where("thread_id", "in", [threadId1, threadId2]).execute();
+      await Promise.all([
+        db.deleteFrom("lists").where("id", "=", list1.id).execute(),
+        db.deleteFrom("lists").where("id", "=", list2.id).execute(),
+      ]);
     }
   });
 });

@@ -560,26 +560,58 @@ export async function getPerson(id: number | string, options: RequestOptions = {
   return requestJson<Person>(path, options);
 }
 
+export interface GetAnalyticsParams {
+  listIds?: number[];
+}
+
 export async function getAnalyticsSummary(
+  params: GetAnalyticsParams = {},
   options: RequestOptions = {}
 ): Promise<AnalyticsSummary> {
-  return requestJson<AnalyticsSummary>(withApiBase("/analytics/summary"), options);
+  return requestJson<AnalyticsSummary>(
+    withApiBase("/analytics/summary", { list: params.listIds }),
+    options
+  );
 }
 
-export async function getAnalyticsByMonth(options: RequestOptions = {}): Promise<ByMonth[]> {
-  return requestJson<ByMonth[]>(withApiBase("/analytics/by-month"), options);
+export async function getAnalyticsByMonth(
+  params: GetAnalyticsParams = {},
+  options: RequestOptions = {}
+): Promise<ByMonth[]> {
+  return requestJson<ByMonth[]>(
+    withApiBase("/analytics/by-month", { list: params.listIds }),
+    options
+  );
 }
 
-export async function getAnalyticsTopSenders(options: RequestOptions = {}): Promise<TopSender[]> {
-  return requestJson<TopSender[]>(withApiBase("/analytics/top-senders"), options);
+export async function getAnalyticsTopSenders(
+  params: GetAnalyticsParams = {},
+  options: RequestOptions = {}
+): Promise<TopSender[]> {
+  return requestJson<TopSender[]>(
+    withApiBase("/analytics/top-senders", { list: params.listIds }),
+    options
+  );
 }
 
-export async function getAnalyticsByHour(options: RequestOptions = {}): Promise<ByHour[]> {
-  return requestJson<ByHour[]>(withApiBase("/analytics/by-hour"), options);
+export async function getAnalyticsByHour(
+  params: GetAnalyticsParams = {},
+  options: RequestOptions = {}
+): Promise<ByHour[]> {
+  return requestJson<ByHour[]>(
+    withApiBase("/analytics/by-hour", { list: params.listIds }),
+    options
+  );
 }
 
-export async function getAnalyticsByDow(options: RequestOptions = {}): Promise<ByDow[]> {
-  return requestJson<ByDow[]>(withApiBase("/analytics/by-dow"), options);
+export async function getAnalyticsByDow(
+  params: GetAnalyticsParams = {},
+  options: RequestOptions = {}
+): Promise<ByDow[]> {
+  return requestJson<ByDow[]>(
+    withApiBase("/analytics/by-dow", { list: params.listIds }),
+    options
+  );
 }
 
 export async function getAnalyticsMessagesLast24h(

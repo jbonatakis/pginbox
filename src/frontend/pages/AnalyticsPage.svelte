@@ -1,24 +1,36 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import type { List } from "shared/api";
   import AnalyticsByHourChart from "../components/analytics/AnalyticsByHourChart.svelte";
   import AnalyticsByMonthChart from "../components/analytics/AnalyticsByMonthChart.svelte";
   import AnalyticsDowChart from "../components/analytics/AnalyticsDowChart.svelte";
+  import AnalyticsListFilter from "../components/analytics/AnalyticsListFilter.svelte";
   import AnalyticsSummaryGrid from "../components/analytics/AnalyticsSummaryGrid.svelte";
   import AnalyticsTopSendersChart from "../components/analytics/AnalyticsTopSendersChart.svelte";
   import ErrorState from "../components/ErrorState.svelte";
   import LoadingState from "../components/LoadingState.svelte";
   import { createAnalyticsStore } from "../lib/analytics";
+  import { api } from "../lib/api";
   import type { ApiErrorShape } from "../lib/api";
 
   const analyticsState = createAnalyticsStore();
 
+  let lists: List[] = [];
+  let selectedListIds: number[] = [];
+
   onMount(() => {
     void analyticsState.load();
+    void api.lists.list().then((result) => { lists = result; }).catch(() => {});
   });
 
   onDestroy(() => {
     analyticsState.dispose();
   });
+
+  function handleListFilterChange(event: CustomEvent<number[]>): void {
+    selectedListIds = event.detail;
+    void analyticsState.setListFilter(selectedListIds);
+  }
 
   const retry = (): void => {
     void analyticsState.retry();
@@ -41,6 +53,17 @@
 
 <section class="page">
   <h1 class="sr-only" data-route-heading tabindex="-1">Analytics</h1>
+
+  {#if lists.length > 0}
+    <div class="filter-bar">
+      <AnalyticsListFilter
+        {lists}
+        selectedIds={selectedListIds}
+        disabled={$analyticsState.isLoading}
+        on:change={handleListFilterChange}
+      />
+    </div>
+  {/if}
 
   {#if isInitialLoad}
     <LoadingState
@@ -85,6 +108,14 @@
     display: grid;
     gap: 0.75rem;
     min-width: 0;
+    align-content: start;
+  }
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
   }
 
   .retry-button {

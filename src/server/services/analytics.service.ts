@@ -60,92 +60,213 @@ function toNumber(value: IntLike): number {
   return Number.parseInt(value, 10);
 }
 
-export async function getSummary() {
-  return serverCache.getOrLoad(SUMMARY_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
-    const result = await sql<SummaryRow>`
-      SELECT total_messages, total_threads, unique_senders, months_ingested
-      FROM analytics_summary
-    `.execute(db);
-    const row = result.rows[0];
-    if (!row) {
+function listCacheKey(base: string, listIds: number[]): string {
+  if (listIds.length === 0) return base;
+  return `${base}:${[...listIds].sort((a, b) => a - b).join(",")}`;
+}
+
+function toIdParams(ids: number[]) {
+  return sql.join(ids.map((id) => sql`${id}`));
+}
+
+export async function getSummary(listIds: number[] = []) {
+  return serverCache.getOrLoad(
+    listCacheKey(SUMMARY_CACHE_KEY, listIds),
+    ANALYTICS_PAGE_CACHE_TTL_MS,
+    async () => {
+      let result;
+      if (listIds.length === 0) {
+        result = await sql<SummaryRow>`
+          SELECT total_messages, total_threads, unique_senders, months_ingested
+          FROM analytics_summary
+          WHERE list_id IS NULL
+        `.execute(db);
+      } else if (listIds.length === 1) {
+        result = await sql<SummaryRow>`
+          SELECT total_messages, total_threads, unique_senders, months_ingested
+          FROM analytics_summary
+          WHERE list_id = ${listIds[0]}
+        `.execute(db);
+      } else {
+        // total_messages and total_threads are summable (no cross-list duplicates).
+        // unique_senders and months_ingested require a live query to avoid double-counting
+        // senders/months that appear in multiple selected lists.
+        const ids = toIdParams(listIds);
+        const [countsResult, setMetricsResult] = await Promise.all([
+          sql<{ total_messages: IntLike; total_threads: IntLike }>`
+            SELECT
+              sum(total_messages)::bigint AS total_messages,
+              sum(total_threads)::bigint AS total_threads
+            FROM analytics_summary
+            WHERE list_id IN (${ids})
+          `.execute(db),
+          sql<{ unique_senders: IntLike; months_ingested: IntLike }>`
+            SELECT
+              count(DISTINCT from_email)::bigint AS unique_senders,
+              count(DISTINCT CASE
+                WHEN sent_at_approx = false AND sent_at IS NOT NULL
+                THEN date_trunc('month', sent_at)
+              END)::bigint AS months_ingested
+            FROM messages
+            WHERE list_id IN (${ids})
+          `.execute(db),
+        ]);
+
+        const counts = countsResult.rows[0];
+        const setMetrics = setMetricsResult.rows[0];
+        if (!counts || !setMetrics) {
+          return { totalMessages: 0, totalThreads: 0, uniqueSenders: 0, monthsIngested: 0 };
+        }
+
+        return {
+          totalMessages: toNumber(counts.total_messages),
+          totalThreads: toNumber(counts.total_threads),
+          uniqueSenders: toNumber(setMetrics.unique_senders),
+          monthsIngested: toNumber(setMetrics.months_ingested),
+        };
+      }
+
+      const row = result.rows[0];
+      if (!row) {
+        return { totalMessages: 0, totalThreads: 0, uniqueSenders: 0, monthsIngested: 0 };
+      }
+
       return {
-        totalMessages: 0,
-        totalThreads: 0,
-        uniqueSenders: 0,
-        monthsIngested: 0,
+        totalMessages: toNumber(row.total_messages),
+        totalThreads: toNumber(row.total_threads),
+        uniqueSenders: toNumber(row.unique_senders),
+        monthsIngested: toNumber(row.months_ingested),
       };
     }
-
-    return {
-      totalMessages: toNumber(row.total_messages),
-      totalThreads: toNumber(row.total_threads),
-      uniqueSenders: toNumber(row.unique_senders),
-      monthsIngested: toNumber(row.months_ingested),
-    };
-  });
+  );
 }
 
-export async function getByMonth() {
-  return serverCache.getOrLoad(BY_MONTH_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
-    const result = await sql<ByMonthRow>`
-      SELECT year, month, messages
-      FROM analytics_by_month
-      ORDER BY year, month
-    `.execute(db);
+export async function getByMonth(listIds: number[] = []) {
+  return serverCache.getOrLoad(
+    listCacheKey(BY_MONTH_CACHE_KEY, listIds),
+    ANALYTICS_PAGE_CACHE_TTL_MS,
+    async () => {
+      let result;
+      if (listIds.length === 0) {
+        result = await sql<ByMonthRow>`
+          SELECT year, month, messages
+          FROM analytics_by_month
+          WHERE list_id IS NULL
+          ORDER BY year, month
+        `.execute(db);
+      } else {
+        result = await sql<ByMonthRow>`
+          SELECT year, month, sum(messages)::bigint AS messages
+          FROM analytics_by_month
+          WHERE list_id IN (${toIdParams(listIds)})
+          GROUP BY year, month
+          ORDER BY year, month
+        `.execute(db);
+      }
 
-    return result.rows.map((row) => ({
-      year: toNumber(row.year),
-      month: toNumber(row.month),
-      messages: toNumber(row.messages),
-    }));
-  });
+      return result.rows.map((row) => ({
+        year: toNumber(row.year),
+        month: toNumber(row.month),
+        messages: toNumber(row.messages),
+      }));
+    }
+  );
 }
 
-export async function getTopSenders() {
-  return serverCache.getOrLoad(TOP_SENDERS_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
-    const result = await sql<TopSenderRow>`
-      SELECT from_name, from_email, message_count
-      FROM analytics_top_senders
-      ORDER BY message_count DESC, from_email NULLS LAST, from_name NULLS LAST
-      LIMIT 15
-    `.execute(db);
+export async function getTopSenders(listIds: number[] = []) {
+  return serverCache.getOrLoad(
+    listCacheKey(TOP_SENDERS_CACHE_KEY, listIds),
+    ANALYTICS_PAGE_CACHE_TTL_MS,
+    async () => {
+      let result;
+      if (listIds.length === 0) {
+        result = await sql<TopSenderRow>`
+          SELECT from_name, from_email, message_count
+          FROM analytics_top_senders
+          WHERE list_id IS NULL
+          ORDER BY message_count DESC, from_email NULLS LAST, from_name NULLS LAST
+          LIMIT 15
+        `.execute(db);
+      } else {
+        result = await sql<TopSenderRow>`
+          SELECT from_name, from_email, sum(message_count)::bigint AS message_count
+          FROM analytics_top_senders
+          WHERE list_id IN (${toIdParams(listIds)})
+          GROUP BY from_name, from_email
+          ORDER BY message_count DESC, from_email NULLS LAST, from_name NULLS LAST
+          LIMIT 15
+        `.execute(db);
+      }
 
-    return result.rows.map((row) => ({
-      name: row.from_name,
-      email: row.from_email,
-      count: toNumber(row.message_count),
-    }));
-  });
+      return result.rows.map((row) => ({
+        name: row.from_name,
+        email: row.from_email,
+        count: toNumber(row.message_count),
+      }));
+    }
+  );
 }
 
-export async function getByHour() {
-  return serverCache.getOrLoad(BY_HOUR_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
-    const result = await sql<ByHourRow>`
-      SELECT hour, messages
-      FROM analytics_by_hour
-      ORDER BY hour
-    `.execute(db);
+export async function getByHour(listIds: number[] = []) {
+  return serverCache.getOrLoad(
+    listCacheKey(BY_HOUR_CACHE_KEY, listIds),
+    ANALYTICS_PAGE_CACHE_TTL_MS,
+    async () => {
+      let result;
+      if (listIds.length === 0) {
+        result = await sql<ByHourRow>`
+          SELECT hour, messages
+          FROM analytics_by_hour
+          WHERE list_id IS NULL
+          ORDER BY hour
+        `.execute(db);
+      } else {
+        result = await sql<ByHourRow>`
+          SELECT hour, sum(messages)::bigint AS messages
+          FROM analytics_by_hour
+          WHERE list_id IN (${toIdParams(listIds)})
+          GROUP BY hour
+          ORDER BY hour
+        `.execute(db);
+      }
 
-    return result.rows.map((row) => ({
-      hour: toNumber(row.hour),
-      messages: toNumber(row.messages),
-    }));
-  });
+      return result.rows.map((row) => ({
+        hour: toNumber(row.hour),
+        messages: toNumber(row.messages),
+      }));
+    }
+  );
 }
 
-export async function getByDow() {
-  return serverCache.getOrLoad(BY_DOW_CACHE_KEY, ANALYTICS_PAGE_CACHE_TTL_MS, async () => {
-    const result = await sql<ByDowRow>`
-      SELECT dow, messages
-      FROM analytics_by_dow
-      ORDER BY dow
-    `.execute(db);
+export async function getByDow(listIds: number[] = []) {
+  return serverCache.getOrLoad(
+    listCacheKey(BY_DOW_CACHE_KEY, listIds),
+    ANALYTICS_PAGE_CACHE_TTL_MS,
+    async () => {
+      let result;
+      if (listIds.length === 0) {
+        result = await sql<ByDowRow>`
+          SELECT dow, messages
+          FROM analytics_by_dow
+          WHERE list_id IS NULL
+          ORDER BY dow
+        `.execute(db);
+      } else {
+        result = await sql<ByDowRow>`
+          SELECT dow, sum(messages)::bigint AS messages
+          FROM analytics_by_dow
+          WHERE list_id IN (${toIdParams(listIds)})
+          GROUP BY dow
+          ORDER BY dow
+        `.execute(db);
+      }
 
-    return result.rows.map((row) => ({
-      dow: toNumber(row.dow),
-      messages: toNumber(row.messages),
-    }));
-  });
+      return result.rows.map((row) => ({
+        dow: toNumber(row.dow),
+        messages: toNumber(row.messages),
+      }));
+    }
+  );
 }
 
 export async function getMessagesLast24h() {

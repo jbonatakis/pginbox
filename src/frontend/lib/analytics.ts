@@ -1,7 +1,7 @@
 import type { AnalyticsSummary, ByDow, ByHour, ByMonth, TopSender } from "shared/api";
 import type { Readable } from "svelte/store";
 import { writable } from "svelte/store";
-import { api, toApiErrorShape, type ApiErrorShape } from "./api";
+import { api, toApiErrorShape, type ApiErrorShape, type GetAnalyticsParams } from "./api";
 
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -61,6 +61,7 @@ export interface AnalyticsStoreState {
 }
 
 export interface AnalyticsLoadOptions {
+  listIds?: number[];
   signal?: AbortSignal;
 }
 
@@ -68,6 +69,7 @@ export interface AnalyticsStore extends Readable<AnalyticsStoreState> {
   dispose: () => void;
   load: () => Promise<void>;
   retry: () => Promise<void>;
+  setListFilter: (listIds: number[]) => Promise<void>;
 }
 
 interface AnalyticsEndpointPayload {
@@ -212,17 +214,17 @@ function isEmptyViewModel(
 export async function fetchAnalyticsPayload(
   options: AnalyticsLoadOptions = {}
 ): Promise<AnalyticsEndpointPayload> {
+  const { listIds, signal } = options;
   const requestOptions: { signal?: AbortSignal } = {};
-  if (options.signal) {
-    requestOptions.signal = options.signal;
-  }
+  if (signal) requestOptions.signal = signal;
+  const params: GetAnalyticsParams = { listIds };
 
   const [summary, byMonth, topSenders, byHour, byDow] = await Promise.all([
-    api.analytics.getSummary(requestOptions),
-    api.analytics.getByMonth(requestOptions),
-    api.analytics.getTopSenders(requestOptions),
-    api.analytics.getByHour(requestOptions),
-    api.analytics.getByDow(requestOptions),
+    api.analytics.getSummary(params, requestOptions),
+    api.analytics.getByMonth(params, requestOptions),
+    api.analytics.getTopSenders(params, requestOptions),
+    api.analytics.getByHour(params, requestOptions),
+    api.analytics.getByDow(params, requestOptions),
   ]);
 
   return {
@@ -261,6 +263,7 @@ export function createAnalyticsStore(options: CreateAnalyticsStoreOptions = {}):
 
   let activeRequestId = 0;
   let activeController: AbortController | null = null;
+  let currentListIds: number[] = [];
 
   const setLoadingState = (): void => {
     state.update((current) => ({
@@ -279,7 +282,7 @@ export function createAnalyticsStore(options: CreateAnalyticsStoreOptions = {}):
     setLoadingState();
 
     try {
-      const data = await load({ signal: activeController.signal });
+      const data = await load({ listIds: currentListIds, signal: activeController.signal });
 
       if (requestId !== activeRequestId) return;
 
@@ -314,10 +317,16 @@ export function createAnalyticsStore(options: CreateAnalyticsStoreOptions = {}):
     activeController = null;
   };
 
+  const setListFilter = (listIds: number[]): Promise<void> => {
+    currentListIds = listIds;
+    return runLoad();
+  };
+
   return {
     dispose,
     load: runLoad,
     retry: runLoad,
+    setListFilter,
     subscribe: state.subscribe,
   };
 }
