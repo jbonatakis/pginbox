@@ -250,6 +250,26 @@ FETCH_THREAD_IDS_BY_STABLE_IDS_SQL = """
     WHERE id = ANY(%s)
 """
 
+FETCH_RETHREAD_LIST_IDS_SQL = """
+    SELECT DISTINCT list_id
+    FROM messages
+    ORDER BY list_id
+"""
+
+FETCH_RETHREAD_ROWS_FOR_LIST_SQL = """
+    SELECT
+        messages.message_id,
+        messages.sent_at,
+        messages.in_reply_to,
+        messages.refs,
+        messages.thread_id,
+        threads.id
+    FROM messages
+    LEFT JOIN threads
+        ON threads.thread_id = messages.thread_id
+    WHERE messages.list_id = %s
+"""
+
 PARTICIPATION_MATCHES_CTE = """
     WITH ranked_matches AS (
         SELECT
@@ -652,6 +672,67 @@ def _fetch_thread_ids_by_stable_ids(cur, stable_ids: list[str]) -> dict[str, str
 
     cur.execute(FETCH_THREAD_IDS_BY_STABLE_IDS_SQL, (stable_ids,))
     return {stable_id: thread_id for thread_id, stable_id in cur.fetchall()}
+
+
+def _fetch_rethread_list_ids(cur) -> list[int]:
+    cur.execute(FETCH_RETHREAD_LIST_IDS_SQL)
+    return [list_id for (list_id,) in cur.fetchall()]
+
+
+def _iter_rethread_rows_for_list(
+    conn,
+    list_id: int,
+    *,
+    fetch_rethread_rows_for_list_sql=FETCH_RETHREAD_ROWS_FOR_LIST_SQL,
+):
+    cursor_name = f"rethread_messages_{list_id}"
+    try:
+        cur = conn.cursor(name=cursor_name)
+    except TypeError:
+        cur = conn.cursor()
+
+    with cur:
+        if hasattr(cur, "itersize"):
+            cur.itersize = 5000
+        cur.execute(fetch_rethread_rows_for_list_sql, (list_id,))
+        for row in cur:
+            yield row
+
+
+def _collect_rethread_updates_for_list(
+    rows,
+    *,
+    stable_id_counts_by_thread_id: dict[str, Counter[str]],
+    current_stable_ids_by_thread_id: dict[str, str],
+) -> list[dict[str, str]]:
+    records: dict[str, dict] = {}
+    current_thread_ids: dict[str, str] = {}
+    current_stable_ids: dict[str, str | None] = {}
+
+    for message_id, sent_at, in_reply_to, refs, thread_id, stable_id in rows:
+        records[message_id] = {
+            "sent_at": sent_at,
+            "in_reply_to": in_reply_to,
+            "refs": refs,
+        }
+        current_thread_ids[message_id] = thread_id
+        current_stable_ids[message_id] = stable_id
+        if stable_id is not None and thread_id not in current_stable_ids_by_thread_id:
+            current_stable_ids_by_thread_id[thread_id] = stable_id
+
+    if not records:
+        return []
+
+    updates: list[dict[str, str]] = []
+    canonical_thread_ids = _canonical_thread_ids_for_list(records)
+    for message_id, thread_id in canonical_thread_ids.items():
+        stable_id = current_stable_ids[message_id]
+        if stable_id is not None:
+            stable_id_counts_by_thread_id[thread_id][stable_id] += 1
+        if current_thread_ids[message_id] != thread_id:
+            updates.append({"message_id": message_id, "thread_id": thread_id})
+
+    return updates
 
 
 def _resolve_stable_thread_ids(
@@ -1173,74 +1254,34 @@ def rethread_messages(conn, *, list_ids: list[int] | None = None):
     """Recompute messages.thread_id as canonical conversation IDs per list."""
     normalized_list_ids = _normalize_list_ids(list_ids)
     print("  [rethread messages]", end="", flush=True)
-    with conn.cursor() as cur:
-        if normalized_list_ids is None:
-            cur.execute(
-                """
-                SELECT
-                    messages.list_id,
-                    messages.message_id,
-                    messages.sent_at,
-                    messages.in_reply_to,
-                    messages.refs,
-                    messages.thread_id,
-                    threads.id
-                FROM messages
-                LEFT JOIN threads
-                    ON threads.thread_id = messages.thread_id
-                """
-            )
-        else:
-            cur.execute(
-                """
-                SELECT
-                    messages.list_id,
-                    messages.message_id,
-                    messages.sent_at,
-                    messages.in_reply_to,
-                    messages.refs,
-                    messages.thread_id,
-                    threads.id
-                FROM messages
-                LEFT JOIN threads
-                    ON threads.thread_id = messages.thread_id
-                WHERE messages.list_id = ANY(%s)
-                """,
-                (normalized_list_ids,),
-            )
-        rows = cur.fetchall()
-
-    records_by_list: dict[int, dict[str, dict]] = {}
-    current_thread_ids: dict[tuple[int, str], str] = {}
-    current_stable_ids: dict[tuple[int, str], str | None] = {}
     current_stable_ids_by_thread_id: dict[str, str] = {}
-    for list_id, message_id, sent_at, in_reply_to, refs, thread_id, stable_id in rows:
-        records_by_list.setdefault(list_id, {})[message_id] = {
-            "sent_at": sent_at,
-            "in_reply_to": in_reply_to,
-            "refs": refs,
-        }
-        current_thread_ids[(list_id, message_id)] = thread_id
-        current_stable_ids[(list_id, message_id)] = stable_id
-        if stable_id is not None and thread_id not in current_stable_ids_by_thread_id:
-            current_stable_ids_by_thread_id[thread_id] = stable_id
-
-    updates = []
     stable_id_counts_by_thread_id: dict[str, Counter[str]] = defaultdict(Counter)
-    for list_id, records in records_by_list.items():
-        canonical_thread_ids = _canonical_thread_ids_for_list(records)
-        for message_id, thread_id in canonical_thread_ids.items():
-            stable_id = current_stable_ids[(list_id, message_id)]
-            if stable_id is not None:
-                stable_id_counts_by_thread_id[thread_id][stable_id] += 1
-            if current_thread_ids[(list_id, message_id)] != thread_id:
-                updates.append({"message_id": message_id, "thread_id": thread_id})
+    if normalized_list_ids is None:
+        with conn.cursor() as cur:
+            target_list_ids = _fetch_rethread_list_ids(cur)
+    else:
+        target_list_ids = normalized_list_ids
 
-    with conn.cursor() as cur:
-        if updates:
-            execute_batch(cur, UPDATE_MESSAGE_THREAD_SQL, updates, page_size=1000)
+    updates_count = 0
+    total_lists = len(target_list_ids)
+    with conn.cursor() as update_cur:
+        for index, list_id in enumerate(target_list_ids, start=1):
+            updates = _collect_rethread_updates_for_list(
+                _iter_rethread_rows_for_list(conn, list_id),
+                stable_id_counts_by_thread_id=stable_id_counts_by_thread_id,
+                current_stable_ids_by_thread_id=current_stable_ids_by_thread_id,
+            )
+            if updates:
+                execute_batch(update_cur, UPDATE_MESSAGE_THREAD_SQL, updates, page_size=1000)
+                updates_count += len(updates)
+            print(
+                f"\r  [rethread messages] {index}/{total_lists} lists processed",
+                end="",
+                flush=True,
+            )
+
     conn.commit()
-    print(f" {len(updates)} messages updated")
+    print(f" {updates_count} messages updated")
     return _assign_stable_thread_ids(
         stable_id_counts_by_thread_id,
         current_stable_ids_by_thread_id,

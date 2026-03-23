@@ -201,6 +201,52 @@ def test_main_derive_only_skip_analytics_suppresses_refresh(ingest, monkeypatch)
     ]
 
 
+def test_main_derive_only_scopes_explicit_lists(ingest, monkeypatch):
+    events = []
+
+    class FakeConn:
+        def close(self):
+            events.append(("close",))
+
+    monkeypatch.setattr(ingest.psycopg2, "connect", lambda dsn: FakeConn())
+    monkeypatch.setattr(
+        ingest,
+        "_lookup_existing_list_ids",
+        lambda conn, list_names: events.append(("lookup_lists", list_names)) or [23],
+    )
+    monkeypatch.setattr(
+        ingest,
+        "derive_threads",
+        lambda conn, list_ids=None: events.append(("derive_threads", list_ids)),
+    )
+    monkeypatch.setattr(
+        ingest,
+        "refresh_analytics_views",
+        lambda conn: events.append(("refresh_analytics_views",)),
+    )
+    monkeypatch.setattr(
+        ingest.sys,
+        "argv",
+        [
+            "ingest.py",
+            "--dsn",
+            "postgresql://example",
+            "--derive-only",
+            "--list",
+            "pgsql-general",
+            "--skip-analytics",
+        ],
+    )
+
+    ingest.main()
+
+    assert events == [
+        ("lookup_lists", ["pgsql-general"]),
+        ("derive_threads", [23]),
+        ("close",),
+    ]
+
+
 def test_main_retries_archive_access_preflight_with_reauth(ingest, monkeypatch):
     events = []
     sleeps = []
