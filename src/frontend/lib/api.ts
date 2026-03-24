@@ -5,6 +5,7 @@ import type {
   AdminStats,
   AdminUser,
   AdminUserListResponse,
+  AnalyticsAll,
   AttachmentDetail,
   AnalyticsSummary,
   AnalyticsMessagesLast24h,
@@ -614,6 +615,16 @@ export async function getAnalyticsByDow(
   );
 }
 
+export async function getAnalyticsAll(
+  params: GetAnalyticsParams = {},
+  options: RequestOptions = {}
+): Promise<AnalyticsAll> {
+  return requestJson<AnalyticsAll>(
+    withApiBase("/analytics/all", { list: params.listIds }),
+    options
+  );
+}
+
 export async function getAnalyticsMessagesLast24h(
   options: RequestOptions = {}
 ): Promise<AnalyticsMessagesLast24h> {
@@ -826,6 +837,7 @@ export const api = {
     get: getAttachment,
   },
   analytics: {
+    getAll: getAnalyticsAll,
     getByDow: getAnalyticsByDow,
     getByHour: getAnalyticsByHour,
     getMessagesLast24h: getAnalyticsMessagesLast24h,

@@ -69,7 +69,7 @@ export interface AnalyticsStore extends Readable<AnalyticsStoreState> {
   dispose: () => void;
   load: () => Promise<void>;
   retry: () => Promise<void>;
-  setListFilter: (listIds: number[]) => Promise<void>;
+  setListFilter: (listIds: number[]) => void;
 }
 
 interface AnalyticsEndpointPayload {
@@ -217,23 +217,13 @@ export async function fetchAnalyticsPayload(
   const { listIds, signal } = options;
   const requestOptions: { signal?: AbortSignal } = {};
   if (signal) requestOptions.signal = signal;
-  const params: GetAnalyticsParams = { listIds };
 
-  const [summary, byMonth, topSenders, byHour, byDow] = await Promise.all([
-    api.analytics.getSummary(params, requestOptions),
-    api.analytics.getByMonth(params, requestOptions),
-    api.analytics.getTopSenders(params, requestOptions),
-    api.analytics.getByHour(params, requestOptions),
-    api.analytics.getByDow(params, requestOptions),
-  ]);
+  const { summary, byMonth, topSenders, byHour, byDow } = await api.analytics.getAll(
+    { listIds },
+    requestOptions
+  );
 
-  return {
-    byDow,
-    byHour,
-    byMonth,
-    summary,
-    topSenders,
-  };
+  return { byDow, byHour, byMonth, summary, topSenders };
 }
 
 export async function loadAnalyticsViewModel(
@@ -264,6 +254,7 @@ export function createAnalyticsStore(options: CreateAnalyticsStoreOptions = {}):
   let activeRequestId = 0;
   let activeController: AbortController | null = null;
   let currentListIds: number[] = [];
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const setLoadingState = (): void => {
     state.update((current) => ({
@@ -315,11 +306,19 @@ export function createAnalyticsStore(options: CreateAnalyticsStoreOptions = {}):
     activeRequestId += 1;
     activeController?.abort();
     activeController = null;
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
   };
 
-  const setListFilter = (listIds: number[]): Promise<void> => {
+  const setListFilter = (listIds: number[]): void => {
     currentListIds = listIds;
-    return runLoad();
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void runLoad();
+    }, 150);
   };
 
   return {
