@@ -36,6 +36,15 @@
   const buildTargetUrl = (targetThreadId: string, targetMessageId: string, targetPage: number): string =>
     `${threadDetailPath(targetThreadId)}?page=${targetPage}#message-${targetMessageId}`;
 
+  const redirectToResolvedMessage = (targetUrl: string): void => {
+    if (typeof window === "undefined") {
+      navigate(targetUrl, { replace: true });
+      return;
+    }
+
+    window.location.replace(targetUrl);
+  };
+
   const loadMessagePermalink = async (targetMessageId: string): Promise<void> => {
     clearActiveRequest();
     const requestController = new AbortController();
@@ -51,9 +60,7 @@
       });
       if (requestId !== requestSequence) return;
 
-      navigate(buildTargetUrl(permalink.threadId, permalink.messageId, permalink.page), {
-        replace: true,
-      });
+      redirectToResolvedMessage(buildTargetUrl(permalink.threadId, permalink.messageId, permalink.page));
     } catch (rawError) {
       const apiError = toApiErrorShape(rawError);
       if (apiError.code === "ABORTED" || requestId !== requestSequence) return;
