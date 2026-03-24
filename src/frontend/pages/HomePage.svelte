@@ -47,15 +47,14 @@
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
 
-    void Promise.all([
-      api.analytics.getMessagesLast24h(),
-      api.analytics.getMessagesLast24hByList(),
-    ])
-      .then(([total, byList]) => {
+    void api.analytics
+      .getMessagesLast24hByList()
+      .then((byList) => {
         if (cancelled) return;
 
+        const totalMessages = byList.reduce((sum, item) => sum + item.messages, 0);
         slides = [
-          { type: "total", count: total.messages },
+          { type: "total", count: totalMessages },
           ...byList.map((item) => ({
             type: "list" as const,
             listName: item.listName,

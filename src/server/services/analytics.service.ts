@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { InvalidCacheTtlError, serverCache } from "../cache";
-import { resolveAnalyticsMessagesLast24hTtlMs, resolveAnalyticsPageCacheTtlMs } from "../config";
+import { resolveAnalyticsPageCacheTtlMs } from "../config";
 import { sql } from "kysely";
 
 type IntLike = bigint | number | string;
@@ -35,17 +35,12 @@ type ByDowRow = {
   messages: IntLike;
 };
 
-type MessagesLast24hRow = {
-  messages: IntLike;
-};
-
 type MessagesLast24hByListRow = {
   list_id: IntLike;
   list_name: string;
   messages: IntLike;
 };
 
-const MESSAGES_LAST_24H_CACHE_KEY = "analytics:messages-last-24h";
 const MESSAGES_LAST_24H_BY_LIST_CACHE_KEY = "analytics:messages-last-24h-by-list";
 const SUMMARY_CACHE_KEY = "analytics:summary";
 const BY_MONTH_CACHE_KEY = "analytics:by-month";
@@ -53,7 +48,6 @@ const TOP_SENDERS_CACHE_KEY = "analytics:top-senders";
 const BY_HOUR_CACHE_KEY = "analytics:by-hour";
 const BY_DOW_CACHE_KEY = "analytics:by-dow";
 const ANALYTICS_PAGE_CACHE_TTL_MS = resolveAnalyticsPageCacheTtlMs();
-const MESSAGES_LAST_24H_TTL_MS = resolveAnalyticsMessagesLast24hTtlMs();
 
 function toNumber(value: IntLike): number {
   if (typeof value === "number") return value;
@@ -265,42 +259,11 @@ export async function getByDow(listIds: number[] = []) {
   );
 }
 
-export async function getMessagesLast24h() {
-  try {
-    return await serverCache.getOrLoad(
-      MESSAGES_LAST_24H_CACHE_KEY,
-      MESSAGES_LAST_24H_TTL_MS,
-      queryMessagesLast24h,
-    );
-  } catch (error) {
-    if (error instanceof InvalidCacheTtlError) {
-      console.error(`[cache] ${error.message}`);
-      return queryMessagesLast24h();
-    }
-
-    throw error;
-  }
-}
-
-async function queryMessagesLast24h() {
-  const result = await sql<MessagesLast24hRow>`
-    SELECT count(*)::bigint AS messages
-    FROM messages
-    WHERE sent_at IS NOT NULL
-      AND sent_at >= now() - interval '24 hours'
-  `.execute(db);
-
-  const row = result.rows[0];
-  return {
-    messages: row ? toNumber(row.messages) : 0,
-  };
-}
-
 export async function getMessagesLast24hByList() {
   try {
     return await serverCache.getOrLoad(
       MESSAGES_LAST_24H_BY_LIST_CACHE_KEY,
-      MESSAGES_LAST_24H_TTL_MS,
+      ANALYTICS_PAGE_CACHE_TTL_MS,
       queryMessagesLast24hByList,
     );
   } catch (error) {

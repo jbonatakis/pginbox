@@ -250,10 +250,6 @@ export interface AnalyticsSummary {
   monthsIngested: number;
 }
 
-export interface AnalyticsMessagesLast24h {
-  messages: number;
-}
-
 export interface ListMessagesLast24h {
   listId: number;
   listName: string;
