@@ -1,4 +1,5 @@
 import type {
+  AnalyticsAll,
   AnalyticsMessagesLast24h,
   AnalyticsSummary,
   ByDow,
@@ -43,6 +44,21 @@ export const analyticsRoutes = new Elysia({ prefix: "/analytics" })
   .get(
     "/by-dow",
     ({ query }): Promise<ByDow[]> => analytics.getByDow(parseListIds(query.list)),
+    { query: listQuery }
+  )
+  .get(
+    "/all",
+    async ({ query }): Promise<AnalyticsAll> => {
+      const listIds = parseListIds(query.list);
+      const [summary, byMonth, topSenders, byHour, byDow] = await Promise.all([
+        analytics.getSummary(listIds),
+        analytics.getByMonth(listIds),
+        analytics.getTopSenders(listIds),
+        analytics.getByHour(listIds),
+        analytics.getByDow(listIds),
+      ]);
+      return { summary, byMonth, topSenders, byHour, byDow };
+    },
     { query: listQuery }
   )
   .get("/messages-last-24h", (): Promise<AnalyticsMessagesLast24h> => analytics.getMessagesLast24h())

@@ -218,7 +218,8 @@ CREATE MATERIALIZED VIEW public.analytics_summary AS
     COALESCE(m_agg.total_messages, (0)::bigint) AS total_messages,
     COALESCE(t_agg.total_threads, (0)::bigint) AS total_threads,
     COALESCE(m_agg.unique_senders, (0)::bigint) AS unique_senders,
-    COALESCE(m_agg.months_ingested, (0)::bigint) AS months_ingested
+    COALESCE(m_agg.months_ingested, (0)::bigint) AS months_ingested,
+    COALESCE(m_agg.months_set, '{}'::text[]) AS months_set
    FROM (( SELECT messages.list_id,
             count(*) AS total_messages,
             count(DISTINCT messages.from_email) AS unique_senders,
@@ -226,7 +227,8 @@ CREATE MATERIALIZED VIEW public.analytics_summary AS
                 CASE
                     WHEN ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL)) THEN date_trunc('month'::text, messages.sent_at)
                     ELSE NULL::timestamp with time zone
-                END) AS months_ingested
+                END) AS months_ingested,
+            COALESCE(array_agg(DISTINCT to_char(date_trunc('month'::text, messages.sent_at), 'YYYY-MM'::text)) FILTER (WHERE ((messages.sent_at_approx = false) AND (messages.sent_at IS NOT NULL))), '{}'::text[]) AS months_set
            FROM public.messages
           GROUP BY GROUPING SETS ((messages.list_id), ())) m_agg
      JOIN ( SELECT threads.list_id,
@@ -1357,4 +1359,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260321000019'),
     ('20260322000020'),
     ('20260322000021'),
-    ('20260323000022');
+    ('20260323000022'),
+    ('20260323000023');

@@ -282,6 +282,14 @@ export interface ByDow {
   messages: number;
 }
 
+export interface AnalyticsAll {
+  summary: AnalyticsSummary;
+  byMonth: ByMonth[];
+  byHour: ByHour[];
+  byDow: ByDow[];
+  topSenders: TopSender[];
+}
+
 // ---- Tracked Threads ----
 export interface ThreadFollowState {
   threadId: string;

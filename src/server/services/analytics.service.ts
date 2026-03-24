@@ -7,6 +7,7 @@ type IntLike = bigint | number | string;
 
 type SummaryRow = {
   months_ingested: IntLike;
+  months_set: string[] | string | null;
   total_messages: IntLike;
   total_threads: IntLike;
   unique_senders: IntLike;
@@ -69,6 +70,28 @@ function toIdParams(ids: number[]) {
   return sql.join(ids.map((id) => sql`${id}`));
 }
 
+// months_set is stored as text[] per row. When aggregated with array_agg across multiple rows,
+// the driver may return it as a nested array or as a stringified PostgreSQL array literal.
+function parseMonthsSets(raw: string[] | string | null | unknown): string[] {
+  if (!raw) return [];
+  // Flatten nested arrays (array_agg of text[] produces string[][])
+  if (Array.isArray(raw)) {
+    const result: string[] = [];
+    for (const item of raw) {
+      const parsed = parseMonthsSets(item);
+      for (const m of parsed) result.push(m);
+    }
+    return result;
+  }
+  if (typeof raw === "string") {
+    // PostgreSQL array literal: "{2024-01,2024-02}" or "{}"
+    const inner = raw.replace(/^\{|\}$/g, "").trim();
+    if (!inner) return [];
+    return inner.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+  }
+  return [];
+}
+
 export async function getSummary(listIds: number[] = []) {
   return serverCache.getOrLoad(
     listCacheKey(SUMMARY_CACHE_KEY, listIds),
@@ -77,53 +100,43 @@ export async function getSummary(listIds: number[] = []) {
       let result;
       if (listIds.length === 0) {
         result = await sql<SummaryRow>`
-          SELECT total_messages, total_threads, unique_senders, months_ingested
+          SELECT total_messages, total_threads, unique_senders, months_ingested, months_set
           FROM analytics_summary
           WHERE list_id IS NULL
         `.execute(db);
       } else if (listIds.length === 1) {
         result = await sql<SummaryRow>`
-          SELECT total_messages, total_threads, unique_senders, months_ingested
+          SELECT total_messages, total_threads, unique_senders, months_ingested, months_set
           FROM analytics_summary
           WHERE list_id = ${listIds[0]}
         `.execute(db);
       } else {
-        // total_messages and total_threads are summable (no cross-list duplicates).
-        // unique_senders and months_ingested require a live query to avoid double-counting
-        // senders/months that appear in multiple selected lists.
-        const ids = toIdParams(listIds);
-        const [countsResult, setMetricsResult] = await Promise.all([
-          sql<{ total_messages: IntLike; total_threads: IntLike }>`
-            SELECT
-              sum(total_messages)::bigint AS total_messages,
-              sum(total_threads)::bigint AS total_threads
-            FROM analytics_summary
-            WHERE list_id IN (${ids})
-          `.execute(db),
-          sql<{ unique_senders: IntLike; months_ingested: IntLike }>`
-            SELECT
-              count(DISTINCT from_email)::bigint AS unique_senders,
-              count(DISTINCT CASE
-                WHEN sent_at_approx = false AND sent_at IS NOT NULL
-                THEN date_trunc('month', sent_at)
-              END)::bigint AS months_ingested
-            FROM messages
-            WHERE list_id IN (${ids})
-          `.execute(db),
-        ]);
+        // Fetch per-list rows and aggregate in TypeScript to avoid array_agg dimensionality issues.
+        // total_messages, total_threads, unique_senders are summed (unique_senders may overcount).
+        // months_ingested uses set union of months_set to avoid double-counting shared months.
+        result = await sql<SummaryRow>`
+          SELECT total_messages, total_threads, unique_senders, months_ingested, months_set
+          FROM analytics_summary
+          WHERE list_id IN (${toIdParams(listIds)})
+        `.execute(db);
 
-        const counts = countsResult.rows[0];
-        const setMetrics = setMetricsResult.rows[0];
-        if (!counts || !setMetrics) {
+        const rows = result.rows;
+        if (rows.length === 0) {
           return { totalMessages: 0, totalThreads: 0, uniqueSenders: 0, monthsIngested: 0 };
         }
 
-        return {
-          totalMessages: toNumber(counts.total_messages),
-          totalThreads: toNumber(counts.total_threads),
-          uniqueSenders: toNumber(setMetrics.unique_senders),
-          monthsIngested: toNumber(setMetrics.months_ingested),
-        };
+        let totalMessages = 0;
+        let totalThreads = 0;
+        let uniqueSenders = 0;
+        const allMonths = new Set<string>();
+        for (const r of rows) {
+          totalMessages += toNumber(r.total_messages);
+          totalThreads += toNumber(r.total_threads);
+          uniqueSenders += toNumber(r.unique_senders);
+          for (const m of parseMonthsSets(r.months_set)) allMonths.add(m);
+        }
+
+        return { totalMessages, totalThreads, uniqueSenders, monthsIngested: allMonths.size };
       }
 
       const row = result.rows[0];

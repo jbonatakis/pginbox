@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { fetchAnalyticsPayload, createAnalyticsStore } from "../../src/frontend/lib/analytics";
-import { getAnalyticsByDow, getAnalyticsByHour, getAnalyticsByMonth, getAnalyticsSummary, getAnalyticsTopSenders } from "../../src/frontend/lib/api";
+import { getAnalyticsSummary } from "../../src/frontend/lib/api";
 
 const originalFetch = globalThis.fetch;
 
@@ -12,6 +12,7 @@ function jsonResponse(body: unknown): Response {
 }
 
 const emptySummary = { totalMessages: 0, totalThreads: 0, uniqueSenders: 0, monthsIngested: 0 };
+const emptyAll = { summary: emptySummary, byMonth: [], byHour: [], byDow: [], topSenders: [] };
 
 function stubFetch(handler: (url: string) => Response | Promise<Response>): void {
   Object.defineProperty(globalThis, "fetch", {
@@ -73,60 +74,78 @@ describe("getAnalyticsSummary", () => {
 });
 
 describe("fetchAnalyticsPayload", () => {
-  it("forwards list IDs to all five analytics requests", async () => {
+  it("makes a single request to /analytics/all with list IDs", async () => {
     const capturedUrls: string[] = [];
     stubFetch((url) => {
       capturedUrls.push(url);
-      return url.includes("summary") ? jsonResponse(emptySummary) : jsonResponse([]);
+      return jsonResponse(emptyAll);
     });
 
     await fetchAnalyticsPayload({ listIds: [1, 2] });
 
-    expect(capturedUrls.length).toBe(5);
-    expect(capturedUrls.every((url) => url.includes("list=1") && url.includes("list=2"))).toBe(true);
+    expect(capturedUrls.length).toBe(1);
+    expect(capturedUrls[0]).toContain("/analytics/all");
+    expect(capturedUrls[0]).toContain("list=1");
+    expect(capturedUrls[0]).toContain("list=2");
   });
 
   it("omits list params when no listIds are given", async () => {
-    const capturedUrls: string[] = [];
+    let capturedUrl = "";
     stubFetch((url) => {
-      capturedUrls.push(url);
-      return url.includes("summary") ? jsonResponse(emptySummary) : jsonResponse([]);
+      capturedUrl = url;
+      return jsonResponse(emptyAll);
     });
 
     await fetchAnalyticsPayload();
 
-    expect(capturedUrls.every((url) => !url.includes("list="))).toBe(true);
+    expect(capturedUrl).toContain("/analytics/all");
+    expect(capturedUrl).not.toContain("list=");
   });
 });
 
 describe("createAnalyticsStore.setListFilter", () => {
-  it("reloads with the new filter applied to all requests", async () => {
-    const urlsByLoad: string[][] = [];
-    let currentBatch: string[] = [];
-    let batchCount = 0;
-
+  it("debounces rapid filter changes into one request", async () => {
+    const capturedUrls: string[] = [];
     stubFetch((url) => {
-      currentBatch.push(url);
-      // Each load makes 5 requests; collect into batches
-      if (currentBatch.length === 5) {
-        urlsByLoad.push(currentBatch);
-        currentBatch = [];
-        batchCount++;
-      }
-      return url.includes("summary") ? jsonResponse(emptySummary) : jsonResponse([]);
+      capturedUrls.push(url);
+      return jsonResponse(emptyAll);
     });
 
     const store = createAnalyticsStore();
 
     try {
       await store.load();
-      await store.setListFilter([5]);
+      capturedUrls.length = 0;
 
-      expect(urlsByLoad.length).toBe(2);
-      // Initial load: no list params
-      expect(urlsByLoad[0]!.every((url) => !url.includes("list="))).toBe(true);
-      // After setListFilter: all requests include the list param
-      expect(urlsByLoad[1]!.every((url) => url.includes("list=5"))).toBe(true);
+      // Simulate rapid checkbox clicks
+      store.setListFilter([1]);
+      store.setListFilter([1, 2]);
+      store.setListFilter([1, 2, 3]);
+
+      // Wait for debounce to settle
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      // Only one request should have fired (the last filter state)
+      expect(capturedUrls.length).toBe(1);
+      expect(capturedUrls[0]).toContain("list=1");
+      expect(capturedUrls[0]).toContain("list=2");
+      expect(capturedUrls[0]).toContain("list=3");
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("uses no list params for the initial load", async () => {
+    const capturedUrls: string[] = [];
+    stubFetch((url) => {
+      capturedUrls.push(url);
+      return jsonResponse(emptyAll);
+    });
+
+    const store = createAnalyticsStore();
+    try {
+      await store.load();
+      expect(capturedUrls[0]).not.toContain("list=");
     } finally {
       store.dispose();
     }

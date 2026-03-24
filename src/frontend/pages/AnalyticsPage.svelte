@@ -29,7 +29,7 @@
 
   function handleListFilterChange(event: CustomEvent<number[]>): void {
     selectedListIds = event.detail;
-    void analyticsState.setListFilter(selectedListIds);
+    analyticsState.setListFilter(selectedListIds);
   }
 
   const retry = (): void => {
