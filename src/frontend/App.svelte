@@ -502,6 +502,7 @@
 
   .content {
     display: grid;
+    align-content: start;
     gap: 0.9rem;
     min-width: 0;
   }
