@@ -12,6 +12,7 @@
   import ThreadPageControls from "../components/thread/ThreadPageControls.svelte";
   import ThreadTimeline from "../components/thread/ThreadTimeline.svelte";
   import { api, toApiErrorShape, type ApiErrorShape } from "../lib/api";
+  import { copyTextToClipboard } from "../lib/clipboard";
   import { loadingThreadDetailDocumentTitle, threadDetailDocumentTitle } from "../lib/documentTitle";
   import { buildHashAnchorApplicationKey, parseHashAnchorId } from "../lib/hashAnchor";
   import {
@@ -262,31 +263,6 @@
       shareLinkStatus = "idle";
       shareLinkStatusTimeoutId = null;
     }, 2500);
-  };
-
-  const copyTextToClipboard = async (value: string): Promise<boolean> => {
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return true;
-      } catch {
-        // fall through to the document-based fallback
-      }
-    }
-
-    if (typeof document === "undefined") return false;
-
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "absolute";
-    textarea.style.left = "-9999px";
-    document.body.append(textarea);
-    textarea.select();
-
-    const didCopy = document.execCommand("copy");
-    textarea.remove();
-    return didCopy;
   };
 
   const copyShareLink = async (): Promise<void> => {

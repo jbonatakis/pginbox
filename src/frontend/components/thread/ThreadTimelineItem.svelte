@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onDestroy } from "svelte";
   import type { MessageWithAttachments } from "shared/api";
+  import { copyTextToClipboard } from "../../lib/clipboard";
   import { parseMessageBody, type MessageBodyBlock } from "../../lib/messageBody";
   import { postgresqlArchiveMessageUrl } from "../../lib/postgresqlArchive";
   import { isClientNavigationEvent, messagePermalinkPath } from "../../router";
@@ -17,6 +18,8 @@
   let sentAtLabel = "Unknown time";
   let bodyBlocks: MessageBodyBlock[] = [];
   let archiveUrl: string | null = null;
+  let copyLinkStatus: "idle" | "success" | "error" = "idle";
+  let copyLinkStatusTimeoutId: number | null = null;
   const dispatch = createEventDispatcher<{ toggle: void }>();
 
   const dateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -57,6 +60,23 @@
   const collapseToggleLabel = (collapsed: boolean, messageIndex: number): string =>
     collapsed ? `Expand message ${messageIndex + 1}` : `Collapse message ${messageIndex + 1}`;
 
+  const clearCopyLinkStatusTimeout = (): void => {
+    if (copyLinkStatusTimeoutId === null || typeof window === "undefined") return;
+    window.clearTimeout(copyLinkStatusTimeoutId);
+    copyLinkStatusTimeoutId = null;
+  };
+
+  const setCopyLinkStatus = (status: "success" | "error"): void => {
+    copyLinkStatus = status;
+    clearCopyLinkStatusTimeout();
+
+    if (typeof window === "undefined") return;
+    copyLinkStatusTimeoutId = window.setTimeout(() => {
+      copyLinkStatus = "idle";
+      copyLinkStatusTimeoutId = null;
+    }, 2000);
+  };
+
   const handlePermalinkClick = (event: MouseEvent): void => {
     if (!isClientNavigationEvent(event) || typeof window === "undefined") {
       return;
@@ -78,24 +98,56 @@
     anchorElement.scrollIntoView({ block: "start" });
   };
 
+  const copyLinkButtonLabel = (status: "idle" | "success" | "error"): string => {
+    if (status === "success") return "Copied link";
+    if (status === "error") return "Unable to copy";
+    return "Copy link";
+  };
+
+  const handleCopyLink = async (): Promise<void> => {
+    if (typeof window === "undefined") return;
+    const didCopy = await copyTextToClipboard(
+      `${window.location.origin}${messagePermalinkPath(String(message.id))}`
+    );
+    setCopyLinkStatus(didCopy ? "success" : "error");
+  };
+
   $: sender = senderLabel(message.from_name, message.from_email);
   $: subject = normalizedSubject(message.subject);
   $: validTimestamp = isValidTimestamp(message.sent_at);
   $: sentAtLabel = timestampLabel(message.sent_at);
   $: bodyBlocks = parseMessageBody(message.body);
   $: archiveUrl = postgresqlArchiveMessageUrl(message.message_id);
+
+  onDestroy(() => {
+    clearCopyLinkStatusTimeout();
+  });
 </script>
 
 <article class="timeline-item" id={anchorId} aria-labelledby={`${anchorId}-heading`}>
   <header class="timeline-item-header">
     <div class="title-row">
-      <h4 id={`${anchorId}-heading`}>
-        <a
-          class="anchor-link"
-          href={messagePermalinkPath(String(message.id))}
-          on:click={handlePermalinkClick}>#{index + 1}</a
+      <div class="title-actions">
+        <h4 id={`${anchorId}-heading`}>
+          <a
+            class="anchor-link"
+            href={messagePermalinkPath(String(message.id))}
+            on:click={handlePermalinkClick}>#{index + 1}</a
+          >
+        </h4>
+
+        <button
+          class:copy-link-action={true}
+          class:copy-link-action--success={copyLinkStatus === "success"}
+          class:copy-link-action--error={copyLinkStatus === "error"}
+          type="button"
+          aria-label={`Copy link for message ${index + 1}`}
+          title="Copy message link"
+          on:click={handleCopyLink}
         >
-      </h4>
+          {copyLinkButtonLabel(copyLinkStatus)}
+        </button>
+      </div>
 
       <button
         class="collapse-toggle"
@@ -220,6 +272,49 @@
   .anchor-link:focus-visible {
     outline: 2px solid #0b4ea2;
     outline-offset: 2px;
+  }
+
+  .title-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .copy-link-action {
+    border: 0;
+    background: transparent;
+    color: #627d98;
+    font-size: 0.78rem;
+    font-weight: 500;
+    line-height: 1.2;
+    padding: 0;
+    cursor: pointer;
+    white-space: nowrap;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-decoration-color: rgba(98, 125, 152, 0.45);
+    transition: color 120ms ease, text-decoration-color 120ms ease;
+  }
+
+  .copy-link-action:hover {
+    color: #486581;
+    text-decoration-color: currentColor;
+  }
+
+  .copy-link-action:focus-visible {
+    outline: 2px solid #0b4ea2;
+    outline-offset: 2px;
+  }
+
+  .copy-link-action--success {
+    color: #17603a;
+    text-decoration-color: rgba(23, 96, 58, 0.45);
+  }
+
+  .copy-link-action--error {
+    color: #8a1c1c;
+    text-decoration-color: rgba(138, 28, 28, 0.45);
   }
 
   .collapse-toggle {
