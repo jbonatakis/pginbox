@@ -1,6 +1,5 @@
 import type {
   AnalyticsAll,
-  AnalyticsMessagesLast24h,
   AnalyticsSummary,
   ByDow,
   ByHour,
@@ -61,5 +60,4 @@ export const analyticsRoutes = new Elysia({ prefix: "/analytics" })
     },
     { query: listQuery }
   )
-  .get("/messages-last-24h", (): Promise<AnalyticsMessagesLast24h> => analytics.getMessagesLast24h())
   .get("/messages-last-24h-by-list", (): Promise<ListMessagesLast24h[]> => analytics.getMessagesLast24hByList());

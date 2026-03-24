@@ -1,10 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
   DEFAULT_AUTH_APP_BASE_URL,
-  DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES,
   DEFAULT_ANALYTICS_PAGE_CACHE_TTL_MINUTES,
   DEFAULT_DATABASE_URL,
-  resolveAnalyticsMessagesLast24hTtlMs,
   resolveAnalyticsPageCacheTtlMs,
   resolveAuthAppBaseUrl,
   resolveAuthEmailRuntimeConfig,
@@ -87,25 +85,6 @@ describe("server config", () => {
       "postgresql://example.test/db",
     );
     expect(resolveDatabaseUrl({})).toBe(DEFAULT_DATABASE_URL);
-  });
-
-  it("defaults the last-24h analytics cache TTL to 5 minutes and supports env overrides", () => {
-    expect(resolveAnalyticsMessagesLast24hTtlMs({})).toBe(
-      DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES * 60 * 1000,
-    );
-    expect(resolveAnalyticsMessagesLast24hTtlMs({ ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES: "10" })).toBe(
-      10 * 60 * 1000,
-    );
-  });
-
-  it("rejects invalid last-24h analytics cache TTL values", () => {
-    expect(() =>
-      resolveAnalyticsMessagesLast24hTtlMs({ ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES: "0" }),
-    ).toThrow("ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES must be a positive integer");
-
-    expect(() =>
-      resolveAnalyticsMessagesLast24hTtlMs({ ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES: "nope" }),
-    ).toThrow("ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES must be a positive integer");
   });
 
   it("defaults the analytics page cache TTL to 60 minutes and supports env overrides", () => {

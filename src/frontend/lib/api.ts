@@ -8,7 +8,6 @@ import type {
   AnalyticsAll,
   AttachmentDetail,
   AnalyticsSummary,
-  AnalyticsMessagesLast24h,
   ListMessagesLast24h,
   AccountProfileUpdateRequest,
   AccountProfileUpdateResponse,
@@ -625,12 +624,6 @@ export async function getAnalyticsAll(
   );
 }
 
-export async function getAnalyticsMessagesLast24h(
-  options: RequestOptions = {}
-): Promise<AnalyticsMessagesLast24h> {
-  return requestJson<AnalyticsMessagesLast24h>(withApiBase("/analytics/messages-last-24h"), options);
-}
-
 export async function getAnalyticsMessagesLast24hByList(
   options: RequestOptions = {}
 ): Promise<ListMessagesLast24h[]> {
@@ -840,7 +833,6 @@ export const api = {
     getAll: getAnalyticsAll,
     getByDow: getAnalyticsByDow,
     getByHour: getAnalyticsByHour,
-    getMessagesLast24h: getAnalyticsMessagesLast24h,
     getMessagesLast24hByList: getAnalyticsMessagesLast24hByList,
     getByMonth: getAnalyticsByMonth,
     getSummary: getAnalyticsSummary,

@@ -298,18 +298,11 @@ describe("API not-found and success (require DB)", () => {
     expect(json).toHaveProperty("monthsIngested");
   });
 
-  it("GET /analytics/messages-last-24h returns 200 with message count", async () => {
-    const { status, json } = await get("/analytics/messages-last-24h");
-    expect(status).toBe(200);
-    expect(json).toHaveProperty("messages");
-    expect(typeof (json as { messages: unknown }).messages).toBe("number");
-  });
-
-  it("GET /analytics/messages-last-24h serves a cached value until the cache is cleared", async () => {
+  it("GET /analytics/messages-last-24h-by-list serves a cached value until the cache is cleared", async () => {
     serverCache.clear();
-    const before = await get("/analytics/messages-last-24h");
+    const before = await get("/analytics/messages-last-24h-by-list");
     expect(before.status).toBe(200);
-    const beforeCount = (before.json as { messages: number }).messages;
+    const beforeRows = before.json as Array<{ listId: number; messages: number }>;
 
     const listName = `test-analytics-${uid()}`;
     const threadId = `test-thread-${uid()}`;
@@ -352,15 +345,19 @@ describe("API not-found and success (require DB)", () => {
         })
         .execute();
 
-      const cached = await get("/analytics/messages-last-24h");
+      const cached = await get("/analytics/messages-last-24h-by-list");
       expect(cached.status).toBe(200);
-      expect((cached.json as { messages: number }).messages).toBe(beforeCount);
+      expect(cached.json).toEqual(beforeRows);
 
       serverCache.clear();
 
-      const refreshed = await get("/analytics/messages-last-24h");
+      const refreshed = await get("/analytics/messages-last-24h-by-list");
       expect(refreshed.status).toBe(200);
-      expect((refreshed.json as { messages: number }).messages).toBe(beforeCount + 1);
+      expect(
+        (refreshed.json as Array<{ listId: number; messages: number }>).find(
+          (row) => row.listId === listRow.id,
+        )?.messages,
+      ).toBe(1);
     } finally {
       serverCache.clear();
       await db.deleteFrom("messages").where("thread_id", "=", threadId).execute();

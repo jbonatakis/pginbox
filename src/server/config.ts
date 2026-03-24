@@ -1,7 +1,6 @@
 export const DEFAULT_DATABASE_URL = "postgresql://pginbox:pginbox@localhost:5499/pginbox";
 export const DEFAULT_AUTH_APP_BASE_URL = "http://localhost:5173/";
 export const DEFAULT_ANALYTICS_PAGE_CACHE_TTL_MINUTES = 60;
-export const DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES = 5;
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -118,16 +117,6 @@ export function resolveAuthEmailRuntimeConfig(
   }
 
   return { mode: "log" };
-}
-
-export function resolveAnalyticsMessagesLast24hTtlMs(env: EnvSource = process.env): number {
-  const minutes = readPositiveIntegerEnv(
-    env,
-    "ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES",
-    DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES,
-  );
-
-  return minutes * 60 * 1000;
 }
 
 export function resolveAnalyticsPageCacheTtlMs(env: EnvSource = process.env): number {
