@@ -3,6 +3,7 @@
   import { onDestroy, onMount } from "svelte";
   import ThreadTimelineItem from "./ThreadTimelineItem.svelte";
   import { api } from "../../lib/api";
+  import { scrollToHashAnchor } from "../../lib/hashAnchor";
 
   type TimelineEntry = {
     key: string;
@@ -156,6 +157,16 @@
     collapsedMessages = nextState;
   };
 
+  const jumpToLastMessage = (entries: TimelineEntry[]): void => {
+    const lastEntry = entries[entries.length - 1];
+    if (!lastEntry) return;
+    const prefersReducedMotion =
+      typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    scrollToHashAnchor(lastEntry.anchorId, {
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+    });
+  };
+
   onMount(() => {
     syncObserver();
 
@@ -214,13 +225,23 @@
       <h3>Messages</h3>
 
       {#if messages.length > 0}
-        <button
-          class="collapse-all-toggle"
-          type="button"
-          on:click={() => setAllMessagesCollapsed(timelineEntries, !areAllMessagesCollapsed)}
-        >
-          {collapseAllLabel}
-        </button>
+        <div class="timeline-actions">
+          <button
+            class="timeline-action-button"
+            type="button"
+            on:click={() => setAllMessagesCollapsed(timelineEntries, !areAllMessagesCollapsed)}
+          >
+            {collapseAllLabel}
+          </button>
+          <button
+            class="timeline-action-button"
+            type="button"
+            aria-label="Jump to last message on this page"
+            on:click={() => jumpToLastMessage(timelineEntries)}
+          >
+            Jump to last message
+          </button>
+        </div>
       {/if}
     </div>
 
@@ -296,7 +317,15 @@
     color: #627d98;
   }
 
-  .collapse-all-toggle {
+  .timeline-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .timeline-action-button {
     border: 1px solid #bcccdc;
     border-radius: 999px;
     background: #ffffff;
@@ -312,13 +341,13 @@
       background-color 120ms ease;
   }
 
-  .collapse-all-toggle:hover {
+  .timeline-action-button:hover {
     border-color: #9fb3c8;
     background: #f0f7ff;
     color: #102a43;
   }
 
-  .collapse-all-toggle:focus-visible {
+  .timeline-action-button:focus-visible {
     outline: 2px solid #0b4ea2;
     outline-offset: 2px;
   }

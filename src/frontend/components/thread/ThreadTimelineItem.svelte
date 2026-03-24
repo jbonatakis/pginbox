@@ -2,6 +2,7 @@
   import { createEventDispatcher, onDestroy } from "svelte";
   import type { MessageWithAttachments } from "shared/api";
   import { copyTextToClipboard } from "../../lib/clipboard";
+  import { scrollToHashAnchor } from "../../lib/hashAnchor";
   import { parseMessageBody, type MessageBodyBlock } from "../../lib/messageBody";
   import { postgresqlArchiveMessageUrl } from "../../lib/postgresqlArchive";
   import { isClientNavigationEvent, messagePermalinkPath } from "../../router";
@@ -83,19 +84,7 @@
     }
 
     event.preventDefault();
-
-    const anchorElement = document.getElementById(anchorId);
-    if (!anchorElement) {
-      return;
-    }
-
-    const nextUrl = `${window.location.pathname}${window.location.search}#${anchorId}`;
-    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (nextUrl !== currentUrl) {
-      window.history.replaceState(window.history.state, "", nextUrl);
-    }
-
-    anchorElement.scrollIntoView({ block: "start" });
+    scrollToHashAnchor(anchorId);
   };
 
   const copyLinkButtonLabel = (status: "idle" | "success" | "error"): string => {
