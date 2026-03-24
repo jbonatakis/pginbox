@@ -14,3 +14,5 @@ blackbird.plan.json
 .pytest_cache/
 locust/
 scratch.md
+playwright-report/
+test-results/

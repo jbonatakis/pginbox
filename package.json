@@ -10,6 +10,7 @@
     "dev:threads": "bun src/server/dev/test-threads.ts",
     "start": "bun src/server/index.ts",
     "test": "bun test test",
+    "test:e2e": "playwright test",
     "codegen": "kysely-codegen --dialect postgres --url $DATABASE_URL --out-file src/server/types/db.d.ts"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "pg": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/bun": "^1.3.10",
     "@types/nodemailer": "^7.0.11",
     "@types/pg": "latest",

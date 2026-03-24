@@ -124,6 +124,70 @@ jobs:
         working-directory: src/frontend
         run: npm run build
 
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: pginbox
+          POSTGRES_PASSWORD: pginbox
+          POSTGRES_USER: pginbox
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pginbox -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      APP_BASE_URL: http://localhost:5173
+      AUTH_EMAIL_MODE: log
+      DATABASE_URL: postgresql://pginbox:pginbox@localhost:5432/pginbox?sslmode=disable
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+          node-version: 22
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install frontend dependencies
+        working-directory: src/frontend
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: bunx playwright install --with-deps chromium
+
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /tmp/dbmate https://github.com/amacneil/dbmate/releases/download/v2.28.0/dbmate-linux-amd64
+          chmod +x /tmp/dbmate
+          sudo mv /tmp/dbmate /usr/local/bin/dbmate
+
+      - name: Run database migrations
+        run: |
+          until PGPASSWORD=pginbox psql -h localhost -U pginbox -d postgres -c 'select 1' >/dev/null 2>&1; do
+            sleep 1
+          done
+          dbmate up
+
+      - name: Run Playwright smoke test
+        run: bun run test:e2e
+
   python:
     name: Python Lint, Typecheck, and Tests
     runs-on: ubuntu-latest
