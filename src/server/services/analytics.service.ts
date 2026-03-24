@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { InvalidCacheTtlError, serverCache } from "../cache";
-import { resolveAnalyticsPageCacheTtlMs } from "../config";
+import { resolveAnalyticsMessagesLast24hTtlMs, resolveAnalyticsPageCacheTtlMs } from "../config";
 import { sql } from "kysely";
 
 type IntLike = bigint | number | string;
@@ -48,6 +48,7 @@ const TOP_SENDERS_CACHE_KEY = "analytics:top-senders";
 const BY_HOUR_CACHE_KEY = "analytics:by-hour";
 const BY_DOW_CACHE_KEY = "analytics:by-dow";
 const ANALYTICS_PAGE_CACHE_TTL_MS = resolveAnalyticsPageCacheTtlMs();
+const MESSAGES_LAST_24H_TTL_MS = resolveAnalyticsMessagesLast24hTtlMs();
 
 function toNumber(value: IntLike): number {
   if (typeof value === "number") return value;
@@ -263,7 +264,7 @@ export async function getMessagesLast24hByList() {
   try {
     return await serverCache.getOrLoad(
       MESSAGES_LAST_24H_BY_LIST_CACHE_KEY,
-      ANALYTICS_PAGE_CACHE_TTL_MS,
+      MESSAGES_LAST_24H_TTL_MS,
       queryMessagesLast24hByList,
     );
   } catch (error) {
