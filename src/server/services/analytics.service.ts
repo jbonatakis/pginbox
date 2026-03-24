@@ -7,7 +7,7 @@ type IntLike = bigint | number | string;
 
 type SummaryRow = {
   months_ingested: IntLike;
-  months_set: string[] | string | null;
+  months_set: string[] | null;
   total_messages: IntLike;
   total_threads: IntLike;
   unique_senders: IntLike;
@@ -70,26 +70,9 @@ function toIdParams(ids: number[]) {
   return sql.join(ids.map((id) => sql`${id}`));
 }
 
-// months_set is stored as text[] per row. When aggregated with array_agg across multiple rows,
-// the driver may return it as a nested array or as a stringified PostgreSQL array literal.
-function parseMonthsSets(raw: string[] | string | null | unknown): string[] {
-  if (!raw) return [];
-  // Flatten nested arrays (array_agg of text[] produces string[][])
-  if (Array.isArray(raw)) {
-    const result: string[] = [];
-    for (const item of raw) {
-      const parsed = parseMonthsSets(item);
-      for (const m of parsed) result.push(m);
-    }
-    return result;
-  }
-  if (typeof raw === "string") {
-    // PostgreSQL array literal: "{2024-01,2024-02}" or "{}"
-    const inner = raw.replace(/^\{|\}$/g, "").trim();
-    if (!inner) return [];
-    return inner.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
-  }
-  return [];
+// months_set is a text[] column; the pg driver returns it as a JS string[] directly.
+function parseMonthsSet(raw: string[] | null): string[] {
+  return raw ?? [];
 }
 
 export async function getSummary(listIds: number[] = []) {
@@ -133,7 +116,7 @@ export async function getSummary(listIds: number[] = []) {
           totalMessages += toNumber(r.total_messages);
           totalThreads += toNumber(r.total_threads);
           uniqueSenders += toNumber(r.unique_senders);
-          for (const m of parseMonthsSets(r.months_set)) allMonths.add(m);
+          for (const m of parseMonthsSet(r.months_set)) allMonths.add(m);
         }
 
         return { totalMessages, totalThreads, uniqueSenders, monthsIngested: allMonths.size };
