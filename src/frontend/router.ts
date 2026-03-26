@@ -72,7 +72,14 @@ export type AppRoute =
 
 type NavigateOptions = {
   replace?: boolean;
+  transition?: RouteTransition;
 };
+
+export const routeTransitions = {
+  homeSearch: "home-search",
+} as const;
+
+export type RouteTransition = (typeof routeTransitions)[keyof typeof routeTransitions];
 
 const defaultRoute: AppRoute = { name: "home", pathname: homePath };
 const routeStore = writable<AppRoute>(resolveRouteFromLocation());
@@ -121,13 +128,16 @@ export function navigate(to: string, options: NavigateOptions = {}): void {
     window.location.search,
     window.location.hash,
   );
+  const commitNavigation = (): void => {
+    if (targetUrl !== currentUrl) {
+      const method = options.replace ? "replaceState" : "pushState";
+      window.history[method](window.history.state, "", targetUrl);
+    }
 
-  if (targetUrl !== currentUrl) {
-    const method = options.replace ? "replaceState" : "pushState";
-    window.history[method](window.history.state, "", targetUrl);
-  }
+    routeStore.set(matchRoute(canonicalPathname));
+  };
 
-  routeStore.set(matchRoute(canonicalPathname));
+  runNavigationWithTransition(options.transition, commitNavigation);
 }
 
 function shouldHandleClientNavigation(event: MouseEvent): boolean {
@@ -140,6 +150,109 @@ function shouldHandleClientNavigation(event: MouseEvent): boolean {
   }
 
   return !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+function runNavigationWithTransition(
+  transition: RouteTransition | undefined,
+  commitNavigation: () => void,
+): void {
+  if (!transition || typeof document === "undefined" || prefersReducedMotion()) {
+    commitNavigation();
+    return;
+  }
+
+  const contentElement = document.getElementById("main-content");
+  if (!contentElement || typeof contentElement.animate !== "function") {
+    commitNavigation();
+    return;
+  }
+
+  void animateNavigation(contentElement, transition, commitNavigation);
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+async function animateNavigation(
+  contentElement: HTMLElement,
+  transition: RouteTransition,
+  commitNavigation: () => void,
+): Promise<void> {
+  if (transition !== "home-search") {
+    commitNavigation();
+    return;
+  }
+
+  const clearInlineStyles = (): void => {
+    contentElement.style.opacity = "";
+    contentElement.style.transform = "";
+    contentElement.style.filter = "";
+    contentElement.style.transformOrigin = "";
+    contentElement.style.willChange = "";
+    contentElement.style.pointerEvents = "";
+  };
+
+  contentElement.style.transformOrigin = "top center";
+  contentElement.style.willChange = "transform, opacity, filter";
+  contentElement.style.pointerEvents = "none";
+
+  try {
+    await finishAnimation(
+      contentElement.animate(
+        [
+          { opacity: 1, transform: "translateY(0)", filter: "blur(0px)" },
+          { opacity: 0, transform: "translateY(-16vh)", filter: "blur(8px)" },
+        ],
+        {
+          duration: 220,
+          easing: "cubic-bezier(0.4, 0, 1, 1)",
+          fill: "forwards",
+        },
+      ),
+    );
+
+    contentElement.style.opacity = "0";
+    contentElement.style.transform = "translateY(20vh)";
+    contentElement.style.filter = "blur(6px)";
+
+    commitNavigation();
+    await nextFrame();
+
+    await finishAnimation(
+      contentElement.animate(
+        [
+          { opacity: 0, transform: "translateY(20vh)", filter: "blur(6px)" },
+          { opacity: 1, transform: "translateY(0)", filter: "blur(0px)" },
+        ],
+        {
+          duration: 460,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "forwards",
+        },
+      ),
+    );
+  } catch {
+    commitNavigation();
+  } finally {
+    clearInlineStyles();
+  }
+}
+
+async function finishAnimation(animation: Animation): Promise<void> {
+  try {
+    await animation.finished;
+  } finally {
+    animation.cancel();
+  }
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
 }
 
 function handlePopState(): void {

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
-  import { navigate, threadsPath } from "../router";
+  import { authStore } from "../lib/state/auth";
+  import { navigate, routeTransitions, threadsPath } from "../router";
 
   let searchQuery = "";
   const suggestedQueries = ["AIO", "walsender", "autovacuum"];
@@ -34,13 +35,21 @@
     return `${threadsPath}?${params.toString()}`;
   };
 
-  const submitSearch = (): void => {
-    navigate(threadsSearchPath(searchQuery));
+  const submitSearch = (options: { useScrollTransition?: boolean } = {}): void => {
+    const navigateOptions = options.useScrollTransition
+      ? { transition: routeTransitions.homeSearch }
+      : undefined;
+
+    navigate(threadsSearchPath(searchQuery), navigateOptions);
+  };
+
+  const handleSearchSubmit = (): void => {
+    submitSearch({ useScrollTransition: $authStore.user?.role === "admin" });
   };
 
   const applySuggestedQuery = (query: string): void => {
     searchQuery = query;
-    submitSearch();
+    submitSearch({ useScrollTransition: $authStore.user?.role === "admin" });
   };
 
   onMount(() => {
@@ -96,7 +105,7 @@
     <form
       class="search-shell"
       role="search"
-      on:submit|preventDefault={submitSearch}
+      on:submit|preventDefault={handleSearchSubmit}
     >
       <div class="search-frame">
         <input
