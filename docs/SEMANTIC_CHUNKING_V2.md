@@ -141,6 +141,7 @@ Raw messages are already small enough that heavy chunking is unnecessary in most
 * preserve raw message for display
 * derive a cleaned semantic representation
 * embed cleaned message as a single unit in most cases
+* emit smaller local units for inline review-style messages when detected
 * only chunk unusually large cleaned messages
 
 ---
@@ -166,6 +167,8 @@ The right default is therefore:
 
 * **no chunking for normal cleaned messages**
 * **conditional chunking only for the long tail**
+
+That default should still allow a narrow exception for review-style mail. Messages that alternate between quoted lines and short authored replies often benefit from smaller local semantic units in addition to the full cleaned-message unit.
 
 ---
 
@@ -252,6 +255,15 @@ The larger issue is shallow quoting. That is why a good second-stage refinement 
 
 This lets the system start conservatively and then tighten as retrieval behavior is observed.
 
+### Review-style message exception
+
+Some mailing-list messages are not ordinary prose replies. They are interleaved review messages where the semantic unit is often:
+
+* a quoted question or code fragment
+* the immediate authored reply beneath it
+
+For those messages, the system should keep the whole cleaned message unit, but may also emit smaller derived quote/reply units when the line structure strongly suggests inline review.
+
 ---
 
 ## 4.5 Message chunking thresholds
@@ -283,10 +295,12 @@ Given the current distribution, only a small minority of messages should hit the
 
 Each message should usually have one semantic unit. Long cleaned messages may have multiple chunk units.
 
+Review-style messages may additionally have smaller derived local units. These should be additive, not a replacement for the parent message unit.
+
 Suggested semantic record model:
 
 * `message_id`
-* `unit_type = 'message' | 'chunk'`
+* `unit_type = 'message' | 'chunk' | 'quote_reply_pair'`
 * `unit_index`
 * `semantic_text`
 * `raw_text_reference`
@@ -339,6 +353,15 @@ A patch can be detected by structural markers like:
 
 This approach successfully reclassified the attachment corpus into an overwhelmingly patch-heavy corpus in the user’s local analysis.
 
+Detection and parsing should not assume every patch is a clean git patch with `diff --git` headers. Some attachments will instead be:
+
+* unified diffs that only expose `---` / `+++` / `@@`
+* binary git patches
+* rename-only or mode-change diffs
+* malformed or truncated patch text
+
+So patch handling needs both content-based classification and explicit parser fallback behavior.
+
 ---
 
 ## 5.3 Why whole-attachment embeddings are wrong for patches
@@ -373,7 +396,7 @@ And the fallback unit is:
 
 ## 5.4 Primary semantic unit for attachments: file diff
 
-A patch attachment should first be split on `diff --git`, yielding one semantic unit per file change.
+A patch attachment should first be split into file-level units, preferably using `diff --git` when available.
 
 This is the right default because:
 
@@ -382,6 +405,13 @@ This is the right default because:
 * it keeps related hunks in one file together
 * it improves retrieval precision dramatically over attachment-level embeddings
 * it avoids the fragmentation of universal hunk-level indexing
+
+In practice this means supporting at least:
+
+* git-patch parsing via `diff --git`
+* unified-diff fallback parsing via `---` / `+++` boundaries when `diff --git` is absent
+
+If neither parser yields trustworthy file units, the system should still emit a coarse patch-level record with parse-status metadata rather than silently dropping the attachment from the semantic index.
 
 ### Suggested file-diff stored fields
 
@@ -396,6 +426,8 @@ For each file diff:
 * additions count
 * deletions count
 * hunk_count
+* `parse_mode`
+* `parse_status`
 * derived semantic representation
 * embedding vector
 
@@ -453,13 +485,11 @@ So the indexing policy should optimize for the common case, not let the patholog
 `file_count > 100`
 
 * do not naively embed every file diff in v1
-* either:
+* always emit a coarse attachment-level searchable record
+* optionally embed only a selected subset of high-signal files
+* defer exhaustive file-level embedding if cost is too high
 
-  * skip initially
-  * create only a coarse summary
-  * or embed only a selected subset of files
-
-Because there are only 400 such attachments, it is reasonable to special-case or defer them initially.
+Because there are only 400 such attachments, it is reasonable to special-case them in v1, but they should not disappear entirely from recall.
 
 ---
 
@@ -509,6 +539,8 @@ For example:
 * include stats
 
 A later iteration can add LLM-generated summaries.
+
+The retrieval path should remain hybrid from the start. File paths, symbols, hunk headers, and exact patch tags often match better lexically than semantically, so the embedding text should complement rather than replace lexical search features.
 
 ---
 
@@ -596,13 +628,16 @@ Per unit:
 * `file_path`
 * `hunk_header`
 * `semantic_text`
+* `content_hash`
 * embedding vector
+
+If two revisions produce the same normalized semantic text for a file or hunk unit, the system should be able to reuse the same embedding artifact. Revisions remain distinct records; only the embedding work is deduplicated.
 
 ---
 
 ## 6.3 Family grouping
 
-Patch revisions should be grouped heuristically using normalized subjects.
+Patch revisions should be grouped heuristically using normalized subjects plus surrounding context.
 
 Normalize by stripping patterns like:
 
@@ -618,7 +653,14 @@ Then derive:
 * revision number
 * patch number within series, if present
 
-This will not be perfect, but it is a useful and practical grouping key.
+Subject normalization should be the starting point, not the entire key. Grouping should also consider:
+
+* thread relationships
+* sender identity
+* list identity
+* send-time proximity
+
+This will still not be perfect, but it is materially safer than subject-only grouping.
 
 ---
 
@@ -666,6 +708,8 @@ Suggested fields:
 * `cleaning_version`
 * embedding vector
 
+If review-local units are emitted, this table should also carry enough metadata to map them back to the parent message span or quote/reply segment.
+
 ---
 
 ## 7.2 Attachments
@@ -711,9 +755,14 @@ Suggested fields:
 * `hunk_header`
 * `raw_text`
 * `semantic_text`
+* `content_hash`
+* `parse_mode`
+* `parse_status`
 * `transform_version`
 * `embedding_model`
 * embedding vector
+
+Lexical retrieval fields for subjects, file paths, hunk headers, and exact symbols should be treated as part of the same retrieval design, not a separate afterthought.
 
 ---
 
@@ -726,7 +775,8 @@ Suggested fields:
 3. remove nested quotes
 4. keep single-level quotes initially
 5. embed cleaned message as one unit unless cleaned length exceeds threshold
-6. chunk only long cleaned messages
+6. emit additional quote/reply units for inline review mail when detected
+7. chunk only long cleaned messages
 
 ## Phase 2: attachment classification
 
@@ -736,9 +786,10 @@ Suggested fields:
 
 ## Phase 3: patch parsing
 
-1. split patch attachments by `diff --git`
-2. store one row per file diff
-3. gather metadata like file paths, additions, deletions, hunk count
+1. split patch attachments by `diff --git` when available
+2. fall back to unified-diff parsing when `diff --git` is absent
+3. store one row per file diff when parsing succeeds
+4. gather metadata like file paths, additions, deletions, hunk count, and parse status
 
 ## Phase 4: patch unit embedding
 
@@ -750,13 +801,22 @@ Suggested fields:
 
 1. derive patch family keys from normalized subjects
 2. parse revision numbers
-3. rank/display later revisions preferentially while keeping all revisions searchable
+3. incorporate thread, sender, list, and time-window heuristics
+4. reuse embeddings for unchanged units across revisions via content hashes
+5. rank/display later revisions preferentially while keeping all revisions searchable
 
 ## Phase 6: tail handling
 
-1. skip or special-case giant `100+ file` patch attachments in v1
+1. special-case giant `100+ file` patch attachments with at least a coarse searchable record
 2. skip archives for embedding
 3. inspect `other` as a small cleanup queue
+
+## Phase 7: retrieval and observability
+
+1. keep lexical retrieval paths for subjects, file paths, hunk headers, and exact symbols
+2. log parse failures, unit counts, and threshold-triggered hunk splits
+3. measure retrieval quality separately for prose, inline review, and patch queries
+4. tune thresholds from observed token counts and retrieval outcomes rather than freezing initial char limits permanently
 
 ---
 
@@ -767,6 +827,7 @@ Suggested fields:
 * clean aggressively enough to reduce quote pollution
 * store cleaned text before embedding
 * default to one embedding per cleaned message
+* emit smaller review-local units when inline review structure is detected
 * only chunk the small long-tail of very large cleaned messages
 
 ## Attachments
@@ -774,10 +835,13 @@ Suggested fields:
 * classify by content, not MIME type
 * treat the corpus as primarily a patch corpus
 * split patch attachments by file diff
+* support non-`diff --git` parser fallback and explicit parse-status tracking
 * use file diff as the default semantic unit
 * split to hunk level only for oversized file diffs
 * keep revisions distinct but grouped
-* skip or special-case giant patches and archives
+* reuse embeddings for unchanged units across revisions
+* special-case giant patches so they remain searchable
+* skip archives for embedding
 
 ---
 
@@ -786,7 +850,7 @@ Suggested fields:
 The analysis points to a clear architecture:
 
 * **Messages:** mostly single cleaned-message embeddings with minimal chunking
-* **Attachments:** structurally parsed patch indexing with file-diff units and selective hunk fallback
+* **Attachments:** structurally parsed patch indexing with file-diff units, selective hunk fallback, and parser fallbacks for non-ideal diffs
 
 This strategy fits the actual shape of the corpus, minimizes wasted embeddings, preserves semantic fidelity, and should produce far better retrieval quality than a generic “chunk everything into windows” approach.
 
