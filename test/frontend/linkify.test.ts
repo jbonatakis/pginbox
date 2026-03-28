@@ -47,4 +47,50 @@ describe("linkifyPlainText", () => {
       },
     ]);
   });
+
+  it("links full git commit hashes to the PostgreSQL GitHub repo", () => {
+    expect(
+      linkifyPlainText(
+        "commit a8677e3ff6bb8ef78a9ba676faa647bba237b1c4\nAuthor: Peter Eisentraut"
+      )
+    ).toEqual([
+      { type: "text", value: "commit " },
+      {
+        type: "link",
+        value: "a8677e3ff6bb8ef78a9ba676faa647bba237b1c4",
+        href: "https://github.com/postgres/postgres/commit/a8677e3ff6bb8ef78a9ba676faa647bba237b1c4",
+      },
+      { type: "text", value: "\nAuthor: Peter Eisentraut" },
+    ]);
+  });
+
+  it("links short git commit hashes", () => {
+    expect(linkifyPlainText("Fixed by a8677e3 in the previous patch.")).toEqual([
+      { type: "text", value: "Fixed by " },
+      {
+        type: "link",
+        value: "a8677e3",
+        href: "https://github.com/postgres/postgres/commit/a8677e3",
+      },
+      { type: "text", value: " in the previous patch." },
+    ]);
+  });
+
+  it("does not treat commit-like hashes inside URLs as separate commit links", () => {
+    expect(linkifyPlainText("See https://example.com/commit/a8677e3 for details.")).toEqual([
+      { type: "text", value: "See " },
+      {
+        type: "link",
+        value: "https://example.com/commit/a8677e3",
+        href: "https://example.com/commit/a8677e3",
+      },
+      { type: "text", value: " for details." },
+    ]);
+  });
+
+  it("skips numeric tokens that are not plausible git commit hashes", () => {
+    expect(linkifyPlainText("Build 1234567 is ready.")).toEqual([
+      { type: "text", value: "Build 1234567 is ready." },
+    ]);
+  });
 });

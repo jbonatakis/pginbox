@@ -86,4 +86,22 @@ describe("parseMessageBody", () => {
       },
     ]);
   });
+
+  it("keeps git commit hashes clickable inside quote blocks", () => {
+    expect(parseMessageBody("> commit a8677e3")).toEqual([
+      {
+        depth: 1,
+        parts: [
+          { type: "text", value: "commit " },
+          {
+            type: "link",
+            value: "a8677e3",
+            href: "https://github.com/postgres/postgres/commit/a8677e3",
+          },
+        ],
+        text: "commit a8677e3",
+        type: "quote",
+      },
+    ]);
+  });
 });

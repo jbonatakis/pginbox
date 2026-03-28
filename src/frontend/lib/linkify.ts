@@ -3,7 +3,9 @@ export type LinkifiedTextPart =
   | { type: "link"; value: string; href: string };
 
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
+const GIT_COMMIT_PATTERN = /(^|[^0-9A-Za-z])([0-9a-f]{7,40})(?=$|[^0-9A-Za-z])/gi;
 const TRAILING_PUNCTUATION = new Set([",", ".", "!", "?", ":", ";"]);
+const POSTGRESQL_GITHUB_COMMIT_BASE_URL = "https://github.com/postgres/postgres/commit/";
 
 function countChar(value: string, char: string): number {
   let count = 0;
@@ -55,6 +57,13 @@ function toHttpUrl(value: string): string | null {
   }
 }
 
+function toPostgreSqlCommitUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^[0-9a-f]{7,40}$/i.test(trimmed)) return null;
+  if (!/[a-f]/i.test(trimmed)) return null;
+  return `${POSTGRESQL_GITHUB_COMMIT_BASE_URL}${trimmed.toLowerCase()}`;
+}
+
 function pushText(parts: LinkifiedTextPart[], value: string): void {
   if (value.length === 0) return;
 
@@ -65,6 +74,31 @@ function pushText(parts: LinkifiedTextPart[], value: string): void {
   }
 
   parts.push({ type: "text", value });
+}
+
+function pushCommitLinks(parts: LinkifiedTextPart[], value: string): void {
+  let cursor = 0;
+
+  for (const match of value.matchAll(GIT_COMMIT_PATTERN)) {
+    const start = match.index ?? 0;
+    const prefix = match[1] ?? "";
+    const hash = match[2] ?? "";
+    const href = toPostgreSqlCommitUrl(hash);
+
+    if (href === null) continue;
+
+    const hashStart = start + prefix.length;
+    if (hashStart > cursor) {
+      pushText(parts, value.slice(cursor, hashStart));
+    }
+
+    parts.push({ type: "link", value: hash, href });
+    cursor = hashStart + hash.length;
+  }
+
+  if (cursor < value.length) {
+    pushText(parts, value.slice(cursor));
+  }
 }
 
 // Home-grown regex linkification is fine for now. If edge cases pile up, replace this
@@ -86,7 +120,7 @@ export function linkifyPlainText(
     if (href === null) continue;
 
     if (start > cursor) {
-      pushText(parts, source.slice(cursor, start));
+      pushCommitLinks(parts, source.slice(cursor, start));
     }
 
     parts.push({ type: "link", value: trimmedMatch, href });
@@ -99,7 +133,7 @@ export function linkifyPlainText(
   }
 
   if (cursor < source.length) {
-    pushText(parts, source.slice(cursor));
+    pushCommitLinks(parts, source.slice(cursor));
   }
 
   if (parts.length === 0) {
