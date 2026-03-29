@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { postgresqlArchiveMessageUrl } from "../../src/frontend/lib/postgresqlArchive";
+import {
+  postgresqlArchiveMessageUrl,
+  postgresqlArchiveResendUrl,
+} from "../../src/frontend/lib/postgresqlArchive";
 
 describe("postgresqlArchiveMessageUrl", () => {
   it("builds a PostgreSQL archive URL from a bracketed RFC message id", () => {
@@ -23,5 +26,24 @@ describe("postgresqlArchiveMessageUrl", () => {
     expect(postgresqlArchiveMessageUrl(undefined)).toBeNull();
     expect(postgresqlArchiveMessageUrl("   ")).toBeNull();
     expect(postgresqlArchiveMessageUrl("<   >")).toBeNull();
+  });
+});
+
+describe("postgresqlArchiveResendUrl", () => {
+  it("builds a PostgreSQL resend URL from a bracketed RFC message id", () => {
+    expect(
+      postgresqlArchiveResendUrl(
+        "<CAOYmi+miuQOntENQi+aNkTNEyxVbkgCftOR8Fpe_LdYpQZWKAw@mail.gmail.com>"
+      )
+    ).toBe(
+      "https://www.postgresql.org/message-id/resend/CAOYmi%2BmiuQOntENQi%2BaNkTNEyxVbkgCftOR8Fpe_LdYpQZWKAw%40mail.gmail.com"
+    );
+  });
+
+  it("returns null for empty or missing ids", () => {
+    expect(postgresqlArchiveResendUrl(null)).toBeNull();
+    expect(postgresqlArchiveResendUrl(undefined)).toBeNull();
+    expect(postgresqlArchiveResendUrl("   ")).toBeNull();
+    expect(postgresqlArchiveResendUrl("<   >")).toBeNull();
   });
 });

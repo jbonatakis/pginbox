@@ -4,7 +4,7 @@
   import { copyTextToClipboard } from "../../lib/clipboard";
   import { scrollToHashAnchor } from "../../lib/hashAnchor";
   import { parseMessageBody, type MessageBodyBlock } from "../../lib/messageBody";
-  import { postgresqlArchiveMessageUrl } from "../../lib/postgresqlArchive";
+  import { postgresqlArchiveMessageUrl, postgresqlArchiveResendUrl } from "../../lib/postgresqlArchive";
   import { isClientNavigationEvent, messagePermalinkPath } from "../../router";
   import ThreadMessageAttachments from "./ThreadMessageAttachments.svelte";
 
@@ -19,6 +19,7 @@
   let sentAtLabel = "Unknown time";
   let bodyBlocks: MessageBodyBlock[] = [];
   let archiveUrl: string | null = null;
+  let resendUrl: string | null = null;
   let copyLinkStatus: "idle" | "success" | "error" = "idle";
   let copyLinkStatusTimeoutId: number | null = null;
   const dispatch = createEventDispatcher<{ toggle: void }>();
@@ -107,6 +108,7 @@
   $: sentAtLabel = timestampLabel(message.sent_at);
   $: bodyBlocks = parseMessageBody(message.body);
   $: archiveUrl = postgresqlArchiveMessageUrl(message.message_id);
+  $: resendUrl = postgresqlArchiveResendUrl(message.message_id);
 
   onDestroy(() => {
     clearCopyLinkStatusTimeout();
@@ -173,17 +175,41 @@
       {:else}
         <span>{sentAtLabel}</span>
       {/if}
-      {#if archiveUrl}
+      {#if archiveUrl || resendUrl}
         <span aria-hidden="true">·</span>
-        <a
-          class="meta-link"
-          href={archiveUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Open original message in PostgreSQL mailing archive"
-        >
-          View in archive
-        </a>
+        <span class="meta-links">
+          {#if archiveUrl}
+            <a
+              class="meta-link"
+              href={archiveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open original message in PostgreSQL mailing archive"
+            >
+              View in archive
+            </a>
+          {/if}
+          {#if archiveUrl && resendUrl}
+            <span aria-hidden="true">|</span>
+          {/if}
+          {#if resendUrl}
+            <a
+              class="meta-link"
+              href={resendUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open PostgreSQL archive page to request resending this email"
+            >
+              Resend email
+            </a>
+            <span
+              class="meta-hint"
+              title="Requires a login at postgresql.org"
+              aria-label="Requires a login at postgresql.org"
+              >?</span
+            >
+          {/if}
+        </span>
       {/if}
     </p>
 
@@ -362,6 +388,13 @@
     overflow-wrap: anywhere;
   }
 
+  .meta-links {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem;
+  }
+
   .meta time,
   .meta span {
     overflow-wrap: anywhere;
@@ -382,6 +415,22 @@
   .meta-link:focus-visible {
     outline: 2px solid #0b4ea2;
     outline-offset: 2px;
+  }
+
+  .meta-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 0.95rem;
+    height: 0.95rem;
+    border: 1px solid rgba(98, 125, 152, 0.35);
+    border-radius: 999px;
+    color: #627d98;
+    font-size: 0.64rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+    user-select: none;
   }
 
   .subject {
