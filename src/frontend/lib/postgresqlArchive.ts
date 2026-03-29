@@ -1,4 +1,5 @@
 const POSTGRESQL_MESSAGE_ARCHIVE_BASE_URL = "https://www.postgresql.org/message-id/";
+const POSTGRESQL_MESSAGE_RESEND_BASE_URL = "https://www.postgresql.org/message-id/resend/";
 
 function normalizeMessageId(messageId: string | null | undefined): string | null {
   const trimmed = messageId?.trim() ?? "";
@@ -17,4 +18,11 @@ export function postgresqlArchiveMessageUrl(messageId: string | null | undefined
   if (normalized === null) return null;
 
   return `${POSTGRESQL_MESSAGE_ARCHIVE_BASE_URL}${encodeURIComponent(normalized)}`;
+}
+
+export function postgresqlArchiveResendUrl(messageId: string | null | undefined): string | null {
+  const normalized = normalizeMessageId(messageId);
+  if (normalized === null) return null;
+
+  return `${POSTGRESQL_MESSAGE_RESEND_BASE_URL}${encodeURIComponent(normalized)}`;
 }
