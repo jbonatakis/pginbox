@@ -1,6 +1,5 @@
 services:
   db:
-    image: pginbox-pg-textsearch:local
     build:
       context: .
       dockerfile: Dockerfile.pg_textsearch

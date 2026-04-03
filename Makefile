@@ -2,50 +2,29 @@
 export
 
 DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
-TEXTSEARCH_COMPOSE := COMPOSE_PROJECT_NAME=pginbox_textsearch docker compose -f docker-compose.yml -f docker-compose.pg_textsearch.yml
 
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset up-textsearch down-textsearch reset-textsearch smoke-textsearch pgcli logs ingest backfill backfill-range reconcile reconcile-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup my-threads-backfill codegen test test-server test-frontend test-ingestion test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
+.PHONY: up down reset pgcli logs ingest backfill backfill-range reconcile reconcile-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup my-threads-backfill codegen test test-server test-frontend test-ingestion test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
 
 up:
-	docker compose up -d
+	docker compose up -d --build
 	@echo "Waiting for Postgres..."
 	@until docker compose exec db pg_isready -U pginbox -d pginbox -q; do sleep 0.5; done
 	@echo "Ready: $(DSN)"
 
-up-textsearch:
-	docker compose down
-	$(TEXTSEARCH_COMPOSE) up -d --build
-	@echo "Waiting for Postgres with pg_textsearch..."
-	@until $(TEXTSEARCH_COMPOSE) exec db pg_isready -U pginbox -d pginbox -q; do sleep 0.5; done
-	@echo "Ready with pg_textsearch: $(DSN)"
-
 down:
 	docker compose down
 
-down-textsearch:
-	$(TEXTSEARCH_COMPOSE) down
-
 reset:
 	docker compose down -v
-	docker compose up -d
+	docker compose up -d --build
 	@until docker compose exec db pg_isready -U pginbox -d pginbox -q; do sleep 0.5; done
 	@echo "Reset complete"
 
-reset-textsearch:
-	docker compose down
-	$(TEXTSEARCH_COMPOSE) down -v
-	$(TEXTSEARCH_COMPOSE) up -d --build
-	@until $(TEXTSEARCH_COMPOSE) exec db pg_isready -U pginbox -d pginbox -q; do sleep 0.5; done
-	@echo "Reset complete with pg_textsearch"
-
 pgcli:
 	env -u DSN pgcli "$(DSN)"
-
-smoke-textsearch:
-	psql $(DSN) -f db/pg_textsearch_smoke.sql
 
 logs:
 	docker compose logs -f db
