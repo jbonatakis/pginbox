@@ -46,6 +46,7 @@ import type {
   ThreadFollowStatesRequest,
   ThreadFollowStatesResponse,
   ThreadProgress,
+  ThreadSearchScope,
   TopSender,
   UserEmailsResponse,
 } from "shared/api";
@@ -96,6 +97,7 @@ export interface ListThreadsParams {
   limit?: number;
   list?: string;
   q?: string;
+  searchIn?: ThreadSearchScope;
   to?: string | Date;
 }
 
@@ -502,6 +504,7 @@ export async function listThreads(
     limit: clampThreadLimit(params.limit),
     list: params.list,
     q: params.q,
+    search_in: params.searchIn,
     to: params.to,
   });
   return requestJson<Paginated<Thread>>(path, options);

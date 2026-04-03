@@ -1,3 +1,9 @@
+import {
+  DEFAULT_THREAD_SEARCH_SCOPE,
+  THREAD_SEARCH_SCOPES,
+  type ThreadSearchScope,
+} from "shared/api";
+
 export const THREADS_QUERY_DEFAULT_LIMIT = 25;
 export const THREADS_QUERY_MIN_LIMIT = 1;
 export const THREADS_QUERY_MAX_LIMIT = 100;
@@ -5,7 +11,7 @@ export const THREADS_RESTORE_SCROLL_PARAM = "_scrollY";
 export const THREAD_DETAIL_PAGE_PARAM = "page";
 const DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-const FILTER_PATCH_KEYS: Array<keyof ThreadsQueryPatch> = ["from", "limit", "list", "q", "to"];
+const FILTER_PATCH_KEYS: Array<keyof ThreadsQueryPatch> = ["from", "limit", "list", "q", "searchIn", "to"];
 
 export interface ThreadsQueryState {
   cursor?: string;
@@ -13,6 +19,7 @@ export interface ThreadsQueryState {
   limit: number;
   list?: string;
   q?: string;
+  searchIn: ThreadSearchScope;
   to?: string;
 }
 
@@ -22,6 +29,7 @@ export interface ThreadsQueryInput {
   limit?: number | null;
   list?: string | null;
   q?: string | null;
+  searchIn?: ThreadSearchScope | null;
   to?: Date | string | null;
 }
 
@@ -37,7 +45,7 @@ export interface ThreadsDetailContext {
 }
 
 export function createDefaultThreadsQueryState(): ThreadsQueryState {
-  return { limit: THREADS_QUERY_DEFAULT_LIMIT };
+  return { limit: THREADS_QUERY_DEFAULT_LIMIT, searchIn: DEFAULT_THREAD_SEARCH_SCOPE };
 }
 
 export function clampThreadsQueryLimit(limit?: number | null): number {
@@ -58,6 +66,7 @@ export function parseThreadsQuery(search: string | URLSearchParams): ThreadsQuer
     limit: parseOptionalNumber(params.get("limit")),
     list: params.get("list"),
     q: params.get("q") ?? params.get("search"),
+    searchIn: parseThreadSearchScope(params.get("search_in")),
     to: params.get("to"),
   });
 }
@@ -71,6 +80,7 @@ export function normalizeThreadsQueryState(
 ): ThreadsQueryState {
   const normalized: ThreadsQueryState = {
     limit: clampThreadsQueryLimit(state.limit),
+    searchIn: normalizeThreadSearchScope(state.searchIn),
   };
 
   const list = normalizeQueryText(state.list);
@@ -86,7 +96,7 @@ export function normalizeThreadsQueryState(
   if (q) normalized.q = q;
 
   const cursor = normalizeQueryText(state.cursor);
-  if (cursor) normalized.cursor = cursor;
+  if (cursor && !(normalized.searchIn === "body" && normalized.q)) normalized.cursor = cursor;
 
   return normalized;
 }
@@ -183,6 +193,7 @@ export function serializeThreadsQuery(state: ThreadsQueryInput): string {
   if (normalized.from) params.set("from", normalized.from);
   if (normalized.to) params.set("to", normalized.to);
   if (normalized.q) params.set("q", normalized.q);
+  if (normalized.searchIn !== DEFAULT_THREAD_SEARCH_SCOPE) params.set("search_in", normalized.searchIn);
   if (normalized.cursor) params.set("cursor", normalized.cursor);
   if (normalized.limit !== THREADS_QUERY_DEFAULT_LIMIT) {
     params.set("limit", String(normalized.limit));
@@ -196,6 +207,19 @@ function normalizeQueryText(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseThreadSearchScope(value: string | null): ThreadSearchScope | undefined {
+  if (value === null) return undefined;
+  return normalizeThreadSearchScope(value);
+}
+
+function normalizeThreadSearchScope(value: unknown): ThreadSearchScope {
+  if (typeof value === "string" && THREAD_SEARCH_SCOPES.includes(value as ThreadSearchScope)) {
+    return value as ThreadSearchScope;
+  }
+
+  return DEFAULT_THREAD_SEARCH_SCOPE;
 }
 
 function normalizeQueryDate(value: unknown): string | undefined {

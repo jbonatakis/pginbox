@@ -119,6 +119,12 @@ describe("API validation (4xx)", () => {
     expect(json).toEqual({ message: "Invalid cursor", code: "BAD_REQUEST" });
   });
 
+  it("GET /threads?search_in=bad returns 400", async () => {
+    const { status, json } = await get("/threads?search_in=bad");
+    expect(status).toBe(400);
+    expect(json).toEqual({ message: "search_in must be one of: subject, body" });
+  });
+
   it("GET /people?cursor=bad returns 400 with BAD_REQUEST code", async () => {
     const { status, json } = await get("/people?cursor=bad");
     expect(status).toBe(400);
@@ -287,6 +293,114 @@ describe("API not-found and success (require DB)", () => {
     expect(json).toHaveProperty("items");
     expect(json).toHaveProperty("nextCursor");
     expect(Array.isArray((json as { items: unknown[] }).items)).toBe(true);
+  });
+
+  it("GET /threads?search_in=body returns one row per matching thread with match metadata", async () => {
+    const listName = `test-body-search-${uid()}`;
+    const rawThreadId = `test-body-search-thread-${uid()}`;
+    const stableId = stableThreadId();
+
+    const listRow = await db
+      .insertInto("lists")
+      .values({ name: listName })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    try {
+      await db
+        .insertInto("threads")
+        .values({
+          id: stableId,
+          thread_id: rawThreadId,
+          list_id: listRow.id,
+          subject: "Search fixture thread",
+          started_at: new Date(Date.UTC(2026, 3, 1, 10, 0, 0)),
+          last_activity_at: new Date(Date.UTC(2026, 3, 2, 10, 0, 0)),
+          message_count: 3,
+        })
+        .execute();
+
+      const insertedMessages = await db
+        .insertInto("messages")
+        .values([
+          {
+            message_id: `body-search-best-${uid()}@example.com`,
+            thread_id: rawThreadId,
+            list_id: listRow.id,
+            sent_at: new Date(Date.UTC(2026, 3, 1, 10, 0, 0)),
+            from_name: "Relevant Author",
+            from_email: `best-${uid()}@example.com`,
+            subject: "First match",
+            body: "Logical replication failover needs clearer promotion semantics for subscribers.",
+            in_reply_to: null,
+            refs: null,
+            sent_at_approx: false,
+          },
+          {
+            message_id: `body-search-second-${uid()}@example.com`,
+            thread_id: rawThreadId,
+            list_id: listRow.id,
+            sent_at: new Date(Date.UTC(2026, 3, 1, 11, 0, 0)),
+            from_name: "Follow Up",
+            from_email: `follow-up-${uid()}@example.com`,
+            subject: "Second match",
+            body: "We should revisit replication failover behavior before the next release.",
+            in_reply_to: null,
+            refs: null,
+            sent_at_approx: false,
+          },
+          {
+            message_id: `body-search-noise-${uid()}@example.com`,
+            thread_id: rawThreadId,
+            list_id: listRow.id,
+            sent_at: new Date(Date.UTC(2026, 3, 1, 12, 0, 0)),
+            from_name: "Noise",
+            from_email: `noise-${uid()}@example.com`,
+            subject: "Non match",
+            body: "This message is about vacuum tuning and autovacuum settings.",
+            in_reply_to: null,
+            refs: null,
+            sent_at_approx: false,
+          },
+        ])
+        .returning(["id", "body"])
+        .execute();
+
+      const bestMessageId = String(insertedMessages[0]!.id);
+      const { status, json } = await get(
+        `/threads?search_in=body&list=${encodeURIComponent(listName)}&q=${encodeURIComponent("logical replication failover")}`
+      );
+
+      expect(status).toBe(200);
+      expect(json).toEqual({
+        items: [
+          {
+            id: stableId,
+            thread_id: rawThreadId,
+            list_id: listRow.id,
+            subject: "Search fixture thread",
+            started_at: "2026-04-01T10:00:00.000Z",
+            last_activity_at: "2026-04-02T10:00:00.000Z",
+            message_count: 3,
+            list_name: listName,
+            searchMatch: {
+              kind: "body",
+              messageId: bestMessageId,
+              preview: "Logical replication failover needs clearer promotion semantics for subscribers.",
+              previewTruncated: false,
+              sentAt: "2026-04-01T10:00:00.000Z",
+              fromName: "Relevant Author",
+              matchingMessageCount: 2,
+            },
+          },
+        ],
+        nextCursor: null,
+      });
+    } finally {
+      await db.deleteFrom("messages").where("thread_id", "=", rawThreadId).execute();
+      await db.deleteFrom("threads").where("id", "=", stableId).execute();
+      await db.deleteFrom("lists").where("id", "=", listRow.id).execute();
+    }
   });
 
   it("GET /analytics/summary returns 200 with counts", async () => {

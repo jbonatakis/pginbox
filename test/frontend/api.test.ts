@@ -6,6 +6,7 @@ import {
   getMessagePermalink,
   getTrackedThreadCounts,
   getThreadProgress,
+  listThreads,
   listFollowedThreads,
   listMyThreads,
   markThreadRead,
@@ -116,6 +117,32 @@ afterEach(() => {
 });
 
 describe("frontend tracked-thread api helpers", () => {
+  it("serializes thread list search scope on the threads route", async () => {
+    const responseBody = {
+      items: [],
+      nextCursor: null,
+    };
+
+    const fetchStub = installFetchStub(async (_input, init) => {
+      expect(init?.method).toBe("GET");
+      expect(init?.credentials).toBeUndefined();
+      return jsonResponse(responseBody);
+    });
+
+    await expect(
+      listThreads({
+        list: "pgsql-hackers",
+        q: "logical replication failover",
+        searchIn: "body",
+        limit: 25,
+      })
+    ).resolves.toEqual(responseBody);
+
+    expect(fetchStub.calls[0]?.url).toBe(
+      "/api/threads?limit=25&list=pgsql-hackers&q=logical+replication+failover&search_in=body"
+    );
+  });
+
   it("fetches message permalink resolution on the dedicated resolver route", async () => {
     const responseBody = {
       messageId: "123",

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { List } from "shared/api";
+  import { DEFAULT_THREAD_SEARCH_SCOPE, type List, type ThreadSearchScope } from "shared/api";
   import { createEventDispatcher, onMount } from "svelte";
   import { THREADS_QUERY_DEFAULT_LIMIT } from "../../lib/state/threadsQuery";
 
@@ -16,6 +16,7 @@
   export let listOptions: List[] = [];
   export let listsErrorMessage: string | null = null;
   export let searchQuery = "";
+  export let searchIn: ThreadSearchScope = DEFAULT_THREAD_SEARCH_SCOPE;
   export let selectedList: string | undefined;
   export let toDate = "";
 
@@ -26,11 +27,26 @@
       limit: number;
       list: string | null;
       q: string | null;
+      searchIn: ThreadSearchScope;
       to: string | null;
     };
   }>();
 
+  const SEARCH_SCOPE_OPTIONS: Array<{ description: string; label: string; value: ThreadSearchScope }> = [
+    {
+      value: "subject",
+      label: "Subject",
+      description: "Search subjects only",
+    },
+    {
+      value: "body",
+      label: "Message body",
+      description: "Search message contents only",
+    },
+  ];
+
   let searchDraft = searchQuery;
+  let searchInDraft = searchIn;
   let selectedListDraft = selectedList ?? "";
   let fromDateDraft = fromDate;
   let toDateDraft = toDate;
@@ -121,6 +137,7 @@
       fromDate,
       limit,
       searchQuery,
+      searchIn,
       selectedList: selectedList ?? null,
       toDate,
     });
@@ -135,6 +152,7 @@
       fromDateBadInput = false;
       limitDraft = limit;
       searchDraft = searchQuery;
+      searchInDraft = searchIn;
       selectedListDraft = selectedList ?? "";
       toDateDraft = toDate;
       toDateBadInput = false;
@@ -177,6 +195,7 @@
       limit: defaultLimit,
       list: null,
       q: null,
+      searchIn: searchInDraft,
       to: null,
     });
   };
@@ -187,6 +206,10 @@
 
   const toggleExpanded = (): void => {
     isExpanded = !isExpanded;
+  };
+
+  const setSearchInDraft = (value: ThreadSearchScope): void => {
+    searchInDraft = value;
   };
 
   const normalizeFromDateDraft = (event?: Event): void => {
@@ -261,6 +284,7 @@
       limit: Number.isInteger(parsedLimit) ? parsedLimit : limit,
       list: normalizedDraftText(selectedListDraft),
       q: normalizedDraftText(searchDraft),
+      searchIn: searchInDraft,
       to: normalizedDraftText(normalizeDateDraftInput(toDateDraft)),
     });
   };
@@ -318,12 +342,27 @@
   >
     <div class="field search-field">
       <label for="threads-search">Search threads</label>
+      <div class="search-scope" role="group" aria-label="Search scope">
+        {#each SEARCH_SCOPE_OPTIONS as option}
+          <button
+            type="button"
+            class="scope-button"
+            class:active={searchInDraft === option.value}
+            aria-pressed={searchInDraft === option.value}
+            disabled={isBusy}
+            on:click={() => setSearchInDraft(option.value)}
+          >
+            <span>{option.label}</span>
+            <small>{option.description}</small>
+          </button>
+        {/each}
+      </div>
       <div class="search-form">
         <input
           id="threads-search"
           type="search"
           bind:value={searchDraft}
-          placeholder="Search threads"
+          placeholder={searchInDraft === "body" ? "Search message bodies" : "Search thread subjects"}
           disabled={isBusy}
         />
         <button type="submit" class="search-button" disabled={isBusy || hasInvalidDateDraft}>Search</button>
@@ -547,6 +586,52 @@
     gap: 0.5rem;
   }
 
+  .search-scope {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .scope-button {
+    border: 1px solid var(--border);
+    border-radius: 0.55rem;
+    background: #fff;
+    color: var(--text);
+    display: grid;
+    gap: 0.08rem;
+    justify-items: start;
+    padding: 0.5rem 0.6rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .scope-button span {
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .scope-button small {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    line-height: 1.2;
+  }
+
+  .scope-button.active {
+    border-color: rgba(111, 159, 221, 0.76);
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  .scope-button.active small {
+    color: var(--primary);
+  }
+
+  .scope-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+
   .search-button {
     border: 1px solid rgba(111, 159, 221, 0.76);
     border-radius: 0.45rem;
@@ -668,6 +753,10 @@
     }
 
     .search-form {
+      grid-template-columns: 1fr;
+    }
+
+    .search-scope {
       grid-template-columns: 1fr;
     }
 

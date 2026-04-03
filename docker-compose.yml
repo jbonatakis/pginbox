@@ -1,6 +1,10 @@
 services:
   db:
-    image: postgres:18
+    image: pginbox-pg-textsearch:local
+    build:
+      context: .
+      dockerfile: Dockerfile.pg_textsearch
+    command: ["postgres", "-c", "shared_preload_libraries=pg_textsearch"]
     restart: unless-stopped
     environment:
       POSTGRES_DB: pginbox

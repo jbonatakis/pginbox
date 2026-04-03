@@ -42,3 +42,17 @@ PostgreSQL's mailing lists hold an enormous amount of project history: design de
 ## Status
 
 pginbox is actively evolving. The core archive and API are in place, and the frontend experience is being built out. The long-term goal: make PostgreSQL mailing-list history easy to search, understand, and learn from.
+
+## Local `pg_textsearch`
+
+The default local Postgres service in this repo now includes [`timescale/pg_textsearch`](https://github.com/timescale/pg_textsearch).
+
+```bash
+make down
+docker compose up -d --build
+make migrate
+make smoke-textsearch
+```
+
+That uses `Dockerfile.pg_textsearch` in the default local compose stack, with `pg_textsearch` preloaded and available on `localhost:5499`.
+The separate `docker-compose.pg_textsearch.yml` override is still available if you want an isolated second local stack.
