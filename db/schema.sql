@@ -16,20 +16,6 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: pageinspect; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pageinspect WITH SCHEMA public;
-
-
---
--- Name: EXTENSION pageinspect; Type: COMMENT; Schema: -; Owner: -
---
-
-COMMENT ON EXTENSION pageinspect IS 'inspect the contents of database pages at a low level';
-
-
---
 -- Name: pg_textsearch; Type: EXTENSION; Schema: -; Owner: -
 --
 
