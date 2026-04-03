@@ -25,6 +25,7 @@ describe("threads query state", () => {
       limit: 100,
       list: "pgsql-hackers",
       q: "vacuum",
+      searchIn: "subject",
       to: "2025-01-04",
     });
   });
@@ -50,11 +51,12 @@ describe("threads query state", () => {
       limit: 50,
       list: "pgsql-hackers",
       q: "vacuum freeze",
+      searchIn: "body",
       to: "2025-01-04",
     });
 
     expect(serialized).toBe(
-      "?list=pgsql-hackers&from=2025-01-03&to=2025-01-04&q=vacuum+freeze&cursor=c42&limit=50"
+      "?list=pgsql-hackers&from=2025-01-03&to=2025-01-04&q=vacuum+freeze&search_in=body&limit=50"
     );
   });
 
@@ -68,6 +70,7 @@ describe("threads query state", () => {
     expect(parseThreadsQuery("?search=how%20does%20vacuum%20work").q).toBe(
       "how does vacuum work"
     );
+    expect(parseThreadsQuery("?q=wal%20receiver&search_in=body").searchIn).toBe("body");
     expect(serializeThreadsQuery({ q: "find messages about index bloat" })).toBe(
       "?q=find+messages+about+index+bloat"
     );
@@ -82,6 +85,7 @@ describe("threads query state", () => {
       limit: 80,
       list: "pgsql-hackers",
       q: "wal sender",
+      searchIn: "subject",
     });
 
     const nextSearch = updateThreadsSearch("?list=pgsql-hackers&limit=25&cursor=abc", {
@@ -99,6 +103,7 @@ describe("threads query state", () => {
     expect(nextState).toEqual({
       limit: 50,
       list: "pgsql-hackers",
+      searchIn: "subject",
     });
   });
 
@@ -110,6 +115,17 @@ describe("threads query state", () => {
       cursor: "cursor_2",
       limit: 25,
       list: "pgsql-hackers",
+      searchIn: "subject",
+    });
+  });
+
+  it("drops cursor state for body search result windows", () => {
+    const parsed = parseThreadsQuery("?q=logical%20replication&search_in=body&cursor=cursor_1");
+
+    expect(parsed).toEqual({
+      limit: 25,
+      q: "logical replication",
+      searchIn: "body",
     });
   });
 
@@ -121,6 +137,7 @@ describe("threads query state", () => {
         cursor: "c42",
         limit: 25,
         list: "pgsql-hackers",
+        searchIn: "subject",
       },
       restoreScrollY: 1440,
     });

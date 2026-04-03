@@ -12,6 +12,20 @@ export interface List {
 }
 
 // ---- Threads ----
+export const THREAD_SEARCH_SCOPES = ["subject", "body"] as const;
+export type ThreadSearchScope = (typeof THREAD_SEARCH_SCOPES)[number];
+export const DEFAULT_THREAD_SEARCH_SCOPE: ThreadSearchScope = "subject";
+
+export interface ThreadSearchMatch {
+  kind: "body";
+  messageId: string;
+  preview: string | null;
+  previewTruncated: boolean;
+  sentAt: string | null;
+  fromName: string | null;
+  matchingMessageCount: number;
+}
+
 export interface Thread {
   id: string;
   thread_id: string;
@@ -22,6 +36,7 @@ export interface Thread {
   message_count: number;
   list_name: string;
   is_followed?: boolean;
+  searchMatch?: ThreadSearchMatch;
 }
 
 export interface ThreadFollowStatesRequest {

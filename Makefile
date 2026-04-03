@@ -6,10 +6,10 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range reconcile reconcile-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup my-threads-backfill codegen test test-server test-frontend test-ingestion test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
+.PHONY: up down reset pgcli logs ingest backfill backfill-range reconcile reconcile-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup my-threads-backfill codegen test test-server test-frontend test-ingestion test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
 
 up:
-	docker compose up -d
+	docker compose up -d --build
 	@echo "Waiting for Postgres..."
 	@until docker compose exec db pg_isready -U pginbox -d pginbox -q; do sleep 0.5; done
 	@echo "Ready: $(DSN)"
@@ -19,7 +19,7 @@ down:
 
 reset:
 	docker compose down -v
-	docker compose up -d
+	docker compose up -d --build
 	@until docker compose exec db pg_isready -U pginbox -d pginbox -q; do sleep 0.5; done
 	@echo "Reset complete"
 
