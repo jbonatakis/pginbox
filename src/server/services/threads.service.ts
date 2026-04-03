@@ -135,9 +135,109 @@ async function listThreadsByBodySearch(query: ThreadsQuery): Promise<{ items: Bo
   const limit = Math.min(Math.max(1, query.limit), 100);
   const candidateLimit = Math.max(limit * BODY_SEARCH_CANDIDATE_MULTIPLIER, BODY_SEARCH_MIN_CANDIDATES);
   const bm25Query = sql`to_bm25query(${query.q!}, 'idx_messages_body_search_bm25')`;
-  const filters = [sql`m.body_search <> ''`];
+  const threadFilters: unknown[] = [];
 
-  if (query.list) filters.push(sql`l.name = ${query.list}`);
+  if (query.from) threadFilters.push(sql`last_activity_at >= ${query.from}`);
+  if (query.to) threadFilters.push(sql`last_activity_at <= ${query.to}`);
+
+  if (query.list) {
+    const listRow = await db
+      .selectFrom("lists")
+      .select(["id", "name"])
+      .where("name", "=", query.list)
+      .executeTakeFirst();
+
+    if (!listRow) {
+      return { items: [], nextCursor: null };
+    }
+
+    const result = await sql<BodySearchThreadRow>`
+      WITH scoped_messages AS MATERIALIZED (
+        SELECT
+          id,
+          thread_id,
+          list_id,
+          sent_at,
+          from_name,
+          body,
+          body_search
+        FROM messages
+        WHERE list_id = ${listRow.id}
+          AND body_search <> ''
+      ),
+      candidates AS (
+        SELECT
+          t.id,
+          t.thread_id,
+          t.list_id,
+          t.subject,
+          t.started_at,
+          t.last_activity_at,
+          t.message_count,
+          ${listRow.name}::text AS list_name,
+          m.id AS search_match_message_id,
+          m.sent_at AS search_match_sent_at,
+          m.from_name AS search_match_from_name,
+          nullif(left(regexp_replace(coalesce(m.body, ''), '[[:space:]]+', ' ', 'g'), 240), '') AS search_match_preview,
+          length(regexp_replace(coalesce(m.body, ''), '[[:space:]]+', ' ', 'g')) > 240 AS search_match_preview_truncated,
+          m.body_search <@> ${bm25Query} AS score
+        FROM scoped_messages m
+        JOIN threads t
+          ON t.thread_id = m.thread_id
+         AND t.list_id = m.list_id
+        WHERE m.body_search <@> ${bm25Query} < 0
+        ${threadFilters.length > 0 ? sql`AND ${sql.join(threadFilters as any[], sql` AND `)}` : sql``}
+        ORDER BY score
+        LIMIT ${candidateLimit}
+      ),
+      ranked AS (
+        SELECT
+          c.id,
+          c.thread_id,
+          c.list_id,
+          c.subject,
+          c.started_at,
+          c.last_activity_at,
+          c.message_count,
+          c.list_name,
+          c.search_match_message_id,
+          c.search_match_sent_at,
+          c.search_match_from_name,
+          c.search_match_preview,
+          c.search_match_preview_truncated,
+          count(*) OVER (PARTITION BY c.thread_id)::integer AS search_match_matching_message_count,
+          row_number() OVER (
+            PARTITION BY c.thread_id
+            ORDER BY c.score ASC, c.search_match_sent_at DESC NULLS LAST, c.search_match_message_id ASC
+          ) AS rn,
+          c.score
+        FROM candidates c
+      )
+      SELECT
+        id,
+        thread_id,
+        list_id,
+        subject,
+        started_at,
+        last_activity_at,
+        message_count,
+        list_name,
+        search_match_message_id,
+        search_match_sent_at,
+        search_match_from_name,
+        search_match_preview,
+        search_match_preview_truncated,
+        search_match_matching_message_count
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY score ASC, last_activity_at DESC NULLS LAST, thread_id ASC
+      LIMIT ${limit}
+    `.execute(db);
+
+    return { items: result.rows, nextCursor: null };
+  }
+
+  const filters = [sql`m.body_search <> ''`];
   if (query.from) filters.push(sql`t.last_activity_at >= ${query.from}`);
   if (query.to) filters.push(sql`t.last_activity_at <= ${query.to}`);
 
@@ -163,7 +263,8 @@ async function listThreadsByBodySearch(query: ThreadsQuery): Promise<{ items: Bo
         ON t.thread_id = m.thread_id
       JOIN lists l
         ON l.id = t.list_id
-      WHERE ${sql.join(filters, sql` AND `)}
+      WHERE m.body_search <@> ${bm25Query} < 0
+        AND ${sql.join(filters, sql` AND `)}
       ORDER BY m.body_search <@> ${bm25Query}
       LIMIT ${candidateLimit}
     ),
