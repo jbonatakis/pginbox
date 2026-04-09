@@ -15,18 +15,15 @@ export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
 export interface AnalyticsByDow {
   dow: number | null;
-  list_id: number | null;
   messages: Int8 | null;
 }
 
 export interface AnalyticsByHour {
   hour: number | null;
-  list_id: number | null;
   messages: Int8 | null;
 }
 
 export interface AnalyticsByMonth {
-  list_id: number | null;
   messages: Int8 | null;
   month: number | null;
   year: number | null;
@@ -38,9 +35,8 @@ export interface AnalyticsMessagesLast24h {
 }
 
 export interface AnalyticsSummary {
-  list_id: number | null;
   months_ingested: Int8 | null;
-  months_set: string[] | null;
+  singleton_id: number | null;
   total_messages: Int8 | null;
   total_threads: Int8 | null;
   unique_senders: Int8 | null;
@@ -49,7 +45,6 @@ export interface AnalyticsSummary {
 export interface AnalyticsTopSenders {
   from_email: string | null;
   from_name: string | null;
-  list_id: number | null;
   message_count: Int8 | null;
 }
 
@@ -94,9 +89,8 @@ export interface Lists {
 }
 
 export interface Messages {
-  archive_month: Timestamp | null;
+  archive_month: ColumnType<Date, Date | string, Date | string> | null;
   body: string | null;
-  body_search: Generated<string | null>;
   from_email: string | null;
   from_name: string | null;
   id: Generated<Int8>;
@@ -171,14 +165,6 @@ export interface ThreadTracking {
   user_id: Int8;
 }
 
-export interface UserEmailClaims {
-  claim_kind: string;
-  created_at: Generated<Timestamp>;
-  email: string;
-  id: Generated<Int8>;
-  user_id: Int8;
-}
-
 export interface UserEmails {
   created_at: Generated<Timestamp>;
   email: string;
@@ -186,6 +172,14 @@ export interface UserEmails {
   is_primary: Generated<boolean>;
   user_id: Int8;
   verified_at: Timestamp;
+}
+
+export interface UserEmailClaims {
+  claim_kind: string;
+  created_at: Generated<Timestamp>;
+  email: string;
+  id: Generated<Int8>;
+  user_id: Int8;
 }
 
 export interface Users {

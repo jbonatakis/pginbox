@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { List, Thread, ThreadSearchScope } from "shared/api";
+  import type { List, Thread } from "shared/api";
   import { onDestroy, onMount } from "svelte";
   import EmptyState from "../components/EmptyState.svelte";
   import ErrorState from "../components/ErrorState.svelte";
@@ -34,7 +34,6 @@
     limit: number;
     list: string | null;
     q: string | null;
-    searchIn: ThreadSearchScope;
     to: string | null;
   };
 
@@ -66,7 +65,6 @@
   $: detailContextSearch = serializeThreadsQuery(queryState);
   $: fromDate = toDateInputValue(queryState.from);
   $: hasActiveCursor = typeof queryState.cursor === "string";
-  $: isBodySearchActive = queryState.searchIn === "body" && searchQuery.length > 0;
   $: hasPreviousPage = pageIndex > 0;
   $: isBusy = status === "loading" || isRefreshing;
   $: isInitialLoad = status === "idle" || (status === "loading" && threads.length === 0);
@@ -285,7 +283,6 @@
           limit: clampThreadsQueryLimit(state.limit),
           list: state.list,
           q: state.q,
-          searchIn: state.searchIn,
           to: state.to,
         },
         { signal: requestController.signal }
@@ -426,7 +423,6 @@
       limit: THREADS_QUERY_DEFAULT_LIMIT,
       list: null,
       q: null,
-      searchIn: queryState.searchIn,
       to: null,
     });
     commitQueryState(nextState, "replace");
@@ -453,7 +449,6 @@
       limit: clampThreadsQueryLimit(event.detail.limit),
       list: event.detail.list,
       q: event.detail.q,
-      searchIn: event.detail.searchIn,
       to: event.detail.to,
     });
   };
@@ -531,7 +526,6 @@
   <ThreadsFilters
     defaultLimit={THREADS_QUERY_DEFAULT_LIMIT}
     searchQuery={searchQuery}
-    searchIn={queryState.searchIn}
     selectedList={queryState.list}
     fromDate={fromDate}
     toDate={toDate}
@@ -563,17 +557,15 @@
       </div>
     </div>
   {:else}
-    {#if !isBodySearchActive}
-      <ThreadsCursorControls
-        hasActiveCursor={hasActiveCursor}
-        {hasPreviousPage}
-        hasNextPage={nextCursor !== null}
-        isBusy={isBusy}
-        on:next={loadNextPage}
-        on:previous={loadPreviousPage}
-        on:reset={resetCursor}
-      />
-    {/if}
+    <ThreadsCursorControls
+      hasActiveCursor={hasActiveCursor}
+      {hasPreviousPage}
+      hasNextPage={nextCursor !== null}
+      isBusy={isBusy}
+      on:next={loadNextPage}
+      on:previous={loadPreviousPage}
+      on:reset={resetCursor}
+    />
 
     {#if isRefreshing}
       <p class="inline-status" role="status">Refreshing thread results...</p>
@@ -611,10 +603,8 @@
     {#if status === "empty"}
       <div class="status-block">
         <EmptyState
-          title={isBodySearchActive ? "No thread messages matched this query" : "No threads matched this filter set"}
-          message={isBodySearchActive
-            ? "Try a broader phrase, a different list, or switch back to subject search."
-            : "Try widening the date range, clearing filters, or choosing a different list."}
+          title="No threads matched this filter set"
+          message="Try widening the date range, clearing filters, or choosing a different list."
         />
         <button class="reset-button" type="button" on:click={clearFilters}>Clear filters</button>
       </div>

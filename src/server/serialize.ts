@@ -19,7 +19,6 @@ import type {
   ThreadProgress,
   ThreadMessagePagination,
   Thread,
-  ThreadSearchMatch,
   ThreadWithMessages,
   UserEmail,
   UserEmailsResponse,
@@ -129,12 +128,6 @@ type ThreadRow = {
   message_count: number;
   list_name: string;
   is_followed?: boolean | null;
-  search_match_message_id?: bigint | number | string | null;
-  search_match_sent_at?: Date | string | null;
-  search_match_from_name?: string | null;
-  search_match_preview?: string | null;
-  search_match_preview_truncated?: boolean | null;
-  search_match_matching_message_count?: number | null;
 };
 
 export function toThread(row: ThreadRow): Thread {
@@ -151,19 +144,6 @@ export function toThread(row: ThreadRow): Thread {
 
   if (typeof row.is_followed === "boolean") {
     thread.is_followed = row.is_followed;
-  }
-
-  if (row.search_match_message_id != null) {
-    const searchMatch: ThreadSearchMatch = {
-      kind: "body",
-      messageId: bigintToString(row.search_match_message_id),
-      preview: row.search_match_preview ?? null,
-      previewTruncated: row.search_match_preview_truncated === true,
-      sentAt: dateToIso(row.search_match_sent_at),
-      fromName: row.search_match_from_name ?? null,
-      matchingMessageCount: Math.max(1, row.search_match_matching_message_count ?? 1),
-    };
-    thread.searchMatch = searchMatch;
   }
 
   return thread;

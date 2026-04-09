@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import type { Thread } from "shared/api";
   import { withThreadsDetailHistoryContext } from "../../lib/threadDetailNavigation";
-  import { isClientNavigationEvent, messagePermalinkPath, onLinkClick, threadDetailPath } from "../../router";
+  import { isClientNavigationEvent, onLinkClick, threadDetailPath } from "../../router";
 
   export let contextSearch = "";
   export let items: Thread[] = [];
@@ -47,7 +47,6 @@
   };
 
   const threadPath = (threadId: string): string => threadDetailPath(threadId);
-  const messagePath = (messageId: string): string => messagePermalinkPath(messageId);
 
   const persistCurrentListContext = (): void => {
     if (typeof window === "undefined") return;
@@ -69,7 +68,7 @@
     window.history.replaceState(nextState, "", currentUrl);
   };
 
-  const handleNavigationClick = (event: MouseEvent, path: string): void => {
+  const handleThreadClick = (event: MouseEvent, path: string): void => {
     if (!isClientNavigationEvent(event)) return;
 
     persistCurrentListContext();
@@ -94,11 +93,6 @@
       : thread.is_followed === true
         ? "Unfollow thread"
         : "Follow thread";
-
-  const matchingMessageLabel = (count: number): string =>
-    `${messageCountFormatter.format(count)} matching message${count === 1 ? "" : "s"}`;
-
-  const previewText = (preview: string): string => preview.trimEnd();
 </script>
 
 <div class="table-wrap">
@@ -121,34 +115,13 @@
         <tr>
           <td class="subject" data-label="Subject">
             <div class="subject-row">
-              <a href={path} on:click={(event) => handleNavigationClick(event, path)}
+              <a href={path} on:click={(event) => handleThreadClick(event, path)}
                 >{subjectLabel(thread.subject)}</a
               >
               {#if canManageFollows && thread.is_followed === true}
                 <span class="follow-badge">Followed</span>
               {/if}
             </div>
-            {#if thread.searchMatch?.kind === "body"}
-              {@const matchPath = messagePath(thread.searchMatch.messageId)}
-              <div class="search-match">
-                <p class="search-match-label">Best matching message</p>
-                {#if thread.searchMatch.preview}
-                  <p class="search-match-preview">
-                    {previewText(thread.searchMatch.preview)}{thread.searchMatch.previewTruncated ? "..." : ""}
-                  </p>
-                {/if}
-                <div class="search-match-meta">
-                  <span>{formatDateTime(thread.searchMatch.sentAt)}</span>
-                  {#if thread.searchMatch.fromName}
-                    <span>{thread.searchMatch.fromName}</span>
-                  {/if}
-                  <span>{matchingMessageLabel(thread.searchMatch.matchingMessageCount)}</span>
-                  <a href={matchPath} on:click={(event) => handleNavigationClick(event, matchPath)}>
-                    Jump to match
-                  </a>
-                </div>
-              </div>
-            {/if}
           </td>
           <td data-label="List">{listLabel(thread.list_name)}</td>
           <td data-label="Last activity">{formatDateTime(thread.last_activity_at)}</td>
@@ -277,55 +250,6 @@
     text-align: right;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
-  }
-
-  .search-match {
-    display: grid;
-    gap: 0.22rem;
-    margin-top: 0.45rem;
-  }
-
-  .search-match-label {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-  }
-
-  .search-match-preview {
-    margin: 0;
-    color: var(--text-subtle);
-    font-size: 0.82rem;
-    font-style: italic;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-    padding: 0.55rem 0.7rem;
-    border-left: 3px solid rgba(111, 159, 221, 0.76);
-    border-radius: 0 0.55rem 0.55rem 0;
-    background: var(--surface-muted);
-    display: -webkit-box;
-    line-clamp: 3;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .search-match-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    color: var(--text-muted);
-    font-size: 0.77rem;
-  }
-
-  .search-match-meta a {
-    color: var(--primary);
-    font-weight: 700;
-    text-decoration-thickness: 1px;
-    text-underline-offset: 2px;
   }
 
   .follow-column,

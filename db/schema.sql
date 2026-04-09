@@ -16,20 +16,6 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: pg_textsearch; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pg_textsearch WITH SCHEMA public;
-
-
---
--- Name: EXTENSION pg_textsearch; Type: COMMENT; Schema: -; Owner: -
---
-
-COMMENT ON EXTENSION pg_textsearch IS 'Full-text search with BM25 ranking';
-
-
---
 -- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -142,8 +128,7 @@ CREATE TABLE public.messages (
     refs text[],
     body text,
     sent_at_approx boolean DEFAULT false NOT NULL,
-    archive_month date,
-    body_search text GENERATED ALWAYS AS ("left"(COALESCE(body, ''::text), 200000)) STORED
+    archive_month date
 );
 
 
@@ -1031,13 +1016,6 @@ CREATE INDEX idx_email_verification_tokens_user_id ON public.email_verification_
 
 
 --
--- Name: idx_messages_body_search_bm25; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_messages_body_search_bm25 ON public.messages USING bm25 (body_search) WITH (text_config=english);
-
-
---
 -- Name: idx_messages_from_email; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1382,5 +1360,4 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260322000020'),
     ('20260322000021'),
     ('20260323000022'),
-    ('20260323000023'),
-    ('20260402000024');
+    ('20260323000023');

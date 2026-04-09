@@ -1,10 +1,5 @@
 import { Elysia, t } from "elysia";
-import {
-  DEFAULT_THREAD_MESSAGES_PAGE_SIZE,
-  DEFAULT_THREAD_SEARCH_SCOPE,
-  THREAD_SEARCH_SCOPES,
-  type ThreadSearchScope,
-} from "shared/api";
+import { DEFAULT_THREAD_MESSAGES_PAGE_SIZE } from "shared/api";
 import { toThread, toThreadDetail } from "../serialize";
 import { listThreads, getThread } from "../services/threads.service";
 
@@ -73,14 +68,6 @@ export function parseThreadsToDate(value: string | undefined): Date | null {
   return parseDate(value, "to");
 }
 
-function parseThreadSearchScope(value: string | undefined): ThreadSearchScope | null {
-  if (value === undefined) return DEFAULT_THREAD_SEARCH_SCOPE;
-  if (THREAD_SEARCH_SCOPES.includes(value as ThreadSearchScope)) {
-    return value as ThreadSearchScope;
-  }
-  return null;
-}
-
 export const threadsRoutes = new Elysia({ prefix: "/threads" })
   .get(
     "/",
@@ -91,12 +78,9 @@ export const threadsRoutes = new Elysia({ prefix: "/threads" })
       if (query.from !== undefined && from === null) return status(400, { message: "from must be a valid ISO date" });
       const to = parseThreadsToDate(query.to);
       if (query.to !== undefined && to === null) return status(400, { message: "to must be a valid ISO date" });
-      const searchIn = parseThreadSearchScope(query.search_in);
-      if (searchIn === null) return status(400, { message: "search_in must be one of: subject, body" });
       const result = await listThreads({
         list: query.list,
         q: query.q,
-        searchIn,
         from: from ?? undefined,
         to: to ?? undefined,
         cursor: query.cursor,
@@ -110,7 +94,6 @@ export const threadsRoutes = new Elysia({ prefix: "/threads" })
         q: t.Optional(t.String()),
         from: t.Optional(t.String()),
         to: t.Optional(t.String()),
-        search_in: t.Optional(t.String()),
         cursor: t.Optional(t.String()),
         limit: t.Optional(t.String()),
       }),
