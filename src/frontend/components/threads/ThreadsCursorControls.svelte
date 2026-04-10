@@ -5,6 +5,8 @@
   export let hasPreviousPage = false;
   export let hasNextPage = false;
   export let isBusy = false;
+  export let regionLabel = "Thread pagination";
+  export let statusLive = true;
 
   const dispatch = createEventDispatcher<{
     next: void;
@@ -25,8 +27,8 @@
   };
 </script>
 
-<section class="controls" aria-label="Thread pagination">
-  <p aria-live="polite">
+<section class="controls" aria-label={regionLabel}>
+  <p aria-live={statusLive ? "polite" : "off"}>
     {#if hasActiveCursor}
       Viewing a paged result window.
     {:else}
