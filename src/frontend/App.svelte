@@ -16,6 +16,7 @@
   import { buildAuthPath, getCurrentLocationRedirect } from "./lib/authRedirect";
   import { documentTitleForRoute } from "./lib/documentTitle";
   import { authStore } from "./lib/state/auth";
+  import { messageFontPreference } from "./lib/state/uiPreferences";
   import {
     accountPath,
     adminPath,
@@ -93,6 +94,12 @@
       closeMobileNav();
     }
   };
+
+  $: effectiveMessageFontPreference = $authStore.isAuthenticated ? $messageFontPreference : "mono";
+
+  $: if (typeof document !== "undefined") {
+    document.documentElement.dataset.messageFont = effectiveMessageFontPreference;
+  }
 
   $: if (typeof document !== "undefined") {
     const route = $currentRoute;
@@ -254,6 +261,19 @@
     --danger-border: #e7b4b8;
     --focus-ring-color: var(--primary);
     --focus-ring-shadow: rgba(11, 78, 162, 0.18);
+    --message-body-font:
+      "IBM Plex Mono",
+      "SFMono-Regular",
+      Menlo,
+      Consolas,
+      monospace;
+  }
+
+  :global(:root[data-message-font="sans"]) {
+    --message-body-font:
+      "IBM Plex Sans",
+      "Segoe UI",
+      sans-serif;
   }
 
   :global(*) {
