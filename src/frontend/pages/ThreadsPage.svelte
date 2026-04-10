@@ -617,6 +617,18 @@
         pendingThreadIds={pendingFollowThreadIds}
         on:togglefollow={handleToggleFollow}
       />
+
+      <ThreadsCursorControls
+        hasActiveCursor={hasActiveCursor}
+        {hasPreviousPage}
+        hasNextPage={nextCursor !== null}
+        isBusy={isBusy}
+        regionLabel="Thread pagination footer"
+        statusLive={false}
+        on:next={loadNextPage}
+        on:previous={loadPreviousPage}
+        on:reset={resetCursor}
+      />
     {/if}
   {/if}
 </section>
