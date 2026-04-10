@@ -469,6 +469,7 @@
     overflow-wrap: anywhere;
     word-break: break-word;
     min-width: 0;
+    font-family: var(--message-body-font);
   }
 
   .body-block--quote {

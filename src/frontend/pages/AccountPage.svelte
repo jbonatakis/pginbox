@@ -22,6 +22,7 @@
     TRACKED_THREAD_TABS,
     type TrackedThreadTab,
   } from "../lib/trackedThreads";
+  import { messageFontPreference } from "../lib/state/uiPreferences";
   import type { UserEmail } from "shared/api";
   import { accountPath, forgotPasswordPath, homePath, loginPath, navigate, onLinkClick } from "../router";
 
@@ -467,6 +468,48 @@
       />
     {/if}
 
+    <section class="preferences-panel" aria-labelledby="reading-preferences-heading">
+      <div class="preferences-copy">
+        <h2 id="reading-preferences-heading" class="section-heading">Reading Preferences</h2>
+        <p class="preferences-title">Message body font</p>
+        <p class="preferences-note">
+          This setting is saved only in this browser on this device. It does not sync across devices or browsers.
+        </p>
+      </div>
+
+      <fieldset class="font-preference-fieldset">
+        <legend class="visually-hidden">Message body font preference</legend>
+
+        <label
+          class:font-preference-option={true}
+          class:font-preference-option--selected={$messageFontPreference === "mono"}
+        >
+          <input
+            type="radio"
+            name="message-font-preference"
+            value="mono"
+            checked={$messageFontPreference === "mono"}
+            on:change={() => messageFontPreference.set("mono")}
+          />
+          <span>Monospace</span>
+        </label>
+
+        <label
+          class:font-preference-option={true}
+          class:font-preference-option--selected={$messageFontPreference === "sans"}
+        >
+          <input
+            type="radio"
+            name="message-font-preference"
+            value="sans"
+            checked={$messageFontPreference === "sans"}
+            on:change={() => messageFontPreference.set("sans")}
+          />
+          <span>Sans serif</span>
+        </label>
+      </fieldset>
+    </section>
+
     {#if currentUser.status === "pending_verification"}
       <div class="verification-notice" role="status">
         <p class="verification-notice-text">
@@ -832,6 +875,94 @@
     color: #1f6f43;
     font-size: 0.8rem;
     line-height: 1.3;
+  }
+
+  .preferences-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.85rem 1rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow:
+      0 18px 34px -28px rgba(16, 42, 67, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    min-width: 0;
+  }
+
+  .preferences-copy {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+    flex: 1 1 16rem;
+  }
+
+  .preferences-title {
+    margin: 0;
+    color: #102a43;
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .preferences-note {
+    margin: 0;
+    color: #627d98;
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+
+  .font-preference-fieldset {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .font-preference-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.2rem;
+    padding: 0.45rem 0.8rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: #486581;
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .font-preference-option--selected {
+    border-color: rgba(11, 78, 162, 0.34);
+    background: #e8f2ff;
+    color: #0b4ea2;
+  }
+
+  .font-preference-option input {
+    margin: 0;
+    accent-color: #0b4ea2;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .account-email-row {
@@ -1338,6 +1469,10 @@
       align-items: stretch;
     }
 
+    .preferences-panel {
+      align-items: flex-start;
+    }
+
     .account-strip-right {
       flex-direction: column;
       align-items: stretch;
@@ -1352,6 +1487,15 @@
     .ghost-link,
     .primary-button {
       width: 100%;
+      justify-content: center;
+    }
+
+    .font-preference-fieldset {
+      width: 100%;
+    }
+
+    .font-preference-option {
+      flex: 1 1 10rem;
       justify-content: center;
     }
 
