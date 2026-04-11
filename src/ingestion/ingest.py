@@ -67,6 +67,7 @@ _extract_message_ids = ingest_parse._extract_message_ids
 _normalize_email = ingest_parse._normalize_email
 _normalize_subject = ingest_parse._normalize_subject
 _strip_nul = ingest_parse._strip_nul
+parse_message_bytes = ingest_parse.parse_message_bytes
 parse_mbox = ingest_parse.parse_mbox
 
 load_dotenv()

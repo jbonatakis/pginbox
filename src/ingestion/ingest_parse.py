@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import email
 import email.header
 import email.utils
 import gzip
@@ -10,7 +11,7 @@ import mailbox
 import re
 import shutil
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -359,6 +360,102 @@ def _iter_mbox_messages(path: Path):
             sanitized_path.unlink(missing_ok=True)
 
 
+def _parse_message_record(
+    msg,
+    list_id: int,
+    *,
+    archive_month: date | None,
+    raw_bytes: bytes | None = None,
+):
+    warnings: list[str] = []
+
+    message_id = _extract_message_id(msg.get("Message-ID"))
+    if not message_id:
+        digest_source = raw_bytes if raw_bytes is not None else str(msg).encode()
+        digest = hashlib.sha256(digest_source).hexdigest()[:16]
+        message_id = f"<synthetic-{digest}@pginbox>"
+        warnings.append("synthetic_message_id")
+
+    sent_at = None
+    used_date_header = False
+    date_str = msg.get("Date") or ""
+    if date_str:
+        try:
+            sent_at = _clamp_tz(email.utils.parsedate_to_datetime(date_str))
+            used_date_header = True
+        except Exception:
+            pass
+    if sent_at is None:
+        from_line = msg.get_from() or ""
+        from_line_parts = from_line.split(" ", 1)
+        if len(from_line_parts) == 2:
+            try:
+                parsed = _clamp_tz(email.utils.parsedate_to_datetime(from_line_parts[1]))
+                if parsed.year > 2001:
+                    sent_at = parsed
+            except Exception:
+                pass
+    sent_at_approx = False
+    if archive_month is not None and used_date_header and sent_at is not None:
+        archive_month_dt = datetime.combine(archive_month, datetime.min.time()).replace(
+            tzinfo=timezone.utc
+        )
+        aware = sent_at if sent_at.tzinfo else sent_at.replace(tzinfo=timezone.utc)
+        if aware < archive_month_dt:
+            sent_at = archive_month_dt
+            sent_at_approx = True
+            warnings.append("approximate_sent_at")
+    if message_id in _SENT_AT_OVERRIDES:
+        sent_at = _SENT_AT_OVERRIDES[message_id]
+        sent_at_approx = False
+        warnings = [warning for warning in warnings if warning != "approximate_sent_at"]
+
+    from_name, from_email = "", ""
+    from_str = msg.get("From") or ""
+    if from_str:
+        name, addr = email.utils.parseaddr(_decode_header(from_str))
+        from_name = name or ""
+        from_email = _normalize_email(addr) if addr else ""
+
+    in_reply_to = _extract_message_id(msg.get("In-Reply-To"), prefer_last=True)
+    refs = _extract_message_ids(msg.get("References"))
+    thread_id = refs[0] if refs else message_id
+
+    body = _strip_nul(_decode_body(msg))
+    subject = _decode_subject(msg.get("Subject"))
+    return {
+        "message_id": _strip_nul(message_id),
+        "thread_id": _strip_nul(thread_id),
+        "list_id": list_id,
+        "archive_month": archive_month,
+        "sent_at": sent_at,
+        "from_name": _strip_nul(from_name),
+        "from_email": _strip_nul(from_email),
+        "subject": subject,
+        "in_reply_to": _strip_nul(in_reply_to) if in_reply_to else None,
+        "refs": [_strip_nul(r) for r in refs] if refs else None,
+        "body": body,
+        "sent_at_approx": sent_at_approx,
+        "_normalized_subject": _normalize_subject(subject),
+        "_attachments": _parse_attachments(msg),
+        "warnings": warnings,
+    }
+
+
+def parse_message_bytes(
+    raw_bytes: bytes,
+    list_id: int,
+    archive_month_hint: date | None = None,
+):
+    """Parse one raw RFC822 message into the normalized ingest record shape."""
+    return _parse_message_record(
+        email.message_from_bytes(raw_bytes),
+        list_id,
+        archive_month=archive_month_hint,
+        raw_bytes=raw_bytes,
+    )
+
+
 def parse_mbox(path: Path, list_id: int):
     """Yield message dicts parsed from an mbox file."""
     name = path.name[:-3] if path.name.endswith(".gz") else path.name
@@ -368,67 +465,4 @@ def parse_mbox(path: Path, list_id: int):
     for msg in _iter_mbox_messages(path):
         if not msg.keys():
             continue
-
-        message_id = _extract_message_id(msg.get("Message-ID"))
-        if not message_id:
-            digest = hashlib.sha256(str(msg).encode()).hexdigest()[:16]
-            message_id = f"<synthetic-{digest}@pginbox>"
-
-        sent_at = None
-        used_date_header = False
-        date_str = msg.get("Date") or ""
-        if date_str:
-            try:
-                sent_at = _clamp_tz(email.utils.parsedate_to_datetime(date_str))
-                used_date_header = True
-            except Exception:
-                pass
-        if sent_at is None:
-            from_line = msg.get_from() or ""
-            from_line_parts = from_line.split(" ", 1)
-            if len(from_line_parts) == 2:
-                try:
-                    parsed = _clamp_tz(email.utils.parsedate_to_datetime(from_line_parts[1]))
-                    if parsed.year > 2001:
-                        sent_at = parsed
-                except Exception:
-                    pass
-        sent_at_approx = False
-        if used_date_header and sent_at is not None:
-            aware = sent_at if sent_at.tzinfo else sent_at.replace(tzinfo=timezone.utc)
-            if aware < mbox_date:
-                sent_at = mbox_date
-                sent_at_approx = True
-        if message_id in _SENT_AT_OVERRIDES:
-            sent_at = _SENT_AT_OVERRIDES[message_id]
-            sent_at_approx = False
-
-        from_name, from_email = "", ""
-        from_str = msg.get("From") or ""
-        if from_str:
-            name, addr = email.utils.parseaddr(_decode_header(from_str))
-            from_name = name or ""
-            from_email = _normalize_email(addr) if addr else ""
-
-        in_reply_to = _extract_message_id(msg.get("In-Reply-To"), prefer_last=True)
-        refs = _extract_message_ids(msg.get("References"))
-        thread_id = refs[0] if refs else message_id
-
-        body = _strip_nul(_decode_body(msg))
-        subject = _decode_subject(msg.get("Subject"))
-        yield {
-            "message_id": _strip_nul(message_id),
-            "thread_id": _strip_nul(thread_id),
-            "list_id": list_id,
-            "archive_month": mbox_date.date(),
-            "sent_at": sent_at,
-            "from_name": _strip_nul(from_name),
-            "from_email": _strip_nul(from_email),
-            "subject": subject,
-            "in_reply_to": _strip_nul(in_reply_to) if in_reply_to else None,
-            "refs": [_strip_nul(r) for r in refs] if refs else None,
-            "body": body,
-            "sent_at_approx": sent_at_approx,
-            "_normalized_subject": _normalize_subject(subject),
-            "_attachments": _parse_attachments(msg),
-        }
+        yield _parse_message_record(msg, list_id, archive_month=mbox_date.date())

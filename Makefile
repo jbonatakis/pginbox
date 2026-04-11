@@ -6,7 +6,7 @@ DSN := postgresql://pginbox:pginbox@localhost:5499/pginbox?sslmode=disable
 PG_LIST_USER ?= $(error set PG_LIST_USER)
 PG_LIST_PASS ?= $(error set PG_LIST_PASS)
 
-.PHONY: up down reset psql logs ingest backfill backfill-range reconcile reconcile-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup my-threads-backfill codegen test test-server test-frontend test-ingestion test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
+.PHONY: up down reset psql logs ingest backfill backfill-range reconcile reconcile-range derive-threads decode-subjects refresh-analytics charts people seed-people match-people migrate migrate-down migrate-status migrate-new migrate-test install dev api auth-cleanup mailbox-ingest my-threads-backfill codegen test test-server test-frontend test-ingestion test-db install-web dev-web build-api build-frontend build-all deploy prod-up prod-up-no-build prod-down restart prod-reload-caddy
 
 up:
 	docker compose up -d
@@ -96,6 +96,9 @@ api:
 
 auth-cleanup:
 	bun src/server/jobs/auth-cleanup.ts
+
+mailbox-ingest:
+	bun src/server/jobs/mailbox-ingest.ts $(if $(ONCE),--once)
 
 my-threads-backfill:
 	bun src/server/jobs/my-threads-historical-backfill.ts $(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE)) $(if $(MAX_USERS),--max-users $(MAX_USERS)) $(if $(START_AFTER_USER_ID),--start-after-user-id $(START_AFTER_USER_ID))

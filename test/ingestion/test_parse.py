@@ -1,3 +1,6 @@
+from datetime import date
+
+
 def test_parse_mbox_recovers_attachments_from_embedded_git_patch_from_lines(
     ingest, tmp_path
 ):
@@ -283,3 +286,49 @@ Hello.
     assert len(records) == 1
     assert records[0]["sent_at"].isoformat() == "2025-08-07T17:16:16"
     assert records[0]["sent_at_approx"] is False
+
+
+def test_parse_message_bytes_parses_one_raw_rfc822_message(ingest):
+    record = ingest.parse_message_bytes(
+        b"""Date: Fri, 11 Apr 2026 00:10:40 +0000
+From: pgsql-hackers Owner <pgsql-hackers-owner@lists.postgresql.org>
+To: Jack Bonatakis <pgsql-hackers@pginbox.dev>
+Subject: Test mail for pgsql-hackers
+Message-ID: <177586624039.1167.15367935530746720994@malur.postgresql.org>
+List-Id: <pgsql-hackers.lists.postgresql.org>
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: base64
+
+SGVsbG8hCgpUaGlzIGlzIGEgdGVzdCBtYWlsIGZvciB0aGUgbGlzdC4K
+""",
+        list_id=23,
+    )
+
+    assert record["message_id"] == "<177586624039.1167.15367935530746720994@malur.postgresql.org>"
+    assert record["list_id"] == 23
+    assert record["archive_month"] is None
+    assert record["from_email"] == "pgsql-hackers-owner@lists.postgresql.org"
+    assert record["subject"] == "Test mail for pgsql-hackers"
+    assert record["body"] == "Hello!\n\nThis is a test mail for the list.\n"
+    assert record["warnings"] == []
+
+
+def test_parse_message_bytes_applies_archive_month_hint(ingest):
+    record = ingest.parse_message_bytes(
+        b"""Date: Sun, 30 Mar 2025 23:59:59 +0000
+From: Example Author <author@example.com>
+To: pgsql-hackers@postgresql.org
+Subject: Month boundary
+Message-ID: <month-boundary@example.com>
+Content-Type: text/plain; charset="utf-8"
+
+Hello.
+""",
+        list_id=1,
+        archive_month_hint=date(2025, 4, 1),
+    )
+
+    assert record["archive_month"].isoformat() == "2025-04-01"
+    assert record["sent_at"].isoformat() == "2025-04-01T00:00:00+00:00"
+    assert record["sent_at_approx"] is True
+    assert record["warnings"] == ["approximate_sent_at"]

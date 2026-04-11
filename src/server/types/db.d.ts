@@ -15,15 +15,18 @@ export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
 export interface AnalyticsByDow {
   dow: number | null;
+  list_id: number | null;
   messages: Int8 | null;
 }
 
 export interface AnalyticsByHour {
   hour: number | null;
+  list_id: number | null;
   messages: Int8 | null;
 }
 
 export interface AnalyticsByMonth {
+  list_id: number | null;
   messages: Int8 | null;
   month: number | null;
   year: number | null;
@@ -35,8 +38,9 @@ export interface AnalyticsMessagesLast24h {
 }
 
 export interface AnalyticsSummary {
+  list_id: number | null;
   months_ingested: Int8 | null;
-  singleton_id: number | null;
+  months_set: string[] | null;
   total_messages: Int8 | null;
   total_threads: Int8 | null;
   unique_senders: Int8 | null;
@@ -45,6 +49,7 @@ export interface AnalyticsSummary {
 export interface AnalyticsTopSenders {
   from_email: string | null;
   from_name: string | null;
+  list_id: number | null;
   message_count: Int8 | null;
 }
 
@@ -86,11 +91,45 @@ export interface EmailVerificationTokens {
 export interface Lists {
   id: Generated<number>;
   name: string;
+  source_folder: string | null;
+  tracked: Generated<boolean>;
+}
+
+export interface MailboxReceipts {
+  attempt_count: Generated<number>;
+  blob_id: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<Int8>;
+  internal_date: Timestamp | null;
+  jmap_email_id: string;
+  last_error: string | null;
+  list_id: number;
+  mailbox_id: string;
+  message_id_header: string | null;
+  parsed_message_id: string | null;
+  raw_rfc822: Buffer;
+  raw_sha256: string;
+  source_folder: string;
+  status: string;
+  stored_message_db_id: Int8 | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface MailboxSyncState {
+  email_query_state: string | null;
+  last_push_event_id: string | null;
+  last_reconciled_at: Timestamp | null;
+  last_successful_sync_at: Timestamp | null;
+  list_id: number;
+  mailbox_id: string;
+  source_folder: string;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface Messages {
-  archive_month: ColumnType<Date, Date | string, Date | string> | null;
+  archive_month: Timestamp | null;
   body: string | null;
+  body_search: Generated<string | null>;
   from_email: string | null;
   from_name: string | null;
   id: Generated<Int8>;
@@ -165,6 +204,14 @@ export interface ThreadTracking {
   user_id: Int8;
 }
 
+export interface UserEmailClaims {
+  claim_kind: string;
+  created_at: Generated<Timestamp>;
+  email: string;
+  id: Generated<Int8>;
+  user_id: Int8;
+}
+
 export interface UserEmails {
   created_at: Generated<Timestamp>;
   email: string;
@@ -172,14 +219,6 @@ export interface UserEmails {
   is_primary: Generated<boolean>;
   user_id: Int8;
   verified_at: Timestamp;
-}
-
-export interface UserEmailClaims {
-  claim_kind: string;
-  created_at: Generated<Timestamp>;
-  email: string;
-  id: Generated<Int8>;
-  user_id: Int8;
 }
 
 export interface Users {
@@ -206,6 +245,8 @@ export interface DB {
   auth_sessions: AuthSessions;
   email_verification_tokens: EmailVerificationTokens;
   lists: Lists;
+  mailbox_receipts: MailboxReceipts;
+  mailbox_sync_state: MailboxSyncState;
   messages: Messages;
   password_reset_tokens: PasswordResetTokens;
   people: People;
