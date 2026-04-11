@@ -1,6 +1,7 @@
 # Deploying API + frontend on a VPS
 
-API and frontend run in Docker behind Caddy. The database is **Supabase** (or any Postgres); no DB container.
+API, frontend, and the optional mailbox ingest worker run in Docker behind Caddy. The
+database is **Supabase** (or any Postgres); no DB container.
 
 ## Prerequisites
 
@@ -19,6 +20,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 - **Port 80 + 443** are exposed on Caddy.
 - Caddy serves `https://pginbox.dev` and `https://www.pginbox.dev`, and routes `/` -> frontend and `/api/*` -> API.
 - Frontend uses relative `/api` so no extra env for the frontend build.
+- If `FASTMAIL_API_TOKEN` is set, the mailbox ingest worker also starts and runs as a
+  long-lived background service.
 
 ## Redeploy independently
 
@@ -34,6 +37,12 @@ docker compose -f docker-compose.prod.yml up -d --build api
 docker compose -f docker-compose.prod.yml up -d --build frontend
 ```
 
+**Mailbox ingest worker only** (worker code or env change):
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build mailbox-ingest
+```
+
 **Caddy only** (config change in `docker/Caddyfile`):
 
 ```bash
@@ -46,8 +55,98 @@ docker compose -f docker-compose.prod.yml up -d caddy
 Create a `.env` in the repo (or set in the shell) with:
 
 - `DATABASE_URL` – Supabase connection string (URI, with password).
+- `FASTMAIL_API_TOKEN` – required only if you want the mailbox worker running.
+
+Optional mailbox worker env:
+
+- `FASTMAIL_JMAP_SESSION_URL`
+- `MAILBOX_INGEST_PARSER_BIN`
+- `MAILBOX_INGEST_PUSH_PING_SECONDS`
+- `MAILBOX_INGEST_QUERY_PAGE_SIZE`
+- `MAILBOX_INGEST_RECEIPT_BATCH_SIZE`
+- `MAILBOX_INGEST_SYNC_DEBOUNCE_MS`
 
 Do **not** commit `.env`; it’s in `.gitignore`.
+
+## Mailbox Worker Rollout
+
+The mailbox worker is now part of the production Compose stack as the `mailbox-ingest`
+service. It runs:
+
+```bash
+bun run mailbox:ingest
+```
+
+inside its own container and uses the shared Python parser bridge for raw RFC822
+messages.
+
+### Initial `pgsql-hackers` rollout
+
+Before starting the worker in production:
+
+1. run database migrations on the production database
+2. mark the target list as tracked and point it at the Fastmail folder
+3. run one one-shot mailbox sync
+4. inspect staged receipts and statuses
+5. switch to the long-lived worker
+
+Example:
+
+```bash
+export DATABASE_URL="postgresql://..."
+make migrate
+```
+
+The mailbox migrations now seed `pgsql-hackers` as:
+
+- `lists.name = 'pgsql-hackers'`
+- `lists.tracked = true`
+- `lists.source_folder = 'pginbox.dev/pgsql-hackers'`
+
+Smoke-test one sync pass in the worker container:
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm mailbox-ingest --once
+```
+
+Inspect results:
+
+```bash
+psql "$DATABASE_URL" -P pager=off -F $'\t' -At -c "
+SELECT source_folder, mailbox_id, (email_query_state IS NOT NULL) AS has_checkpoint, last_successful_sync_at
+FROM mailbox_sync_state;
+
+SELECT status, count(*)
+FROM mailbox_receipts
+GROUP BY status
+ORDER BY status;
+"
+```
+
+If that looks correct, start the long-lived worker:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build mailbox-ingest
+```
+
+Watch logs:
+
+```bash
+make watch-mailbox-logs
+```
+
+Expected steady-state behavior:
+
+- the worker stays connected to Fastmail JMAP push
+- it performs one startup sync and then waits for push wake-ups
+- new deliveries into `pginbox.dev/pgsql-hackers` create `mailbox_receipts` rows first
+- canonical `messages` rows are inserted only after parse success
+
+Operational note:
+
+- the current worker is intended to be deployed as a single long-lived instance
+- do not intentionally run multiple `mailbox-ingest` containers against the same database
+  in steady state
 
 ## Post-deploy one-offs
 
@@ -79,13 +178,21 @@ Operational notes:
 - on the initial rollout, missing progress rows are seeded to each thread's current
   latest message so the launch is quiet instead of surfacing historical unread backlogs
 
-## Ingestion
+## Archive Ingestion
 
-Ingestion is **not** in this stack. Run it from a machine that can reach Supabase and postgresql.org (e.g. your laptop or a cron job elsewhere):
+Archive ingestion remains **outside** the Compose stack unless you explicitly choose to
+run it elsewhere. Run it from a machine that can reach Supabase and postgresql.org
+(e.g. your laptop or a cron job elsewhere):
 
 - Same `DATABASE_URL` (Supabase).
 - `PG_LIST_USER` / `PG_LIST_PASS` for postgresql.org list archives.
 - `make ingest ...`, `make backfill ...`, or `make reconcile ...` as needed.
+
+This archive path is still useful for:
+
+- mailbox-miss reconciliation
+- backfilling a newly tracked list
+- rerunning historical months idempotently against an already populated database
 
 Common commands:
 
