@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from datetime import date
@@ -12,7 +13,10 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.ingestion.ingest_parse import parse_message_bytes
+PACKAGE_NAME = "src.ingestion"
+parse_message_bytes = importlib.import_module(
+    f"{PACKAGE_NAME}.ingest_parse"
+).parse_message_bytes
 
 
 def _json_default(value):
