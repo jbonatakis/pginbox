@@ -45,7 +45,7 @@ We are not trying to represent cross-posted mail as separate threads in separate
 Mailbox ingestion gives us:
 
 - raw RFC822 source as delivered
-- stable incremental checkpoints using mailbox UID state
+- stable incremental checkpoints using mailbox delivery state
 - lower dependence on PostgreSQL archive behavior
 - a clean failure model where messages can be retried from stored raw source
 
@@ -120,6 +120,15 @@ used only for validation and debugging, not as the primary list selector.
 If a message arrives in a tracked folder but header-derived signals strongly disagree,
 we should log it as a suspicious routing mismatch. We should not silently discard it.
 
+Fastmail-specific note from the POC:
+
+- folder matching must support nested mailbox paths such as
+  `pginbox.dev/pgsql-hackers`, not just leaf names
+- a unique leaf-name match such as `pgsql-hackers` is convenient for CLI usage, but
+  full path matching should remain the canonical internal representation
+- real Fastmail-delivered samples include both `List-Id` and `X-Delivered-to`, which are
+  strong validation signals for routed-list correctness
+
 ## Receipt-First Storage
 
 The core safety property is:
@@ -132,38 +141,63 @@ Suggested staging tables:
 
 ### `mailbox_sync_state`
 
-Tracks incremental progress per source folder.
+Tracks durable JMAP sync progress per source folder.
 
 Suggested columns:
 
 - `source_folder text primary key`
-- `uidvalidity bigint not null`
-- `last_seen_uid bigint not null default 0`
-- `last_scanned_at timestamptz`
+- `mailbox_id text not null`
+- `email_query_state text`
+- `last_push_event_id text`
+- `last_successful_sync_at timestamptz`
+- `last_reconciled_at timestamptz`
 - `updated_at timestamptz not null default now()`
+
+Normative meaning:
+
+- `email_query_state` is the durable completeness checkpoint for the folder
+- `last_push_event_id` is an optional reconnect optimization for the JMAP EventSource
+- if `email_query_state` is null, the folder has never completed a successful initial
+  sync
+
+Checkpoint advancement rules:
+
+1. fetch mailbox changes for one folder
+2. stage all discovered raw receipts for that change set
+3. only after receipt staging commits successfully, update `email_query_state`
+4. never advance `email_query_state` if receipt staging failed for any discovered message
+5. treat `last_push_event_id` as advisory only; do not rely on it for completeness
+
+Initial sync rule:
+
+- if `email_query_state` is null for a tracked folder, run a full paginated reconciliation
+  of the current mailbox contents for that folder before entering steady-state push mode
 
 ### `mailbox_receipts`
 
-Stores one row per mailbox delivery.
+Stores one row per mailbox delivery as seen through JMAP.
 
 Suggested identity:
 
-- unique on `(source_folder, uidvalidity, uid)`
+- unique on `(mailbox_id, jmap_email_id)`
 
 Suggested columns:
 
 - `id bigserial primary key`
 - `list_id integer not null references lists(id)`
 - `source_folder text not null`
-- `uidvalidity bigint not null`
-- `uid bigint not null`
+- `mailbox_id text not null`
+- `jmap_email_id text not null`
+- `blob_id text not null`
 - `internal_date timestamptz`
 - `message_id_header text`
+- `parsed_message_id text`
+- `stored_message_db_id bigint references messages(id)`
+- `raw_sha256 text not null`
 - `raw_rfc822 bytea not null`
 - `status text not null`
 - `attempt_count integer not null default 0`
 - `last_error text`
-- `stored_message_id text`
 - `created_at timestamptz not null default now()`
 - `updated_at timestamptz not null default now()`
 
@@ -178,6 +212,16 @@ Suggested statuses:
 - `unresolved_list`
 
 This guarantees that fetch success is recorded even if parse or store fails later.
+
+Status transition rules:
+
+- `fetched -> parsed -> stored`
+- `fetched -> parsed -> duplicate`
+- `fetched -> unresolved_list`
+- `fetched|parsed -> parse_failed`
+- `parsed -> store_failed`
+
+`attempt_count` should increment on each parse/store attempt, not just on initial fetch.
 
 ## Parser Boundary
 
@@ -199,11 +243,47 @@ The only difference between the two modes should be message acquisition:
 - mailbox mode gets raw RFC822 from Fastmail
 - batch mode gets raw RFC822 messages by iterating an mbox
 
+Mailbox-acquired RFC822 source should be treated as the canonical parse input as
+delivered. Fastmail adds delivery headers, but the original list message and MIME
+structure remain intact, so we should parse the full delivered message rather than try
+to strip transport headers first.
+
 Python should expose a small CLI or batch command that:
 
 - accepts raw RFC822 messages
 - emits parsed message records as JSON or NDJSON
 - includes warnings when parsing had to fall back or approximate
+
+For implementation handoff, the subprocess contract should be treated as explicit:
+
+- command shape:
+  `python3 src/ingestion/parse_message_cli.py --list-id <int> [--archive-month YYYY-MM]`
+- stdin:
+  one raw RFC822 message as bytes
+- stdout:
+  exactly one JSON object followed by a newline
+- stderr:
+  diagnostic output only; callers should not treat stderr content as failure if exit code
+  is `0`
+- exit code:
+  `0` on parse success, non-zero on failure
+
+Expected JSON fields:
+
+- `message_id: string`
+- `thread_id: string`
+- `list_id: number`
+- `archive_month: YYYY-MM-DD | null`
+- `sent_at: ISO-8601 timestamp | null`
+- `from_name: string`
+- `from_email: string`
+- `subject: string`
+- `in_reply_to: string | null`
+- `refs: string[] | null`
+- `body: string`
+- `sent_at_approx: boolean`
+- `_normalized_subject: string`
+- `_attachments: { filename, content_type, size_bytes, content }[]`
 
 Important parser warnings to surface explicitly:
 
@@ -244,6 +324,35 @@ In particular, the common ingest path should be idempotent with respect to:
 - thread refreshes
 - duplicate detection
 
+Canonical store algorithm for mailbox ingest:
+
+1. begin one transaction per receipt
+2. look up an existing canonical `messages` row by parsed `message_id`
+3. if found:
+   mark the receipt `duplicate`, set `stored_message_db_id`, and stop
+4. otherwise determine effective thread/list assignment:
+   prefer an existing canonical parent from `in_reply_to`
+   otherwise prefer the last existing canonical reference from `refs`
+   otherwise use the folder-mapped `list_id` and parsed `thread_id`
+5. if an existing canonical ancestor was used, inherit both `thread_id` and `list_id`
+   from that ancestor
+6. insert the canonical `messages` row
+7. insert attachments for the inserted message row
+8. refresh touched thread aggregates
+9. mark the receipt `stored` and set `stored_message_db_id`
+10. commit
+
+Determinism rule:
+
+- canonical receipt processing should be serialized in a stable order, so "first receipt
+  wins" is reproducible rather than race-dependent
+- a practical order is `mailbox_receipts.created_at ASC, mailbox_receipts.id ASC`
+
+Per-folder fetch ordering rule:
+
+- when staging newly discovered mailbox deliveries for a folder, process them oldest-first
+  in a stable order so initial sync and replay runs behave predictably
+
 ## Thread Behavior
 
 We are keeping the cheap global-thread behavior.
@@ -259,23 +368,94 @@ This preserves the current `threads.thread_id` model and avoids a larger schema 
 
 ## Incremental Mailbox Sync
 
-Incremental sync should be based on mailbox UID state, not read/unread flags and not
+For Fastmail, the preferred incremental sync mechanism is JMAP, not IMAP.
+
+The proven POC path is:
+
+- open the JMAP session endpoint
+- resolve tracked mailbox paths to mailbox ids
+- use the JMAP EventSource push channel for near-real-time notification
+- on change, use `Email/queryChanges` or fallback `Email/query`
+- fetch raw RFC822 content through the JMAP blob download path
+
+The production checkpoint model still needs durable mailbox delivery state, even though
+the POC was intentionally in-memory only.
+
+Incremental sync should be based on durable mailbox state, not read/unread flags and not
 message timestamps.
 
 Per tracked folder:
 
-1. read the current `UIDVALIDITY`
-2. if `UIDVALIDITY` changed, treat the folder as needing a reconciliation scan
-3. fetch messages with `UID > last_seen_uid`
+1. load the last durable checkpoint for the folder
+2. reconnect to the Fastmail JMAP push stream
+3. use mailbox change state to discover newly added emails
 4. persist receipts first
 5. parse and store canonical messages
-6. advance `last_seen_uid` only after receipt persistence succeeds
+6. advance the durable checkpoint only after receipt persistence succeeds
 
 The ingest path must not depend on:
 
 - `\\Seen`
 - moving messages between folders
 - local cache state outside Postgres
+
+The durable checkpoint shape is now intentionally JMAP-oriented. The old IMAP-centric
+`UIDVALIDITY` / `UID` shape should not be used as the primary design.
+
+Normative Fastmail JMAP rules:
+
+- session URL: `https://api.fastmail.com/jmap/session`
+- resolve mailbox paths from `Mailbox/get` using `parentId`
+- treat full mailbox path as canonical and leaf-name matching as CLI convenience only
+- use EventSource with `types=Mailbox,Email`, `closeafter=no`, and a non-zero `ping`
+- ignore `state` events whose JSON payload has `type=connect`
+- treat push as a wake-up signal, not as the durability checkpoint
+- use per-folder `Email/queryChanges` with the stored `email_query_state`
+- if `Email/queryChanges` fails with state/anchor drift, run reconciliation and replace
+  `email_query_state` with the fresh query state
+- download raw bytes through the JMAP blob download URL using `blobId` and
+  `type=message/rfc822`
+- parse the full delivered RFC822 message as-is, including Fastmail-added transport
+  headers
+
+## Fastmail POC Findings
+
+We built a read-only Fastmail JMAP POC and verified the transport layer.
+
+What the POC proved:
+
+- Fastmail JMAP push is viable for near-real-time mailbox ingestion
+- nested mailbox paths resolve correctly through JMAP `parentId`
+- `Email/queryChanges` is sufficient to discover newly delivered mail in tracked folders
+- raw RFC822 bytes can be downloaded for new messages through the JMAP blob download path
+- the downloaded raw message bytes are suitable as input to the existing Python parser
+- real Fastmail-delivered raw messages successfully round-trip through the existing Python
+  parsing logic once exposed as a single-message parser entrypoint
+- the downloaded raw message is the full delivered RFC822 message, not a Fastmail-specific
+  normalized projection
+- original message MIME structure is preserved in the downloaded source
+
+Important implementation details discovered:
+
+- matching only mailbox `name` is insufficient; full mailbox path support is required
+- the initial JMAP push `state` event with payload `type=connect` must be ignored
+- a long-lived EventSource connection should use `closeafter=no`
+- a stateless reader will reread a recent bootstrap window after restart, so real ingest
+  needs durable checkpoints
+- Fastmail adds mailbox-provider delivery headers such as `X-Delivered-to`, spam
+  annotations, and local `Received` hops on top of the list message
+- those added headers are useful validation/debug signals and should not be treated as a
+  reason to normalize or rewrite the raw source before parsing
+- we now have a minimal Python parser bridge that reads one raw RFC822 message from stdin
+  and returns the normalized parsed record as JSON
+- this confirms we do not need a separate Fastmail-specific parsing implementation
+
+Implication for the real design:
+
+- the Fastmail transport side is now de-risked enough to proceed with receipt staging and
+  parser integration
+- the shared Python parser core should become the canonical parser boundary for both
+  mailbox ingest and batch archive ingest
 
 ## Failure Model
 
@@ -303,13 +483,33 @@ We still need a mailbox-side reconciliation path.
 
 Suggested reconciliation behavior:
 
-- periodically list message UIDs for each tracked folder
-- compare mailbox UID coverage against `mailbox_receipts`
-- detect gaps caused by skipped fetches, transient failures, or UIDVALIDITY resets
+- periodically enumerate delivered messages for each tracked folder
+- compare mailbox coverage against `mailbox_receipts`
+- detect gaps caused by skipped fetches, transient failures, or checkpoint drift
+
+Concrete JMAP reconciliation algorithm:
+
+1. for one tracked folder, run paginated `Email/query` with `inMailbox=<mailbox_id>`
+2. collect the full current set of `jmap_email_id` values for that mailbox
+3. compare that set against staged `mailbox_receipts` for the folder
+4. for any mailbox email id missing from `mailbox_receipts`, fetch and stage it
+5. update `email_query_state` to the final query state returned by reconciliation
+
+Reconciliation ordering rule:
+
+- reconciliation should process mailbox contents oldest-first so any "first receipt wins"
+  behavior is stable and reproducible
+
+Reconciliation is one-way safety, not deletion:
+
+- if a message currently exists in Fastmail but lacks a receipt row, that is a gap to
+  repair
+- if a receipt row exists for a message no longer present in Fastmail, do not delete the
+  canonical message row because mailbox retention is not the source of truth for history
 
 This job should report:
 
-- missing receipt UIDs
+- missing receipt `jmap_email_id` values
 - receipts stuck in `parse_failed`
 - receipts stuck in `store_failed`
 - duplicate rate
@@ -350,7 +550,7 @@ maintenance behaviors, separate from the default idempotent path.
 TypeScript should own:
 
 - mailbox configuration
-- IMAP or JMAP client interactions
+- JMAP client interactions
 - tracked-folder enumeration
 - receipt staging
 - parser subprocess orchestration
@@ -388,7 +588,7 @@ Add:
 - tracked-folder metadata to `lists`
 - `mailbox_sync_state`
 - `mailbox_receipts`
-- TypeScript config for mailbox credentials and polling limits
+- TypeScript config for Fastmail JMAP credentials and polling/push behavior
 
 Deliverable:
 
@@ -411,7 +611,7 @@ Deliverables:
 Implement a TypeScript job that:
 
 - reads tracked lists/folders
-- fetches new mailbox deliveries
+- listens for Fastmail JMAP push changes and fetches new mailbox deliveries
 - writes receipt rows and sync checkpoints
 
 Deliverable:
@@ -436,7 +636,7 @@ Deliverable:
 
 Add:
 
-- mailbox UID reconciliation
+- mailbox reconciliation based on durable JMAP-oriented checkpoint state
 - retry tooling for failed receipts
 - structured logs and metrics
 
@@ -456,8 +656,9 @@ We should add coverage for:
 - mailbox and batch mode equivalence on the same source message
 - parse failure retention with raw source preserved
 - store failure retention with retry support
-- UID resume after partial runs
-- UIDVALIDITY reset handling
+- resume after partial runs using durable mailbox checkpoints
+- reconnect behavior for JMAP push
+- ignoring `connect` bootstrap events from Fastmail push
 - folder/header mismatch logging
 
 ## Non-Goals
