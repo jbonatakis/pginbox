@@ -86,6 +86,14 @@ function logLine(parts: Array<string | number | null | undefined>): string {
   return [`[${JOB_NAME}]`, ...parts.filter((part) => part != null && part !== "")].join(" ");
 }
 
+export interface ClassifiedPushEvent {
+  hasData: boolean;
+  ignoreReason: "connect" | "empty" | "ping" | null;
+  payloadType: string | null;
+  shouldSync: boolean;
+  sseEvent: string;
+}
+
 function hashRawMessage(rawRfc822: Uint8Array): string {
   return createHash("sha256").update(rawRfc822).digest("hex");
 }
@@ -99,15 +107,60 @@ function generateStableThreadId(): string {
 }
 
 export function shouldIgnorePushEvent(event: FastmailPushEvent): boolean {
-  if (!event.data) {
-    return true;
+  return !classifyPushEvent(event).shouldSync;
+}
+
+export function classifyPushEvent(event: FastmailPushEvent): ClassifiedPushEvent {
+  const sseEvent = event.event || "message";
+  const hasData = Boolean(event.data);
+  if (!hasData) {
+    return {
+      hasData,
+      ignoreReason: sseEvent === "ping" ? "ping" : "empty",
+      payloadType: null,
+      shouldSync: false,
+      sseEvent,
+    };
+  }
+
+  if (sseEvent === "ping") {
+    return {
+      hasData,
+      ignoreReason: "ping",
+      payloadType: null,
+      shouldSync: false,
+      sseEvent,
+    };
   }
 
   try {
     const parsed = JSON.parse(event.data) as { type?: unknown };
-    return parsed.type === "connect";
+    const payloadType = typeof parsed.type === "string" ? parsed.type : null;
+    if (payloadType === "connect" || payloadType === "ping") {
+      return {
+        hasData,
+        ignoreReason: payloadType,
+        payloadType,
+        shouldSync: false,
+        sseEvent,
+      };
+    }
+
+    return {
+      hasData,
+      ignoreReason: null,
+      payloadType,
+      shouldSync: true,
+      sseEvent,
+    };
   } catch {
-    return false;
+    return {
+      hasData,
+      ignoreReason: null,
+      payloadType: null,
+      shouldSync: true,
+      sseEvent,
+    };
   }
 }
 
@@ -676,17 +729,34 @@ export class MailboxIngestService {
     await runSync("startup");
 
     while (!signal?.aborted) {
+      let sawEventSinceConnect = false;
+
       try {
         for await (const event of this.fastmailClient.streamPushEvents(lastPushEventId)) {
           if (signal?.aborted) {
             break;
           }
 
+          sawEventSinceConnect = true;
+          reconnectDelayMs = 1000;
+
           if (event.id) {
             lastPushEventId = event.id;
           }
 
-          if (shouldIgnorePushEvent(event)) {
+          const classifiedEvent = classifyPushEvent(event);
+          this.logger.info(
+            logLine([
+              "push_event=true",
+              `event_id=${event.id ?? "none"}`,
+              `sse_event=${classifiedEvent.sseEvent}`,
+              `payload_type=${classifiedEvent.payloadType ?? "unknown"}`,
+              `ignored=${classifiedEvent.shouldSync ? "false" : "true"}`,
+              classifiedEvent.ignoreReason ? `reason=${classifiedEvent.ignoreReason}` : null,
+            ]),
+          );
+
+          if (!classifiedEvent.shouldSync) {
             continue;
           }
 
@@ -709,8 +779,8 @@ export class MailboxIngestService {
         }
 
         await new Promise((resolve) => setTimeout(resolve, reconnectDelayMs));
-        reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30_000);
         await runSync("reconnect");
+        reconnectDelayMs = sawEventSinceConnect ? 1000 : Math.min(reconnectDelayMs * 2, 30_000);
         continue;
       }
 

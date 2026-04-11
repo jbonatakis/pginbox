@@ -162,4 +162,4 @@ watch-logs:
 	docker compose -f docker-compose.prod.yml logs -f api frontend
 
 watch-mailbox-logs:
-	docker compose -f docker-compose.prod.yml logs -f mailbox-ingest
+	docker compose -f docker-compose.prod.yml logs -f -t mailbox-ingest
