@@ -75,7 +75,7 @@ jobs:
       - name: Typecheck
         run: bun x tsc --noEmit
 
-      - name: Run Bun backend/shared test suite
+      - name: Run Bun backend/shared test suite (includes mailbox ingest tests)
         run: bun test test/server
 
   frontend-tests:
@@ -247,7 +247,7 @@ jobs:
       - name: Run ruff
         run: uv run ruff check --output-format github
 
-      - name: Run pytest
+      - name: Run pytest (includes mailbox parser tests)
         run: uv run pytest -q
 
   docker:
@@ -262,3 +262,6 @@ jobs:
 
       - name: Build frontend image
         run: docker build -f Dockerfile.frontend -t pginbox-frontend .
+
+      - name: Build mailbox ingest image
+        run: docker build -f Dockerfile.mailbox-ingest -t pginbox-mailbox-ingest .
