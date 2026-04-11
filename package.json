@@ -5,6 +5,7 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "auth:cleanup": "bun src/server/jobs/auth-cleanup.ts",
+    "mailbox:ingest": "bun src/server/jobs/mailbox-ingest.ts",
     "my-threads:backfill": "bun src/server/jobs/my-threads-historical-backfill.ts",
     "dev": "bun --watch src/server/index.ts",
     "dev:threads": "bun src/server/dev/test-threads.ts",

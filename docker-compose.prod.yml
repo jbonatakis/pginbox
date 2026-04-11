@@ -35,6 +35,23 @@ services:
       - SMTP_FROM_NAME=${SMTP_FROM_NAME}
     # No published ports; Caddy proxies /api to this
 
+  mailbox-ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile.mailbox-ingest
+    image: pginbox-mailbox-ingest
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - FASTMAIL_API_TOKEN=${FASTMAIL_API_TOKEN}
+      - FASTMAIL_JMAP_SESSION_URL=${FASTMAIL_JMAP_SESSION_URL}
+      - MAILBOX_INGEST_PARSER_BIN=${MAILBOX_INGEST_PARSER_BIN}
+      - MAILBOX_INGEST_PUSH_PING_SECONDS=${MAILBOX_INGEST_PUSH_PING_SECONDS}
+      - MAILBOX_INGEST_QUERY_PAGE_SIZE=${MAILBOX_INGEST_QUERY_PAGE_SIZE}
+      - MAILBOX_INGEST_RECEIPT_BATCH_SIZE=${MAILBOX_INGEST_RECEIPT_BATCH_SIZE}
+      - MAILBOX_INGEST_SYNC_DEBOUNCE_MS=${MAILBOX_INGEST_SYNC_DEBOUNCE_MS}
+    # No published ports; long-lived worker only
+
   frontend:
     build:
       context: .

@@ -1,0 +1,20 @@
+# pginbox mailbox ingest worker — Bun + Python parser bridge
+# Build: docker build -f Dockerfile.mailbox-ingest -t pginbox-mailbox-ingest .
+# Run: docker run --rm -e DATABASE_URL=postgresql://... -e FASTMAIL_API_TOKEN=... pginbox-mailbox-ingest
+
+FROM oven/bun:1-alpine
+WORKDIR /app
+
+RUN apk add --no-cache python3
+
+COPY package.json bun.lock* ./
+COPY src/shared ./src/shared
+COPY src/server ./src/server
+COPY src/ingestion ./src/ingestion
+COPY tsconfig.json ./
+
+RUN bun install --frozen-lockfile || bun install
+
+ENV NODE_ENV=production
+
+CMD ["bun", "run", "mailbox:ingest"]

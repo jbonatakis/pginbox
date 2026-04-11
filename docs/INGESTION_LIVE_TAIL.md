@@ -1,476 +1,688 @@
-# Live-Tail Ingestion
+# Mailbox-Based Ingestion
 
-Design notes for making pginbox ingest current list traffic more frequently without
-re-downloading the entire current-month mbox on every run.
+Design notes for replacing archive live-tail ingestion with mailbox-based ingestion
+from a dedicated Fastmail inbox.
 
-## Current State
+The archive-oriented live-tail design has been scrapped. The new source of truth for
+fresh mail is the mailbox itself.
 
-Today the ingestion path is month-oriented.
+## Goals
 
-Key pieces:
+- ingest new list traffic from Fastmail instead of polling archive pages
+- keep batch archive ingest available for reconciliation and backfill
+- keep the existing Python message parsing logic
+- move orchestration, checkpointing, and persistence into TypeScript
+- avoid silently dropping messages on fetch, parse, or store failures
+- keep archive and mailbox ingestion on the same parser core
+- keep the current "one canonical message row per Message-ID" model
 
-- `src/ingestion/ingest_archive.py`
-- `src/ingestion/ingest_pipeline.py`
-- `src/ingestion/ingest_parse.py`
-- `src/ingestion/ingest.py`
-- `ingest_current_month.sh`
+## Assumptions
 
-The current-month script runs the monthly mbox ingest and forces a fresh download:
+### 1. One folder per tracked list
 
-- it calls `src/ingestion/ingest.py`
-- it passes `--year <current year> --month <current month>`
-- it currently passes `--force-download`
+Each tracked mailing list has a dedicated mailbox folder.
 
-That means each run re-downloads the full current-month archive file even when only a
-small number of new messages have arrived.
+That means list identity comes primarily from mailbox routing, not from message header
+inference.
 
-## Why Change It
+### 2. One message belongs to one canonical list
 
-The current approach is simple and robust, but wasteful for freshness.
+If the same message is delivered multiple times across folders, the first successfully
+stored delivery wins.
 
-Problems:
+Later deliveries are treated as duplicate receipts, not additional canonical message
+rows.
 
-- hourly polling re-downloads a growing monthly archive
-- current-month mboxes can become large
-- most hourly runs only need a handful of new messages
-- this makes it harder to poll more frequently
+### 3. Cheap thread behavior is acceptable
 
-The goal is not to replace monthly ingestion entirely.
+If a newly ingested message references an already-known thread, that existing canonical
+thread/list assignment wins.
 
-The goal is:
+We are not trying to represent cross-posted mail as separate threads in separate lists.
 
-- ingest recent traffic more frequently
-- transfer less data per run
-- keep the monthly mbox path as a reconciliation/backstop path
+## Why This Path Is Better
 
-## Archive Constraints
+Mailbox ingestion gives us:
 
-These observations were verified against the PostgreSQL archive.
+- raw RFC822 source as delivered
+- stable incremental checkpoints using mailbox delivery state
+- lower dependence on PostgreSQL archive behavior
+- a clean failure model where messages can be retried from stored raw source
 
-### 1. Day views exist
+It also removes the need to scrape day pages or depend on archive-specific download
+flows for freshness.
 
-Example:
+## Architecture
 
-- `https://www.postgresql.org/list/pgsql-hackers/since/202603190000/`
+The new pipeline should look like this:
 
-This is a day-level archive view.
+1. TypeScript polls the mailbox for tracked folders
+2. TypeScript stores every fetched delivery as a receipt with raw RFC822 content
+3. TypeScript invokes Python to parse raw messages into normalized message records
+4. TypeScript validates parser output and persists canonical rows with Kysely
+5. TypeScript updates touched threads using the existing thread model
 
-### 2. Day views are HTML, not mbox
+Python remains responsible for parsing mail.
 
-The `since/...` pages are HTML index pages listing messages for that day.
+TypeScript becomes responsible for:
 
-They are useful for discovery, not direct reuse of the current mbox parser.
+- mailbox sync
+- batch archive orchestration
+- list selection
+- checkpointing
+- retry state
+- persistence
+- logging and observability
 
-### 3. `since/...` is day-level only
+## Two Supported Ingest Modes
 
-Sub-day timestamps are canonicalized back to midnight.
+We are not removing batch ingest.
 
-Example:
+The system should support two ingest modes:
 
-- requesting `/since/202603191230/` redirects to `/since/202603190000/`
+1. mailbox ingest for current traffic freshness
+2. batch archive ingest for reconciliation and backfill
 
-So the archive does **not** expose a minute-level poll surface through this URL family.
+Mailbox ingest is the live incremental path.
 
-### 4. Day pages link to message pages by message-id
+Batch archive ingest remains useful for:
 
-The day view includes links like:
+- reconciling any mailbox-side misses
+- backfilling a newly tracked list
+- rerunning a historical month against an already populated database
 
-- `/message-id/<message-id>`
-
-So the day page can act as a "what changed today?" index.
-
-### 5. Day views are capped and are not a complete day feed
-
-In the `pgarchives` source, `render_datelist_from()` applies `[:200]` to the query used
-for `since/...` pages.
+Both modes should converge on the same parser core and the same persistence semantics.
 
 That means:
 
-- `/list/<list>/since/YYYYMMDD0000/` only shows the first 200 messages from that point
-  forward
-- there is no built-in pagination on that page template
-- `since/...` is therefore not a reliable complete discovery feed on high-volume days
+- mailbox ingest should not have a separate parsing implementation
+- batch ingest should not have a separate canonical storage model
+- rerunning batch ingest over already ingested data should be safe and idempotent
 
-This is a major limitation for any design that tries to discover all new traffic by polling
-day pages alone.
+## List Resolution
 
-### 6. Per-message raw/mbox downloads are available to automated clients
+Primary list resolution should be folder-based.
 
-Message pages expose actions like:
+For tracked lists, add mailbox metadata to `lists`:
 
-- `Raw Message`
-- `Download mbox`
+- `tracked boolean not null default false`
+- `source_folder text`
 
-Those are wired through `data-ref` URLs such as:
+Expected behavior:
 
-- `/message-id/raw/<message-id>`
-- `/message-id/mbox/<message-id>`
+- only `lists.tracked = true` participate in mailbox ingestion
+- each tracked list maps to exactly one source folder
+- folder -> list mapping is the canonical list selection rule
 
-In the `pgarchives` source:
+Headers such as `List-Id`, `Delivered-To`, `X-Original-To`, `To`, and `Cc` should be
+used only for validation and debugging, not as the primary list selector.
 
-- the backend handlers are plain GET views
-- they are protected by an `antispam_auth` decorator
-- that decorator explicitly allows Basic auth credentials `archives:antispam` for
-  automated clients
+If a message arrives in a tracked folder but header-derived signals strongly disagree,
+we should log it as a suspicious routing mismatch. We should not silently discard it.
 
-In the browser UI, they are submitted through a form, which is why they look POST-ish from
-the outside. But for automation, they are real machine-readable endpoints.
+Fastmail-specific note from the POC:
 
-Live verification against `www.postgresql.org` confirmed:
+- folder matching must support nested mailbox paths such as
+  `pginbox.dev/pgsql-hackers`, not just leaf names
+- a unique leaf-name match such as `pgsql-hackers` is convenient for CLI usage, but
+  full path matching should remain the canonical internal representation
+- real Fastmail-delivered samples include both `List-Id` and `X-Delivered-to`, which are
+  strong validation signals for routed-list correctness
 
-- unauthenticated requests redirect to login
-- authenticated requests with `archives:antispam` return `200 text/plain` for raw message
-  and `200 application/mbox` for mbox
+## Receipt-First Storage
 
-That means a live-tail ingester can likely fetch raw messages directly, as long as it uses
-the documented Basic auth path.
+The core safety property is:
 
-### 7. A JSON discovery API exists, but it is allowlist-gated
+- store raw mail before parsing
 
-Link: https://github.com/postgres/pgarchives/blob/master/django/archives/mailarchives/api.py
+The mailbox receipt should be the durable ingestion unit.
 
-The archive exposes endpoints such as:
+Suggested staging tables:
 
-- `/list/<list>/latest.json`
-- `/message-id.json/<message-id>`
+### `mailbox_sync_state`
 
-However, in the `pgarchives` source these are restricted by an `API_CLIENTS` IP allowlist.
+Tracks durable JMAP sync progress per source folder.
 
-If upstream were willing to allowlist pginbox, `latest.json` would be a better discovery
-surface than scraping `since/...` pages.
+Suggested columns:
 
-## Recommendation
+- `source_folder text primary key`
+- `mailbox_id text not null`
+- `email_query_state text`
+- `last_push_event_id text`
+- `last_successful_sync_at timestamptz`
+- `last_reconciled_at timestamptz`
+- `updated_at timestamptz not null default now()`
 
-Use a **two-path ingestion model**:
+Normative meaning:
 
-1. `live tail` for current traffic
-2. `monthly backstop` for reconciliation
+- `email_query_state` is the durable completeness checkpoint for the folder
+- `last_push_event_id` is an optional reconnect optimization for the JMAP EventSource
+- if `email_query_state` is null, the folder has never completed a successful initial
+  sync
 
-### Live tail
+Checkpoint advancement rules:
 
-Discover recent traffic frequently and ingest only missing messages.
+1. fetch mailbox changes for one folder
+2. stage all discovered raw receipts for that change set
+3. only after receipt staging commits successfully, update `email_query_state`
+4. never advance `email_query_state` if receipt staging failed for any discovered message
+5. treat `last_push_event_id` as advisory only; do not rely on it for completeness
 
-Important constraint:
+Initial sync rule:
 
-- do not rely on `since/...` alone as a complete feed, because it truncates at 200 messages
+- if `email_query_state` is null for a tracked folder, run a full paginated reconciliation
+  of the current mailbox contents for that folder before entering steady-state push mode
 
-Suggested polling window:
+### `mailbox_receipts`
 
-- today
-- yesterday
+Stores one row per mailbox delivery as seen through JMAP.
 
-That covers:
+Suggested identity:
 
-- new messages arriving today
-- timezone edge cases around midnight
-- late archive appearance for messages near day boundaries
+- unique on `(mailbox_id, jmap_email_id)`
 
-Suggested frequency:
+Suggested columns:
 
-- every 5 minutes
-- or every 10 to 15 minutes if we want to be conservative
+- `id bigserial primary key`
+- `list_id integer not null references lists(id)`
+- `source_folder text not null`
+- `mailbox_id text not null`
+- `jmap_email_id text not null`
+- `blob_id text not null`
+- `internal_date timestamptz`
+- `message_id_header text`
+- `parsed_message_id text`
+- `stored_message_db_id bigint references messages(id)`
+- `raw_sha256 text not null`
+- `raw_rfc822 bytea not null`
+- `status text not null`
+- `attempt_count integer not null default 0`
+- `last_error text`
+- `created_at timestamptz not null default now()`
+- `updated_at timestamptz not null default now()`
 
-### Monthly backstop
+Suggested statuses:
 
-Keep the existing monthly mbox ingest.
+- `fetched`
+- `parsed`
+- `stored`
+- `duplicate`
+- `parse_failed`
+- `store_failed`
+- `unresolved_list`
 
-Its role becomes:
+This guarantees that fetch success is recorded even if parse or store fails later.
 
-- source-of-truth reconciliation
-- attachment repair/backfill path
-- safety net if live-tail misses anything
+Status transition rules:
 
-Suggested cadence:
+- `fetched -> parsed -> stored`
+- `fetched -> parsed -> duplicate`
+- `fetched -> unresolved_list`
+- `fetched|parsed -> parse_failed`
+- `parsed -> store_failed`
 
-- hourly
-- or less frequently if live-tail is stable
+`attempt_count` should increment on each parse/store attempt, not just on initial fetch.
 
-## Proposed Architecture
+## Parser Boundary
 
-### A. Add a recent-message discovery step
+The current parser is mbox-oriented. That should be refactored into a shared
+single-message parser.
 
-New responsibility:
+Target shape:
 
-- fetch a recent-message discovery surface for a list
-- return canonical message ids for messages that may be new to us
+- keep `parse_mbox(path, list_id)` for batch archive ingestion
+- add `parse_message_bytes(raw_bytes, list_id, archive_month_hint=None)`
+- make `parse_mbox()` call the shared single-message parser internally
 
-Possible function:
+This is an explicit requirement:
 
-- `list_recent_message_ids(session, list_name, now_utc)`
+- mailbox ingest and batch archive ingest must use the same parsing logic
 
-Discovery preference should be:
+The only difference between the two modes should be message acquisition:
 
-1. `latest.json` if upstream will allowlist pginbox
-2. `since/YYYYMMDD0000/` as a fallback or hint surface only
+- mailbox mode gets raw RFC822 from Fastmail
+- batch mode gets raw RFC822 messages by iterating an mbox
 
-This should be a new path separate from the monthly mbox downloader.
+Mailbox-acquired RFC822 source should be treated as the canonical parse input as
+delivered. Fastmail adds delivery headers, but the original list message and MIME
+structure remain intact, so we should parse the full delivered message rather than try
+to strip transport headers first.
 
-### B. Diff against already ingested messages
+Python should expose a small CLI or batch command that:
 
-Before fetching messages individually:
+- accepts raw RFC822 messages
+- emits parsed message records as JSON or NDJSON
+- includes warnings when parsing had to fall back or approximate
 
-- look up discovered message ids in `messages.message_id`
-- skip anything already present
+For implementation handoff, the subprocess contract should be treated as explicit:
 
-This keeps the live-tail path cheap even if we repeatedly scan the same day pages.
+- command shape:
+  `python3 src/ingestion/parse_message_cli.py --list-id <int> [--archive-month YYYY-MM]`
+- stdin:
+  one raw RFC822 message as bytes
+- stdout:
+  exactly one JSON object followed by a newline
+- stderr:
+  diagnostic output only; callers should not treat stderr content as failure if exit code
+  is `0`
+- exit code:
+  `0` on parse success, non-zero on failure
 
-Helpful property:
+Expected JSON fields:
 
-- the DB already treats `message_id` as the dedupe key
-- inserts already use `ON CONFLICT (message_id) DO NOTHING`
+- `message_id: string`
+- `thread_id: string`
+- `list_id: number`
+- `archive_month: YYYY-MM-DD | null`
+- `sent_at: ISO-8601 timestamp | null`
+- `from_name: string`
+- `from_email: string`
+- `subject: string`
+- `in_reply_to: string | null`
+- `refs: string[] | null`
+- `body: string`
+- `sent_at_approx: boolean`
+- `_normalized_subject: string`
+- `_attachments: { filename, content_type, size_bytes, content }[]`
 
-So overlap is safe.
+Important parser warnings to surface explicitly:
 
-### C. Add a per-message fetcher
+- synthetic `Message-ID` generated
+- approximate `sent_at`
+- malformed MIME or decode fallback
+- attachment extraction problems
 
-This is no longer a pure unknown.
+TypeScript should treat Python as a parsing subprocess, not as the orchestration layer.
 
-Desired responsibility:
+## Canonical Message Persistence
 
-- fetch one message in a machine-readable form
-- produce the raw message source needed for parsing
+Canonical messages should continue to use the existing `messages` and `attachments`
+tables.
 
-Possible function:
+We are keeping the current rule:
 
-- `download_message_source(session, message_id) -> bytes | str`
+- one canonical `messages` row per `message_id`
 
-Strong preference:
+That means:
 
-- use the authenticated raw download path exposed by the archive
-- authenticate with the Basic auth credentials expected by `pgarchives`
+- the first successfully stored receipt for a given `message_id` wins
+- later receipts with the same `message_id` do not create additional canonical rows
+- duplicate receipts remain visible in `mailbox_receipts`
 
-Avoid:
+This matches the current global uniqueness assumption on `messages.message_id`.
 
-- parsing rendered message HTML as the primary ingestion source
+Batch archive ingest should use these same persistence rules.
 
-Rendered HTML is much more fragile than parsing raw mail source.
+That means rerunning a month on a fully populated list should have no negative
+consequences beyond expected work like reading, parsing, dedupe checks, and optional
+logging.
 
-### D. Add a single-message parser path
+In particular, the common ingest path should be idempotent with respect to:
 
-Current parsing is mbox-oriented.
+- canonical message inserts
+- attachment inserts
+- thread refreshes
+- duplicate detection
 
-`parse_mbox()` currently assumes:
+Canonical store algorithm for mailbox ingest:
 
-- a file on disk
-- a filename ending in `YYYYMM`
-- mailbox iteration
+1. begin one transaction per receipt
+2. look up an existing canonical `messages` row by parsed `message_id`
+3. if found:
+   mark the receipt `duplicate`, set `stored_message_db_id`, and stop
+4. otherwise determine effective thread/list assignment:
+   prefer an existing canonical parent from `in_reply_to`
+   otherwise prefer the last existing canonical reference from `refs`
+   otherwise use the folder-mapped `list_id` and parsed `thread_id`
+5. if an existing canonical ancestor was used, inherit both `thread_id` and `list_id`
+   from that ancestor
+6. insert the canonical `messages` row
+7. insert attachments for the inserted message row
+8. refresh touched thread aggregates
+9. mark the receipt `stored` and set `stored_message_db_id`
+10. commit
 
-The live-tail path should introduce a parser that can handle one raw message at a time.
+Determinism rule:
 
-Possible split:
+- canonical receipt processing should be serialized in a stable order, so "first receipt
+  wins" is reproducible rather than race-dependent
+- a practical order is `mailbox_receipts.created_at ASC, mailbox_receipts.id ASC`
 
-- keep `parse_mbox(path, list_id)` as the batch/file path
-- add `parse_message(msg, list_id, archive_month_hint=None)`
-- make `parse_mbox()` call the shared per-message parser internally
+Per-folder fetch ordering rule:
 
-That gives both ingestion modes one parsing core.
+- when staging newly discovered mailbox deliveries for a folder, process them oldest-first
+  in a stable order so initial sync and replay runs behave predictably
 
-### E. Add a live-tail ingest command
+## Thread Behavior
 
-Do not overload the monthly CLI path with too many conditionals.
+We are keeping the cheap global-thread behavior.
 
-Add a dedicated mode or job for recent incremental polling.
+That means:
 
-Possible command shape:
+- if a new message references an already-known parent or root, inherit the existing
+  canonical thread/list assignment
+- if no known ancestor exists, use the parsed thread identifier as usual
+- do not split threads by list for cross-posted duplicates
 
-- `python3 src/ingestion/ingest.py --live-tail`
-- `python3 src/ingestion/live_tail.py`
+This preserves the current `threads.thread_id` model and avoids a larger schema rewrite.
 
-Suggested behavior:
+## Incremental Mailbox Sync
 
-- authenticate once
-- for each configured list:
-  - fetch the preferred discovery surface
-  - optionally fetch today’s and yesterday’s `since/...` pages as a fallback hint
-  - diff discovered message ids against DB
-  - fetch only missing messages
-  - store them with existing live store path
+For Fastmail, the preferred incremental sync mechanism is JMAP, not IMAP.
 
-### F. Keep analytics refresh coarse
+The proven POC path is:
 
-Do **not** refresh analytics materialized views on every micro-poll.
+- open the JMAP session endpoint
+- resolve tracked mailbox paths to mailbox ids
+- use the JMAP EventSource push channel for near-real-time notification
+- on change, use `Email/queryChanges` or fallback `Email/query`
+- fetch raw RFC822 content through the JMAP blob download path
 
-For live-tail runs:
+The production checkpoint model still needs durable mailbox delivery state, even though
+the POC was intentionally in-memory only.
 
-- ingest messages
-- update touched threads
-- skip analytics refresh
+Incremental sync should be based on durable mailbox state, not read/unread flags and not
+message timestamps.
 
-Then refresh analytics:
+Per tracked folder:
 
-- hourly
-- or on the monthly/backstop job
+1. load the last durable checkpoint for the folder
+2. reconnect to the Fastmail JMAP push stream
+3. use mailbox change state to discover newly added emails
+4. persist receipts first
+5. parse and store canonical messages
+6. advance the durable checkpoint only after receipt persistence succeeds
 
-This keeps the frequent path cheap.
+The ingest path must not depend on:
+
+- `\\Seen`
+- moving messages between folders
+- local cache state outside Postgres
+
+The durable checkpoint shape is now intentionally JMAP-oriented. The old IMAP-centric
+`UIDVALIDITY` / `UID` shape should not be used as the primary design.
+
+Normative Fastmail JMAP rules:
+
+- session URL: `https://api.fastmail.com/jmap/session`
+- resolve mailbox paths from `Mailbox/get` using `parentId`
+- treat full mailbox path as canonical and leaf-name matching as CLI convenience only
+- use EventSource with `types=Mailbox,Email`, `closeafter=no`, and a non-zero `ping`
+- ignore `state` events whose JSON payload has `type=connect`
+- treat push as a wake-up signal, not as the durability checkpoint
+- use per-folder `Email/queryChanges` with the stored `email_query_state`
+- if `Email/queryChanges` fails with state/anchor drift, run reconciliation and replace
+  `email_query_state` with the fresh query state
+- download raw bytes through the JMAP blob download URL using `blobId` and
+  `type=message/rfc822`
+- parse the full delivered RFC822 message as-is, including Fastmail-added transport
+  headers
+
+## Fastmail POC Findings
+
+We built a read-only Fastmail JMAP POC and verified the transport layer.
+
+What the POC proved:
+
+- Fastmail JMAP push is viable for near-real-time mailbox ingestion
+- nested mailbox paths resolve correctly through JMAP `parentId`
+- `Email/queryChanges` is sufficient to discover newly delivered mail in tracked folders
+- raw RFC822 bytes can be downloaded for new messages through the JMAP blob download path
+- the downloaded raw message bytes are suitable as input to the existing Python parser
+- real Fastmail-delivered raw messages successfully round-trip through the existing Python
+  parsing logic once exposed as a single-message parser entrypoint
+- the downloaded raw message is the full delivered RFC822 message, not a Fastmail-specific
+  normalized projection
+- original message MIME structure is preserved in the downloaded source
+
+Important implementation details discovered:
+
+- matching only mailbox `name` is insufficient; full mailbox path support is required
+- the initial JMAP push `state` event with payload `type=connect` must be ignored
+- a long-lived EventSource connection should use `closeafter=no`
+- a stateless reader will reread a recent bootstrap window after restart, so real ingest
+  needs durable checkpoints
+- Fastmail adds mailbox-provider delivery headers such as `X-Delivered-to`, spam
+  annotations, and local `Received` hops on top of the list message
+- those added headers are useful validation/debug signals and should not be treated as a
+  reason to normalize or rewrite the raw source before parsing
+- we now have a minimal Python parser bridge that reads one raw RFC822 message from stdin
+  and returns the normalized parsed record as JSON
+- this confirms we do not need a separate Fastmail-specific parsing implementation
+
+Implication for the real design:
+
+- the Fastmail transport side is now de-risked enough to proceed with receipt staging and
+  parser integration
+- the shared Python parser core should become the canonical parser boundary for both
+  mailbox ingest and batch archive ingest
+
+## Failure Model
+
+The design must make it hard to lose messages silently.
+
+Rules:
+
+- fetch failures do not advance sync state
+- parse failures leave the receipt row in `parse_failed`
+- store failures leave the receipt row in `store_failed`
+- duplicates become `duplicate`, not success-without-evidence
+- unresolved routing becomes `unresolved_list`, not drop-on-floor
+
+Retries should operate on staged receipts, not by hoping the message is fetched again.
+
+That gives us:
+
+- replay from raw source
+- visible failure queues
+- idempotent recovery
+
+## Reconciliation
+
+We still need a mailbox-side reconciliation path.
+
+Suggested reconciliation behavior:
+
+- periodically enumerate delivered messages for each tracked folder
+- compare mailbox coverage against `mailbox_receipts`
+- detect gaps caused by skipped fetches, transient failures, or checkpoint drift
+
+Concrete JMAP reconciliation algorithm:
+
+1. for one tracked folder, run paginated `Email/query` with `inMailbox=<mailbox_id>`
+2. collect the full current set of `jmap_email_id` values for that mailbox
+3. compare that set against staged `mailbox_receipts` for the folder
+4. for any mailbox email id missing from `mailbox_receipts`, fetch and stage it
+5. update `email_query_state` to the final query state returned by reconciliation
+
+Reconciliation ordering rule:
+
+- reconciliation should process mailbox contents oldest-first so any "first receipt wins"
+  behavior is stable and reproducible
+
+Reconciliation is one-way safety, not deletion:
+
+- if a message currently exists in Fastmail but lacks a receipt row, that is a gap to
+  repair
+- if a receipt row exists for a message no longer present in Fastmail, do not delete the
+  canonical message row because mailbox retention is not the source of truth for history
+
+This job should report:
+
+- missing receipt `jmap_email_id` values
+- receipts stuck in `parse_failed`
+- receipts stuck in `store_failed`
+- duplicate rate
+- suspicious folder/header mismatches
+
+The important point is that freshness and completeness both come from the mailbox now,
+not from the archive.
+
+## Batch Archive Reconciliation And Backfill
+
+Batch archive ingest remains a first-class maintenance path.
+
+Its responsibilities are:
+
+- backfill a list from archive history
+- reconcile historical completeness if mailbox ingest missed anything
+- safely rerun over existing data without corrupting canonical state
+
+Desired behavior for batch mode:
+
+- fetch or reuse an archive mbox for a target list/month
+- iterate messages through the same shared parser used by mailbox ingest
+- persist through the same dedupe-aware canonical store
+- refresh touched threads using the same rules as mailbox ingest
+
+Batch mode should be operationally safe to run:
+
+- on an empty list
+- on a partially populated list
+- on a fully populated list
+- repeatedly for the same month
+
+If we keep overwrite or reconcile-specific modes, they should remain explicit opt-in
+maintenance behaviors, separate from the default idempotent path.
+
+## TypeScript Responsibilities
+
+TypeScript should own:
+
+- mailbox configuration
+- JMAP client interactions
+- tracked-folder enumeration
+- receipt staging
+- parser subprocess orchestration
+- parser output validation
+- Kysely-based persistence
+- logging and retry workflows
+
+This lets ingestion share DB types and persistence conventions with the rest of the
+application.
+
+## Python Responsibilities
+
+Python should own:
+
+- RFC822 parsing
+- header normalization
+- body extraction
+- attachment extraction
+- `Message-ID`, references, and subject normalization
+- any existing mail-specific parsing quirks already captured in tests
+
+Python should not own:
+
+- mailbox polling
+- checkpoint storage
+- canonical DB writes
+- retry orchestration
 
 ## Rollout Plan
 
-### Phase 1: Acquisition spike
+### Phase 1: Schema and config
 
-Prove that we can reliably fetch one message in machine-readable form from the archive and
-identify a safe discovery surface.
+Add:
 
-Deliverables:
+- tracked-folder metadata to `lists`
+- `mailbox_sync_state`
+- `mailbox_receipts`
+- TypeScript config for Fastmail JMAP credentials and polling/push behavior
 
-- one function that takes a message-id and returns raw message content using Basic auth
-- one test or manual proof using a known message-id
-- a decision on whether discovery will come from `latest.json`, `since/...`, or both
+Deliverable:
 
-If this is not reliable, stop and reconsider before building the rest.
+- DB schema can represent tracked folders, receipt staging, and checkpoints
 
 ### Phase 2: Parser refactor
 
-Refactor parsing so one raw message can flow through the same normalization logic used by
-monthly mbox ingestion.
+Refactor Python parsing around a single-message entrypoint.
 
 Deliverables:
 
-- shared per-message parse path
+- shared `parse_message_bytes(...)`
 - existing mbox parse tests still green
-- new tests for single-message parse input
+- new single-message parser tests
+- machine-readable parser CLI output
+- proof that batch archive and mailbox paths use the same parser core
 
-### Phase 3: Live-tail job
+### Phase 3: TypeScript fetch-and-stage job
 
-Add the day-page discovery, DB diff, and per-message fetch/store path.
+Implement a TypeScript job that:
 
-Deliverables:
+- reads tracked lists/folders
+- listens for Fastmail JMAP push changes and fetches new mailbox deliveries
+- writes receipt rows and sync checkpoints
 
-- ingest only missing messages from today/yesterday
-- reuse existing message/thread storage logic
-- skip analytics refresh by default
+Deliverable:
 
-### Phase 4: Scheduling
+- mailbox sync works without yet touching canonical message persistence
 
-Run:
+### Phase 4: TypeScript parse-and-store path
 
-- live-tail every 5-15 minutes
-- monthly backstop hourly or daily
+Add:
 
-### Phase 5: Reconciliation/observability
+- parser subprocess invocation
+- parser output validation
+- canonical writes into `messages` and `attachments`
+- touched-thread refresh
+- the same canonical persistence path for batch archive ingest
 
-Add logging that makes drift visible:
+Deliverable:
 
-- message ids discovered
-- message ids skipped because already present
-- message ids fetched
-- messages inserted
-- failures by message-id
+- end-to-end mailbox ingestion into the existing application schema
 
-This should make it obvious whether live-tail is missing anything that monthly backstop
-later repairs.
+### Phase 5: Reconciliation and observability
 
-## Code Areas To Touch
+Add:
 
-Likely frontend changes:
+- mailbox reconciliation based on durable JMAP-oriented checkpoint state
+- retry tooling for failed receipts
+- structured logs and metrics
 
-- none
+Deliverable:
 
-Likely backend/ingestion changes:
+- completeness and failure states are visible and actionable
 
-- `src/ingestion/ingest_archive.py`
-- `src/ingestion/ingest_parse.py`
-- `src/ingestion/ingest_pipeline.py`
-- `src/ingestion/ingest.py`
-- possibly a new `src/ingestion/live_tail.py`
-- tests under `test/ingestion/`
+## Testing Priorities
 
-Potential helper additions:
+We should add coverage for:
 
-- day-page HTML parser
-- message-id discovery fetcher
-- per-message source downloader
-- DB lookup helper for existing message ids
-
-## Risks
-
-### 1. Raw-message acquisition may be brittle
-
-The archive’s per-message download actions are automation-friendly in principle, but still
-depend on a credentialed path and on behavior we do not control.
-
-This is still an implementation risk, even though it now looks feasible.
-
-### 2. Day-page scraping is more fragile than monthly mbox download
-
-The monthly mbox endpoint is a clean ingestion format.
-
-The day pages are HTML and therefore more sensitive to site markup changes.
-
-### 3. `since/...` is incomplete on high-volume days
-
-The date-list implementation caps `since/...` results at 200 messages and does not paginate
-them.
-
-That means:
-
-- a busy day can overflow the day page
-- a poller that relies on day pages alone can silently miss messages
-- monthly backstop remains mandatory unless we have a better discovery feed
-
-### 4. Upstream server cost is not the same as transfer size
-
-Polling individual messages may reduce bandwidth on our side while still increasing load
-on `postgresql.org`.
-
-In particular:
-
-- one large monthly mbox fetch may be cheaper for the upstream server if it is backed by a
-  simple static or cached artifact
-- many small per-message fetches may be more expensive if they go through auth, routing, or
-  dynamic application code
-- a lower-byte design is therefore not automatically a lower-impact design
-
-This should stay an explicit design constraint.
-
-Before moving to frequent per-message acquisition, we should prefer to prove:
-
-- whether monthly mbox downloads can be made conditional with `ETag` or `Last-Modified`
-- whether day-page polling is materially cheaper than per-message raw/mbox fetches
-- whether `latest.json` access can be obtained from upstream
-- whether a live-tail design can keep request count low enough to avoid being unfriendly to
-  the upstream archive
-
-### 5. Duplicate/overlap behavior must stay intentional
-
-The live-tail job should expect overlap across:
-
-- today vs yesterday
-- repeated polls
-- live-tail vs monthly backstop
-
-This is acceptable as long as the path continues to dedupe by `message_id`.
-
-### 6. Thread and analytics work can dominate if done too often
-
-The live-tail path should stay narrow:
-
-- insert/store messages
-- refresh touched threads
-- do not rebuild broad analytics on every run
+- folder -> list mapping
+- duplicate deliveries across folders
+- first-seen message wins canonical list assignment
+- known-thread inheritance across duplicate deliveries
+- batch archive rerun against already populated data
+- mailbox and batch mode equivalence on the same source message
+- parse failure retention with raw source preserved
+- store failure retention with retry support
+- resume after partial runs using durable mailbox checkpoints
+- reconnect behavior for JMAP push
+- ignoring `connect` bootstrap events from Fastmail push
+- folder/header mismatch logging
 
 ## Non-Goals
 
-This design does **not** attempt to:
+This design does not attempt to:
 
-- replace monthly mbox ingestion entirely
-- make the archive pollable below the day level via `since/...`
-- treat `since/...` as a complete high-volume discovery feed
-- scrape rendered message bodies as the canonical source of truth
-- solve long-term analytics refresh optimization in the same change
+- preserve one canonical message row per list for cross-posted mail
+- redesign thread identity to be list-scoped
+- remove the Python parser
+- make mailbox flags the source of truth
+- silently infer list ownership from headers when folder routing already exists
 
 ## Bottom Line
 
-The best next step is not "poll the monthly mbox more often" and not "switch entirely to
-day URLs."
+The new ingest path should treat the Fastmail inbox as the live source of truth.
 
-The best next step is:
+The practical design is:
 
-- keep monthly mbox ingestion as reconciliation
-- add a separate authenticated live-tail path that:
-  - prefers an allowlisted API discovery feed if upstream permits it
-  - otherwise uses `since/...` only as a partial hint surface
-  - fetches raw messages through the Basic-authenticated message endpoint
-  - discovers only the message ids we still need
-  - stores them through the existing ingestion pipeline
+- one tracked folder per list
+- raw receipt staging first
+- Python for message parsing
+- TypeScript for orchestration and persistence
+- first successful receipt wins canonical `message_id` ownership
+- existing global thread model stays in place
 
-That is the most plausible path to better freshness with meaningfully less transfer.
+That gives us better freshness, better failure handling, and a cleaner typed persistence
+layer without throwing away the parsing logic that already works.

@@ -2,6 +2,12 @@ export const DEFAULT_DATABASE_URL = "postgresql://pginbox:pginbox@localhost:5499
 export const DEFAULT_AUTH_APP_BASE_URL = "http://localhost:5173/";
 export const DEFAULT_ANALYTICS_PAGE_CACHE_TTL_MINUTES = 60;
 export const DEFAULT_ANALYTICS_MESSAGES_LAST_24H_TTL_MINUTES = 5;
+export const DEFAULT_FASTMAIL_JMAP_SESSION_URL = "https://api.fastmail.com/jmap/session";
+export const DEFAULT_MAILBOX_INGEST_PARSER_BIN = "python3";
+export const DEFAULT_MAILBOX_INGEST_PUSH_PING_SECONDS = 30;
+export const DEFAULT_MAILBOX_INGEST_QUERY_PAGE_SIZE = 100;
+export const DEFAULT_MAILBOX_INGEST_RECEIPT_BATCH_SIZE = 100;
+export const DEFAULT_MAILBOX_INGEST_SYNC_DEBOUNCE_MS = 1000;
 
 type EnvSource = Record<string, string | undefined>;
 
@@ -28,6 +34,16 @@ export type AuthEmailRuntimeConfig =
   | DevAutoVerifyAuthEmailRuntimeConfig
   | LogAuthEmailRuntimeConfig
   | SmtpAuthEmailRuntimeConfig;
+
+export interface MailboxIngestRuntimeConfig {
+  apiToken: string;
+  parserBin: string;
+  pushPingSeconds: number;
+  queryPageSize: number;
+  receiptBatchSize: number;
+  sessionUrl: string;
+  syncDebounceMs: number;
+}
 
 function readEnv(env: EnvSource, name: string): string | undefined {
   const value = env[name]?.trim();
@@ -138,4 +154,49 @@ export function resolveAnalyticsPageCacheTtlMs(env: EnvSource = process.env): nu
   );
 
   return minutes * 60 * 1000;
+}
+
+export function resolveMailboxIngestRuntimeConfig(
+  env: EnvSource = process.env,
+): MailboxIngestRuntimeConfig {
+  const apiToken = readEnv(env, "FASTMAIL_API_TOKEN");
+  if (!apiToken) {
+    throw new Error("FASTMAIL_API_TOKEN is required for mailbox ingest");
+  }
+
+  const configuredSessionUrl = readEnv(env, "FASTMAIL_JMAP_SESSION_URL");
+  let sessionUrl = DEFAULT_FASTMAIL_JMAP_SESSION_URL;
+  if (configuredSessionUrl) {
+    try {
+      sessionUrl = new URL(configuredSessionUrl).toString();
+    } catch {
+      throw new Error("FASTMAIL_JMAP_SESSION_URL must be a valid absolute URL");
+    }
+  }
+
+  return {
+    apiToken,
+    parserBin: readEnv(env, "MAILBOX_INGEST_PARSER_BIN") ?? DEFAULT_MAILBOX_INGEST_PARSER_BIN,
+    pushPingSeconds: readPositiveIntegerEnv(
+      env,
+      "MAILBOX_INGEST_PUSH_PING_SECONDS",
+      DEFAULT_MAILBOX_INGEST_PUSH_PING_SECONDS,
+    ),
+    queryPageSize: readPositiveIntegerEnv(
+      env,
+      "MAILBOX_INGEST_QUERY_PAGE_SIZE",
+      DEFAULT_MAILBOX_INGEST_QUERY_PAGE_SIZE,
+    ),
+    receiptBatchSize: readPositiveIntegerEnv(
+      env,
+      "MAILBOX_INGEST_RECEIPT_BATCH_SIZE",
+      DEFAULT_MAILBOX_INGEST_RECEIPT_BATCH_SIZE,
+    ),
+    sessionUrl,
+    syncDebounceMs: readPositiveIntegerEnv(
+      env,
+      "MAILBOX_INGEST_SYNC_DEBOUNCE_MS",
+      DEFAULT_MAILBOX_INGEST_SYNC_DEBOUNCE_MS,
+    ),
+  };
 }

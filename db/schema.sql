@@ -73,6 +73,20 @@ $$;
 
 
 --
+-- Name: _set_message_body_search(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._set_message_body_search() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.body_search := left(coalesce(NEW.body, ''), 200000);
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: _set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -128,7 +142,8 @@ CREATE TABLE public.messages (
     refs text[],
     body text,
     sent_at_approx boolean DEFAULT false NOT NULL,
-    archive_month date
+    archive_month date,
+    body_search text DEFAULT ''::text
 );
 
 
@@ -370,7 +385,10 @@ ALTER SEQUENCE public.email_verification_tokens_id_seq OWNED BY public.email_ver
 
 CREATE TABLE public.lists (
     id integer NOT NULL,
-    name text NOT NULL
+    name text NOT NULL,
+    tracked boolean DEFAULT false NOT NULL,
+    source_folder text,
+    CONSTRAINT lists_tracked_requires_source_folder_check CHECK (((tracked = false) OR (source_folder IS NOT NULL)))
 );
 
 
@@ -392,6 +410,67 @@ CREATE SEQUENCE public.lists_id_seq
 --
 
 ALTER SEQUENCE public.lists_id_seq OWNED BY public.lists.id;
+
+
+--
+-- Name: mailbox_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mailbox_receipts (
+    id bigint NOT NULL,
+    list_id integer NOT NULL,
+    source_folder text NOT NULL,
+    mailbox_id text NOT NULL,
+    jmap_email_id text NOT NULL,
+    blob_id text NOT NULL,
+    internal_date timestamp with time zone,
+    message_id_header text,
+    parsed_message_id text,
+    stored_message_db_id bigint,
+    raw_sha256 text NOT NULL,
+    raw_rfc822 bytea NOT NULL,
+    status text NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT mailbox_receipts_status_check CHECK ((status = ANY (ARRAY['fetched'::text, 'parsed'::text, 'stored'::text, 'duplicate'::text, 'parse_failed'::text, 'store_failed'::text, 'unresolved_list'::text])))
+);
+
+
+--
+-- Name: mailbox_receipts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.mailbox_receipts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: mailbox_receipts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.mailbox_receipts_id_seq OWNED BY public.mailbox_receipts.id;
+
+
+--
+-- Name: mailbox_sync_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mailbox_sync_state (
+    source_folder text NOT NULL,
+    list_id integer NOT NULL,
+    mailbox_id text NOT NULL,
+    email_query_state text,
+    last_push_event_id text,
+    last_successful_sync_at timestamp with time zone,
+    last_reconciled_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
@@ -692,6 +771,13 @@ ALTER TABLE ONLY public.lists ALTER COLUMN id SET DEFAULT nextval('public.lists_
 
 
 --
+-- Name: mailbox_receipts id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_receipts ALTER COLUMN id SET DEFAULT nextval('public.mailbox_receipts_id_seq'::regclass);
+
+
+--
 -- Name: messages id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -794,6 +880,38 @@ ALTER TABLE ONLY public.lists
 
 ALTER TABLE ONLY public.lists
     ADD CONSTRAINT lists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mailbox_receipts mailbox_receipts_mailbox_email_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_receipts
+    ADD CONSTRAINT mailbox_receipts_mailbox_email_unique UNIQUE (mailbox_id, jmap_email_id);
+
+
+--
+-- Name: mailbox_receipts mailbox_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_receipts
+    ADD CONSTRAINT mailbox_receipts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mailbox_sync_state mailbox_sync_state_list_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_sync_state
+    ADD CONSTRAINT mailbox_sync_state_list_id_key UNIQUE (list_id);
+
+
+--
+-- Name: mailbox_sync_state mailbox_sync_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_sync_state
+    ADD CONSTRAINT mailbox_sync_state_pkey PRIMARY KEY (source_folder);
 
 
 --
@@ -1016,6 +1134,34 @@ CREATE INDEX idx_email_verification_tokens_user_id ON public.email_verification_
 
 
 --
+-- Name: idx_lists_source_folder; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_lists_source_folder ON public.lists USING btree (source_folder) WHERE (source_folder IS NOT NULL);
+
+
+--
+-- Name: idx_mailbox_receipts_list_created_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mailbox_receipts_list_created_id ON public.mailbox_receipts USING btree (list_id, created_at, id);
+
+
+--
+-- Name: idx_mailbox_receipts_parsed_message_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mailbox_receipts_parsed_message_id ON public.mailbox_receipts USING btree (parsed_message_id);
+
+
+--
+-- Name: idx_mailbox_receipts_status_created_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mailbox_receipts_status_created_id ON public.mailbox_receipts USING btree (status, created_at, id);
+
+
+--
 -- Name: idx_messages_from_email; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1163,6 +1309,13 @@ CREATE TRIGGER trg_email_verification_tokens_normalize_email BEFORE INSERT OR UP
 
 
 --
+-- Name: messages trg_messages_set_body_search; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_messages_set_body_search BEFORE INSERT OR UPDATE OF body ON public.messages FOR EACH ROW EXECUTE FUNCTION public._set_message_body_search();
+
+
+--
 -- Name: user_email_claims trg_user_email_claims_normalize_email; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1212,6 +1365,30 @@ ALTER TABLE ONLY public.auth_sessions
 
 ALTER TABLE ONLY public.email_verification_tokens
     ADD CONSTRAINT email_verification_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mailbox_receipts mailbox_receipts_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_receipts
+    ADD CONSTRAINT mailbox_receipts_list_id_fkey FOREIGN KEY (list_id) REFERENCES public.lists(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: mailbox_receipts mailbox_receipts_stored_message_db_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_receipts
+    ADD CONSTRAINT mailbox_receipts_stored_message_db_id_fkey FOREIGN KEY (stored_message_db_id) REFERENCES public.messages(id) ON DELETE SET NULL;
+
+
+--
+-- Name: mailbox_sync_state mailbox_sync_state_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mailbox_sync_state
+    ADD CONSTRAINT mailbox_sync_state_list_id_fkey FOREIGN KEY (list_id) REFERENCES public.lists(id) ON DELETE CASCADE;
 
 
 --
@@ -1360,4 +1537,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260322000020'),
     ('20260322000021'),
     ('20260323000022'),
-    ('20260323000023');
+    ('20260323000023'),
+    ('20260402000024'),
+    ('20260410000024'),
+    ('20260410000025');
