@@ -3,7 +3,10 @@ import {
   buildMailboxPathMap,
   type FastmailPushEvent,
 } from "../../src/server/services/ingestion/fastmail-jmap";
-import { shouldIgnorePushEvent } from "../../src/server/services/ingestion/mailbox-ingest.service";
+import {
+  classifyPushEvent,
+  shouldIgnorePushEvent,
+} from "../../src/server/services/ingestion/mailbox-ingest.service";
 import { parseMessageWithPython } from "../../src/server/services/ingestion/python-message-parser";
 
 describe("mailbox ingest helpers", () => {
@@ -39,6 +42,49 @@ describe("mailbox ingest helpers", () => {
 
     expect(shouldIgnorePushEvent(connectEvent)).toBe(true);
     expect(shouldIgnorePushEvent(deliveryEvent)).toBe(false);
+  });
+
+  it("ignores ping push events without dropping real delivery events", () => {
+    const pingPayloadEvent: FastmailPushEvent = {
+      data: JSON.stringify({ type: "ping" }),
+      event: "message",
+      id: "20309",
+    };
+    const pingSseEvent: FastmailPushEvent = {
+      data: "",
+      event: "ping",
+      id: "20310",
+    };
+    const deliveryEvent: FastmailPushEvent = {
+      data: JSON.stringify({
+        changed: { account: { Email: "J3" } },
+        type: "delivery",
+      }),
+      event: "message",
+      id: "20311",
+    };
+
+    expect(classifyPushEvent(pingPayloadEvent)).toEqual({
+      hasData: true,
+      ignoreReason: "ping",
+      payloadType: "ping",
+      shouldSync: false,
+      sseEvent: "message",
+    });
+    expect(classifyPushEvent(pingSseEvent)).toEqual({
+      hasData: false,
+      ignoreReason: "ping",
+      payloadType: null,
+      shouldSync: false,
+      sseEvent: "ping",
+    });
+    expect(classifyPushEvent(deliveryEvent)).toEqual({
+      hasData: true,
+      ignoreReason: null,
+      payloadType: "delivery",
+      shouldSync: true,
+      sseEvent: "message",
+    });
   });
 
   it("parses one raw RFC822 message through the Python bridge", async () => {
